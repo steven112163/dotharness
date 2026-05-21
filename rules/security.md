@@ -2,45 +2,27 @@
 
 ## Secrets
 
-- Never hardcode secrets, API keys, tokens, or passwords in source code.
-- Use environment variables or a secrets manager (Vault, AWS Secrets Manager, Doppler).
-- Add `.env`, `.env.local`, and credential files to `.gitignore`.
+- Never hardcode secrets, API keys, or tokens in source code.
+- Use environment variables or CI secret storage for credentials.
+- Add credential files and `.env` to `.gitignore`.
 - If a secret is accidentally committed, rotate it immediately.
-- Use separate secrets per environment (dev, staging, prod).
+
+## Memory Safety
+
+- Check all buffer sizes before access. No out-of-bounds reads or writes.
+- Initialize all variables. Undefined behavior from uninitialized memory is a security risk.
+- Use smart pointers (`std::unique_ptr`, `std::shared_ptr`) over raw `new`/`delete` where applicable.
+- Check return values of all allocation calls (`hipMalloc`, `malloc`).
+- Free GPU memory on all exit paths, including error paths.
 
 ## Input Validation
 
-- Validate all external input at the system boundary: API endpoints, CLI args, file uploads.
-- Use schema validation libraries (Zod, Joi, Pydantic) instead of manual checks.
+- Validate all user-facing inputs: CLI args, config file values, tensor dimensions.
 - Reject invalid input early. Do not attempt to sanitize and continue.
-- Enforce length limits, type constraints, and allowed character sets.
-- Validate file uploads on type, size, filename, and actual content.
-
-## Output Encoding
-
-- Escape user-provided data before rendering in HTML, SQL, shell commands, or logs.
-- Use parameterized queries for all database operations. Never interpolate SQL strings.
-- Use template engines with auto-escaping turned on.
-- Sanitize log messages to prevent log injection.
-
-## Auth
-
-- Hash passwords with bcrypt (cost 12+) or argon2. Never MD5 or SHA1 for passwords.
-- Rate-limit authentication endpoints.
-- Access tokens: 15 minutes max. Refresh tokens: 7 days max.
-- Check authorization on every API request, not just in the UI.
-- Apply least privilege to all service accounts and API keys.
+- Enforce bounds on dimensions, sizes, and counts to prevent integer overflow.
 
 ## Dependencies
 
-- Run `npm audit` / `pip audit` / `cargo audit` in CI.
-- Patch critical vulnerabilities within 48 hours, high within 7 days.
-- Pin exact versions in production. Use ranges only in libraries.
-- Vet new dependencies before adding: check maintenance status, download volume, known issues.
-
-## HTTP
-
-- Set security headers: CSP, HSTS, X-Content-Type-Options, X-Frame-Options.
-- HTTPS everywhere. Redirect HTTP to HTTPS.
-- Cookies: HttpOnly, Secure, SameSite=Strict.
-- CORS: explicit allowed origins. Never wildcard in production.
+- Pin exact versions of third-party dependencies in build scripts.
+- Review new dependencies before adding: check maintenance status and known issues.
+- Keep compilers and toolchains updated for security patches.

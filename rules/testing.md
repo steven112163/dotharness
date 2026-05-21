@@ -7,39 +7,24 @@
 - Never merge a PR with failing tests.
 - Flaky tests get fixed immediately or quarantined with a tracking issue.
 
-## Coverage
-
-- 80% line coverage minimum on new code.
-- 75% branch coverage minimum on new code.
-- Coverage must not decrease on any PR.
-- Exclude generated code, type definitions, and config files from metrics.
-
 ## Test Design
 
 - Test behavior, not implementation details. Tests should survive refactoring.
 - One logical assertion per test case.
 - Tests must be independent. No shared mutable state, no execution order dependency.
-- Use descriptive names: `should_reject_expired_token` over `test_token_3`.
+- Use descriptive names: `BlockGemm_MPerBlock256_ReturnsCorrectOutput` over `test_3`.
 
 ## Organization
 
 - Mirror source directory structure in test directories.
-- Shared helpers and fixtures go in a `testutils` or `__tests__/helpers` directory.
+- Shared helpers and fixtures go in a common test utility directory.
 - Tag slow tests (>30s) so they can be excluded from fast feedback loops.
-
-## Mocking
-
-- Mock at system boundaries: HTTP, database, filesystem, clock, randomness.
-- Never mock the unit under test.
-- Prefer fakes (in-memory implementations) over mocks for complex interfaces.
-- Assert on behavior and outputs, not on call counts.
 
 ## CI
 
 - No `skip` or `todo` tests on main. Fix them or remove them.
 - Run tests on every push and every PR.
-- Fail the build when coverage drops below thresholds.
-- Run tests in parallel. Set a 10-minute timeout to catch infinite loops.
+- Set a timeout to catch hangs and infinite loops.
 
 ## Anti-Patterns
 

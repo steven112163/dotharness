@@ -4,36 +4,34 @@
 
 - Functions: 100 lines max (excluding blanks and comments). Split if longer.
 - Files: 1000 lines max. Split by responsibility if larger.
-- Nesting: 3 levels max (if/for/callback). Use early returns or extract functions.
-- Parameters: 6 max per function. Group into an object if more are needed.
+- Nesting: 3 levels max. Use early returns or extract functions.
+- Parameters: 6 max per function. Group into a struct if more are needed.
 - Delete dead code. Never comment it out.
-- No magic numbers or strings. Extract into named constants.
+- No magic numbers or strings. Extract into named constants or `constexpr`.
 
 ## Naming
 
 - Names must be self-explanatory. Purpose should be obvious without reading the implementation.
 - Ban meaningless names: `data1`, `temp`, `info`, `obj`, `result`, `item` (loop counters excepted).
-- Booleans: prefix with `is`/`has`/`can`/`should` — `isLoading`, `hasPermission`.
-- Functions: start with a verb — `fetchUser`, `validateInput`, `calculateTotal`.
-- Constants: `ALL_CAPS_SNAKE_CASE` — `MAX_RETRY_COUNT`, `API_BASE_URL`.
-- Event handlers: `handle` prefix — `handleClick`, `handleSubmit`.
-- Legacy code: follow legacy coding style and check against clang-format and clang-tidy
+- Booleans: prefix with `is`/`has`/`can`/`should` — `is_valid`, `has_workspace`.
+- Functions: start with a verb — `compute_gemm`, `validate_layout`, `get_block_size`.
+- Constants: `ALL_CAPS_SNAKE_CASE` — `MAX_TILE_SIZE`, `DEFAULT_BLOCK_DIM`.
+- Legacy code: follow legacy coding style and check against clang-format and clang-tidy.
 
 ## Architecture
 
 - **Single Responsibility**: one function does one thing, one file owns one domain.
-- **Separation of Concerns**: UI has no business logic, business logic has no UI code, data access is its own layer.
 - **Dependency Direction**: upper layers depend on lower layers, never the reverse.
-- **Program to Interfaces**: modules talk through interfaces, not concrete implementations.
+- **Program to Interfaces**: modules communicate through abstract base classes or concepts, not concrete implementations.
 - **Composition Over Inheritance**: prefer composition unless there is a clear is-a relationship.
+- **Templates with Constraints**: use `requires` clauses or `static_assert` to make template errors readable.
 
 ## Error Handling
 
-- Validate only at system boundaries (user input, API responses, file I/O).
-- Trust internal function contracts. No redundant type checking inside private code.
+- Validate at system boundaries (user-facing API, file I/O, runtime parameters).
+- Trust internal function contracts. No redundant checks inside private code.
 - Error messages must include context: what operation failed, what values were involved.
-- Every async operation needs error handling. No bare promises or unhandled async calls.
-- Scope try-catch to the specific operation that can fail, not the entire function body.
+- Check HIP API return codes. Never ignore `hipError_t`.
 
 ## Avoid Over-Engineering
 

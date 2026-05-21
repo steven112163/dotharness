@@ -1,39 +1,34 @@
-# Performance Optimization
+# Performance
 
 ## Principles
 
-- Measure before optimizing — profile first, then fix the hotspot
-- Optimize the critical path first
-- Consider algorithmic complexity
-- Balance performance with readability
-- Cache expensive operations
+- Measure before optimizing — profile first, then fix the hotspot.
+- Optimize the critical path first.
+- Balance performance with readability.
 
 ## Algorithmic Awareness
 
-- Prefer O(n) or O(n log n) over O(n²) — use sets/maps for lookups instead of nested loops
-- Choose appropriate data structures: hash maps for O(1) access, sorted structures for range queries
-- Be aware of hidden quadratic behavior in string concatenation, repeated list scans, and nested filters
+- Prefer O(n) or O(n log n) over O(n²). Use hash maps or sets for lookups instead of nested loops.
+- Choose data structures that match access patterns: contiguous memory for sequential access, maps for sparse lookups.
+- Watch for hidden quadratic behavior in repeated container scans and string concatenation.
 
-## Memory Optimization
+## Memory
 
-- Use generators/iterators for large datasets instead of loading everything into memory
-- Reuse objects via pooling for high-allocation hot paths
-- Process files line-by-line, not by reading the entire file at once
+- Minimize allocations in hot loops. Pre-allocate buffers and reuse them.
+- Prefer stack allocation and `constexpr` computation over heap allocation.
+- Use move semantics to avoid unnecessary copies. Pass large objects by const reference.
+- Process large data in streaming fashion rather than loading everything into memory.
 
-## Async Performance
+## GPU / HIP
 
-- Run independent I/O operations in parallel, not sequentially
-- Use controlled concurrency (batch size) to avoid overwhelming downstream services
-- Avoid blocking the event loop with CPU-heavy synchronous work
+- Maximize occupancy: balance VGPR usage, LDS allocation, and wavefront count.
+- Minimize host-device transfers. Batch work on the GPU.
+- Use async memory copies and overlap computation with data movement.
+- Coalesce global memory accesses. Avoid strided or scattered reads.
+- Profile with `rocprof` before tuning. Do not guess at bottlenecks.
 
-## Database Optimization
+## Concurrency
 
-- Avoid N+1 queries — use JOINs or batch fetching
-- Add indexes on columns used in WHERE, JOIN, and ORDER BY clauses
-- Use connection pooling to reuse database connections
-
-## Caching
-
-- Cache at the right level: in-memory for hot data, distributed cache for shared state
-- Set appropriate TTLs — stale data is a bug
-- Implement cache invalidation strategy before adding caching
+- Run independent operations in parallel.
+- Use controlled concurrency to avoid overwhelming downstream resources.
+- Minimize synchronization points and lock contention.
