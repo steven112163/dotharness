@@ -1,0 +1,3 @@
+[submodule "third-party/agent-skills"]
+	path = third-party/agent-skills
+	url = https://github.com/poyenc/agent-skills.git
