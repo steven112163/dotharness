@@ -1,3 +1,11 @@
+---
+paths:
+  - "**/*test*"
+  - "**/*Test*"
+  - "**/*.cpp"
+  - "**/*.py"
+---
+
 # Testing
 
 ## Before You Push

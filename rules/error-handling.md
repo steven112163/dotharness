@@ -1,3 +1,12 @@
+---
+paths:
+  - "**/*.cpp"
+  - "**/*.hpp"
+  - "**/*.h"
+  - "**/*.hip"
+  - "**/*.py"
+---
+
 # Error Handling
 
 ## Principles

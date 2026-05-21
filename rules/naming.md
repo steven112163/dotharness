@@ -1,3 +1,14 @@
+---
+paths:
+  - "**/*.cpp"
+  - "**/*.hpp"
+  - "**/*.h"
+  - "**/*.hip"
+  - "**/*.py"
+  - "**/CMakeLists.txt"
+  - "**/*.cmake"
+---
+
 # Naming Conventions
 
 ## General

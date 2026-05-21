@@ -1,3 +1,13 @@
+---
+paths:
+  - "**/*.cpp"
+  - "**/*.hpp"
+  - "**/*.py"
+  - "**/Jenkinsfile"
+  - "**/*.groovy"
+  - "**/CMakeLists.txt"
+---
+
 # Observability
 
 ## Logging

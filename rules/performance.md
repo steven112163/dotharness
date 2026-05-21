@@ -1,3 +1,11 @@
+---
+paths:
+  - "**/*.cpp"
+  - "**/*.hpp"
+  - "**/*.h"
+  - "**/*.hip"
+---
+
 # Performance
 
 ## Principles

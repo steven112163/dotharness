@@ -1,3 +1,12 @@
+---
+paths:
+  - "**/*.cpp"
+  - "**/*.hpp"
+  - "**/*.h"
+  - "**/*.hip"
+  - "**/CMakeLists.txt"
+---
+
 # Security
 
 ## Secrets
