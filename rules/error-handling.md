@@ -18,8 +18,6 @@ paths:
 
 ## C++ Specifics
 
-- Check HIP API return codes. Wrap in a macro or helper that logs and aborts on failure.
-- Use RAII for resource management. Destructors handle cleanup on all exit paths.
 - Prefer exceptions or error codes consistently within a project — do not mix both.
 - Use `static_assert` for compile-time invariants. Use `assert` for debug-only runtime checks.
 - Return `std::optional` or `std::expected` for operations that can legitimately fail.

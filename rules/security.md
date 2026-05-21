@@ -20,7 +20,6 @@ paths:
 
 - Check all buffer sizes before access. No out-of-bounds reads or writes.
 - Initialize all variables. Undefined behavior from uninitialized memory is a security risk.
-- Use smart pointers (`std::unique_ptr`, `std::shared_ptr`) over raw `new`/`delete` where applicable.
 - Check return values of all allocation calls (`hipMalloc`, `malloc`).
 - Free GPU memory on all exit paths, including error paths.
 

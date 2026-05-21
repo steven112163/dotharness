@@ -9,30 +9,12 @@
 - Delete dead code. Never comment it out.
 - No magic numbers or strings. Extract into named constants or `constexpr`.
 
-## Naming
-
-- Names must be self-explanatory. Purpose should be obvious without reading the implementation.
-- Ban meaningless names: `data1`, `temp`, `info`, `obj`, `result`, `item` (loop counters excepted).
-- Booleans: prefix with `is`/`has`/`can`/`should` — `is_valid`, `has_workspace`.
-- Functions: start with a verb — `compute_gemm`, `validate_layout`, `get_block_size`.
-- Constants: `ALL_CAPS_SNAKE_CASE` — `MAX_TILE_SIZE`, `DEFAULT_BLOCK_DIM`.
-- Legacy code: follow legacy coding style and check against clang-format and clang-tidy.
-
 ## Architecture
 
 - **Single Responsibility**: one function does one thing, one file owns one domain.
 - **Dependency Direction**: upper layers depend on lower layers, never the reverse.
 - **Program to Interfaces**: modules communicate through abstract base classes or concepts, not concrete implementations.
 - **Composition Over Inheritance**: prefer composition unless there is a clear is-a relationship.
-- **Templates with Constraints**: use `requires` clauses or `static_assert` to make template errors readable.
-
-## Error Handling
-
-- Validate at system boundaries (user-facing API, file I/O, runtime parameters).
-- Trust internal function contracts. No redundant checks inside private code.
-- Error messages must include context: what operation failed, what values were involved.
-- Check HIP API return codes. Never ignore `hipError_t`.
-
 ## Avoid Over-Engineering
 
 - Solve the current problem. Do not build for hypothetical future requirements.
@@ -40,6 +22,20 @@
 - No utility functions for logic used in one place.
 - No unnecessary wrappers, adapters, or intermediate layers.
 - Add configuration only when flexibility is genuinely needed today.
+
+## Code navigation
+
+- One class per header where practical. Combining unrelated classes in one file defeats grep-based navigation.
+- Limit namespace nesting to 3 levels. Deep nesting (`a::b::c::d::e`) obscures location.
+- No anonymous namespaces in headers. They create silent ODR violations across translation units.
+- Avoid `using namespace` in headers. It pollutes every file that includes them.
+
+## Discipline
+
+- No silent assumptions. When requirements are ambiguous, ask before implementing.
+- No code hypertrophy. Every line must serve the stated goal. Remove speculative code.
+- No collateral changes. If a function works and is not part of the task, do not touch it. Unrelated refactors go in separate commits.
+- Verifiable success criteria. Define what "done" looks like before writing code: which tests pass, which benchmarks hold, which behavior changes.
 
 ## Communication
 
