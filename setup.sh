@@ -41,15 +41,37 @@ link "$REPO_DIR/rules" "$CLAUDE_DIR/rules"
 
 # --- Skills: merge own + third-party into commands/ ---
 echo "Skills:"
-if [ -L "$CLAUDE_DIR/commands" ]; then
-    echo "  converting $CLAUDE_DIR/commands from symlink to directory"
-    rm "$CLAUDE_DIR/commands"
+if [ -L "$CLAUDE_DIR/skills" ]; then
+    echo "  converting $CLAUDE_DIR/skills from symlink to directory"
+    rm "$CLAUDE_DIR/skills"
 fi
-mkdir -p "$CLAUDE_DIR/commands"
-link_items "$REPO_DIR/skills" "$CLAUDE_DIR/commands"
+mkdir -p "$CLAUDE_DIR/skills"
+link_items "$REPO_DIR/skills" "$CLAUDE_DIR/skills"
+for category_dir in "$REPO_DIR"/third-party/*/skills/{engineering,productivity}/; do
+    [ -d "$category_dir" ] || continue
+    for skill_dir in "$category_dir"*/; do
+        [ -f "$skill_dir/SKILL.md" ] || continue
+        link "$skill_dir" "$CLAUDE_DIR/skills/$(basename "$skill_dir")"
+    done
+done
 
 # --- Statusline ---
 echo "Statusline:"
 link "$REPO_DIR/statusline.sh" "$CLAUDE_DIR/statusline.sh"
+
+# --- Plugins (requires claude CLI) ---
+echo "Plugins:"
+if command -v claude &>/dev/null; then
+    for plugin in "superpowers@claude-plugins-official"; do
+        if grep -q "$plugin" "$CLAUDE_DIR/plugins/installed_plugins.json" 2>/dev/null; then
+            echo "  ok  $plugin"
+        else
+            echo "  installing $plugin"
+            claude /plugin install "$plugin"
+        fi
+    done
+else
+    echo "  skipped (claude CLI not found)"
+fi
 
 echo "Done."
