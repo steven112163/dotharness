@@ -47,10 +47,6 @@ if [ -L "$CLAUDE_DIR/commands" ]; then
 fi
 mkdir -p "$CLAUDE_DIR/commands"
 link_items "$REPO_DIR/skills" "$CLAUDE_DIR/commands"
-for vendor_dir in "$REPO_DIR"/third-party/*/skills; do
-    [ -d "$vendor_dir" ] || continue
-    link_items "$vendor_dir" "$CLAUDE_DIR/commands"
-done
 
 # --- Statusline ---
 echo "Statusline:"
