@@ -55,6 +55,44 @@ for category_dir in "$REPO_DIR"/third-party/*/skills/{engineering,productivity}/
     done
 done
 
+# --- Hooks ---
+echo "Hooks:"
+mkdir -p "$CLAUDE_DIR/hooks"
+link_items "$REPO_DIR/hooks" "$CLAUDE_DIR/hooks"
+
+# Register hooks in global settings.json
+readonly SETTINGS="$CLAUDE_DIR/settings.json"
+register_hook() {
+    local event="$1" command="$2" name="$3" timeout="${4:-10}"
+    local matcher="${5:-}"
+    if jq -e ".hooks.${event}[]? | .hooks[]? | select(.command == \"$command\")" "$SETTINGS" >/dev/null 2>&1; then
+        echo "  ok  $name"
+    else
+        echo "  add $name"
+        if [ -n "$matcher" ]; then
+            jq --arg evt "$event" --arg cmd "$command" --argjson to "$timeout" --arg mat "$matcher" \
+                '.hooks = (.hooks // {}) | .hooks[$evt] = ((.hooks[$evt] // []) + [{"matcher": $mat, "hooks": [{"type": "command", "command": $cmd, "timeout": $to}]}])' \
+                "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
+        else
+            jq --arg evt "$event" --arg cmd "$command" --argjson to "$timeout" \
+                '.hooks = (.hooks // {}) | .hooks[$evt] = ((.hooks[$evt] // []) + [{"hooks": [{"type": "command", "command": $cmd, "timeout": $to}]}])' \
+                "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
+        fi
+    fi
+}
+
+if [ -f "$SETTINGS" ] && command -v jq &>/dev/null; then
+    register_hook "UserPromptSubmit" "bash ~/.claude/hooks/anti-sycophancy.sh" "anti-sycophancy hook" 5
+    register_hook "PreToolUse"       "bash ~/.claude/hooks/block-dangerous.sh"  "block-dangerous hook" 5 "Bash"
+    register_hook "PostToolUse"      "bash ~/.claude/hooks/auto-format.sh"      "auto-format hook"     10 "Write|Edit"
+    register_hook "PostToolUse"      "bash ~/.claude/hooks/security-scan.sh"    "security-scan hook"   5  "Write|Edit"
+    register_hook "Stop"             "bash ~/.claude/hooks/notify-stop.sh"      "notify-stop hook"     5
+elif [ ! -f "$SETTINGS" ]; then
+    echo "  skipped (no settings.json found)"
+elif ! command -v jq &>/dev/null; then
+    echo "  skipped (jq not found, cannot update settings.json)"
+fi
+
 # --- Statusline ---
 echo "Statusline:"
 link "$REPO_DIR/statusline.sh" "$CLAUDE_DIR/statusline.sh"

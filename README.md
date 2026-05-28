@@ -11,11 +11,12 @@ skills/                          → own skills, symlinked to ~/.claude/skills/
     roles/                       → per-agent role prompts (8 files)
   research/                      → multi-mode research with anti-sycophancy safeguards
     SKILL.md                     → 4 modes (socratic, direct, deep, adversarial)
+hooks/                           → hook scripts, symlinked to ~/.claude/hooks/
 rules/                           → symlinked to ~/.claude/rules/
 third-party/
   mattpocock-skills/             → git submodule (engineering + productivity skills)
 statusline.sh                    → symlinked to ~/.claude/statusline.sh
-setup.sh                         → creates symlinks + installs plugins
+setup.sh                         → creates symlinks, registers hooks, installs plugins
 ```
 
 ## Setup
@@ -25,7 +26,7 @@ git submodule update --init
 ./setup.sh
 ```
 
-Symlinks `skills/`, `rules/`, third-party skills, and `statusline.sh` into `~/.claude/`. Installs plugins via the Claude CLI. Existing files are backed up to `.bak`.
+Symlinks `skills/`, `hooks/`, `rules/`, third-party skills, and `statusline.sh` into `~/.claude/`. Registers hooks in `~/.claude/settings.json` (requires `jq`). Installs plugins via the Claude CLI. Existing files are backed up to `.bak`.
 
 ## Rules
 
@@ -70,6 +71,18 @@ Engineering and productivity skills, linked from the submodule:
 
 ### Plugins
 - **superpowers** — installed via `claude-plugins-official` marketplace
+
+## Hooks
+
+Lifecycle hooks registered in `~/.claude/settings.json` by `setup.sh`. Scripts live in `hooks/`, symlinked to `~/.claude/hooks/`.
+
+| Hook | Event | Trigger | Purpose |
+|------|-------|---------|---------|
+| `anti-sycophancy.sh` | UserPromptSubmit | Every prompt | Detects confirmatory language ("right?", "looks good"), injects critical-thinking reminder |
+| `block-dangerous.sh` | PreToolUse | Bash commands | Blocks `rm -rf`, `git push --force`, `DROP TABLE`, `.env` writes, `killall` |
+| `auto-format.sh` | PostToolUse | Write/Edit | Runs clang-format (.cpp/.hip/.cu), ruff/black (.py), jq (.json), shfmt (.sh) |
+| `security-scan.sh` | PostToolUse | Write/Edit | Detects hardcoded AWS keys, API secrets, private keys, passwords, GitHub/GitLab tokens |
+| `notify-stop.sh` | Stop | Session stop | Desktop notification via `notify-send` (main session only, not sub-agents) |
 
 ## Statusline
 
