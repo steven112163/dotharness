@@ -80,9 +80,13 @@ Lifecycle hooks registered in `~/.claude/settings.json` by `setup.sh`. Scripts l
 |------|-------|---------|---------|
 | `anti-sycophancy.sh` | UserPromptSubmit | Every prompt | Detects confirmatory language ("right?", "looks good"), injects critical-thinking reminder |
 | `block-dangerous.sh` | PreToolUse | Bash commands | Blocks `rm -rf`, `git push --force`, `DROP TABLE`, `.env` writes, `killall` |
+| `auto-approve.sh` | PreToolUse | Bash commands | Auto-approves known-safe read-only commands (linters, checkers, `ctest`) |
 | `auto-format.sh` | PostToolUse | Write/Edit | Runs clang-format (.cpp/.hip/.cu), ruff/black (.py), jq (.json), shfmt (.sh) |
 | `security-scan.sh` | PostToolUse | Write/Edit | Detects hardcoded AWS keys, API secrets, private keys, passwords, GitHub/GitLab tokens |
+| `context-save.sh` | PreCompact | Compaction | Saves git state and working context to `~/.claude/.session-state.md` |
+| `context-restore.sh` | PostCompact | Compaction | Re-injects saved session state as additional context after compaction |
 | `notify-stop.sh` | Stop | Session stop | Desktop notification via `notify-send` (main session only, not sub-agents) |
+| `notify-prompt.sh` | Notification | Notifications | Desktop notification when Claude sends a notification |
 
 ## Statusline
 

@@ -1,5 +1,17 @@
 # Writing Style
 
+## LLM-Specific Anti-Patterns
+
+- Do not overuse bullet points. Use prose when items form a connected argument.
+- Do not lean on em dashes as all-purpose punctuation.
+- Do not start consecutive sentences or bullets the same way.
+- Avoid transition-word padding: "Furthermore", "Moreover", "Additionally."
+- Do not append summary sentences that repeat what the paragraph just said.
+- Use consistent terms throughout. Do not alternate between synonyms for the same concept.
+- Use sentence-case for section headings.
+- Never fabricate citations or make unsupported claims.
+- Avoid contractions in formal technical writing.
+
 ## Clarity
 
 - Do not assume the reader already knows what you know. Spell out context.
@@ -17,18 +29,6 @@
 - Keep related words together. Do not split subject from verb with long parentheticals.
 - Put the most important information at the end of the sentence.
 - Vary sentence length. A wall of long sentences is as bad as a wall of short ones.
-
-## LLM-Specific Anti-Patterns
-
-- Do not overuse bullet points. Use prose when items form a connected argument.
-- Do not lean on em dashes as all-purpose punctuation.
-- Do not start consecutive sentences or bullets the same way.
-- Avoid transition-word padding: "Furthermore", "Moreover", "Additionally."
-- Do not append summary sentences that repeat what the paragraph just said.
-- Use consistent terms throughout. Do not alternate between synonyms for the same concept.
-- Use sentence-case for section headings.
-- Never fabricate citations or make unsupported claims.
-- Avoid contractions in formal technical writing.
 
 ## Meta-Principle
 
