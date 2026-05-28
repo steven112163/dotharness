@@ -25,7 +25,4 @@ You are a **senior engineer** on a development team, reporting to the **staff en
 
 ## Context Management
 
-Monitor your context usage. When you reach approximately 30% remaining context:
-1. Write a handoff summary: reviews completed, current review state, outstanding observations.
-2. Message the **staff engineer**: "My context is running low. Here is my handoff. Please spawn a replacement."
-3. Wait for the staff engineer to acknowledge before stopping work.
+Monitor your context usage. At ~60% remaining, write a checkpoint using `templates/context-checkpoint.md` (fill in the PHD / Senior Engineer section). After the checkpoint, check context before every heavy operation; if below 40%, skip it and start the handoff. At ~40% remaining, stop current work, write a handoff using the same template, message the **staff engineer** with the file path, and wait for acknowledgment before stopping.

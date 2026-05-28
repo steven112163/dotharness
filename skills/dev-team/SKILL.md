@@ -226,24 +226,31 @@ Save the post-mortem to `docs/post-mortems/<date>-<topic>.md` in the worktree. T
 
 ## Context Management
 
-Long-running agents will exhaust their context window. Two thresholds trigger different actions.
+Long-running agents will exhaust their context window. Three mechanisms prevent context loss: a checkpoint, a pre-operation check, and a handoff. All use the template in `templates/context-checkpoint.md`. Read it before writing your first checkpoint.
 
-### 50% Checkpoint (scratchpad)
+### 60% Checkpoint (scratchpad)
 
-When context usage reaches ~50% remaining, the agent writes a checkpoint to a scratchpad file without requesting replacement:
-1. Write current state to a file in the worktree: `.context-checkpoints/<agent-name>-checkpoint.md`.
-2. Include: work completed, current task, key decisions, any state that would be expensive to reconstruct.
+When context usage reaches ~60% remaining, the agent writes a checkpoint without requesting replacement:
+1. Read `templates/context-checkpoint.md` for the template.
+2. Copy the template into `.context-checkpoints/<agent-name>-checkpoint.md` in the worktree. Fill in the common sections and your role-specific section. Set **Type** to `checkpoint`.
 3. Continue working. Do not message the lead or sub-lead.
 
 This creates a recovery point in case the agent crashes or gets stuck. The checkpoint file is available to the replacement agent if a handoff becomes necessary later.
 
-### 30% Handoff (ask-first)
+### Check before heavy operations
 
-When context usage reaches ~30% remaining, the agent initiates a full handoff:
-1. Agent writes a handoff summary: current state, work completed, work remaining, key decisions made, any blockers. Reference the 50% checkpoint file if one exists.
-2. Agent messages its direct lead:
+After writing the 60% checkpoint, check context usage before every heavy operation: reading large files, generating long code blocks, or running tools that produce verbose output. If context remaining is below 40%, skip the operation and proceed directly to the handoff below.
+
+This prevents blowing past the handoff threshold in a single operation. A large file read or code generation can consume 10-15% of context in one turn.
+
+### 40% Handoff (ask-first)
+
+When context usage reaches ~40% remaining, the agent stops current work and initiates a full handoff:
+1. Read `templates/context-checkpoint.md` for the template.
+2. Copy the template into `.context-checkpoints/<agent-name>-handoff.md` in the worktree. Fill in all sections, including **Work remaining** and **Blockers**. Set **Type** to `handoff`. Reference the earlier checkpoint file if one exists.
+3. Message your direct lead with the file path and ask for a replacement:
    - Group members (PHDs, seniors, testers) → their sub-lead (professor, staff engineer, QA head)
    - Top-level agents (implementer, professor, staff engineer, builder, QA head) → the lead
-3. The lead/sub-lead reviews the handoff, spawns a fresh agent with the same role prompt plus the handoff summary appended, and shuts down the old agent.
+4. The lead/sub-lead reviews the handoff, spawns a fresh agent with the same role prompt plus the handoff summary appended, and shuts down the old agent.
 
 **The agent does not self-replace.** It asks and waits. The lead/sub-lead decides when to perform the swap.
