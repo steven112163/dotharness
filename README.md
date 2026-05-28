@@ -6,6 +6,11 @@ Personal monorepo for Claude Code skills, rules, and configuration.
 
 ```
 skills/                          → own skills, symlinked to ~/.claude/skills/
+  dev-team/                      → hierarchical agent team orchestration
+    SKILL.md                     → 6-phase workflow (startup → impl loop → test → verify → report → post-mortem)
+    roles/                       → per-agent role prompts (8 files)
+  research/                      → multi-mode research with anti-sycophancy safeguards
+    SKILL.md                     → 4 modes (socratic, direct, deep, adversarial)
 rules/                           → symlinked to ~/.claude/rules/
 third-party/
   mattpocock-skills/             → git submodule (engineering + productivity skills)
@@ -44,6 +49,8 @@ User-level rules loaded automatically by Claude Code. Tailored for C++ / HIP / G
 
 ### Own skills
 Located in `skills/`, symlinked individually to `~/.claude/skills/`.
+- **dev-team** — hierarchical agent team (lead, implementer, professor + 3 PHDs, staff engineer + 3 seniors, builder, QA head + N testers). 6-phase workflow with verification gate, weighted code review, context checkpoints, and optional post-mortem.
+- **research** — four-mode research skill (socratic, direct, deep, adversarial) with anti-sycophancy safeguards. Usable by both humans and agents. Integrated into dev-team role prompts.
 
 ### Third-party (mattpocock/skills, MIT)
 Engineering and productivity skills, linked from the submodule:
