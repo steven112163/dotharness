@@ -1,22 +1,22 @@
 ---
-name: gpu-dev-team
-description: Use when tackling complex GPU/HPC development tasks that benefit from parallel research, implementation, code review, building, and testing by a coordinated agent team. Triggers include HIP/CUDA kernel development, performance-sensitive C++ on AMD MI-series GPUs, tasks requiring both correctness verification and performance profiling, or any GPU workload where a single agent would struggle with scope.
+name: dev-team
+description: Use when tackling complex development tasks that benefit from parallel research, implementation, code review, building, and testing by a coordinated agent team. Triggers include kernel development, performance-sensitive code, tasks requiring both correctness verification and performance profiling, or any workload where a single agent would struggle with scope.
 ---
 
-# GPU Dev Team
+# Dev Team
 
 ## Overview
 
-Orchestrate a hierarchical agent team for GPU/HPC development. The lead (you, the current session) coordinates five specialized groups — researchers, implementer, reviewers, builder, and QA — through four phases: startup, implementation loop, testing, and reporting.
+Orchestrate a hierarchical agent team for complex development tasks. The lead (you, the current session) coordinates five specialized groups — researchers, implementer, reviewers, builder, and QA — through four phases: startup, implementation loop, testing, and reporting.
 
 **Core principle:** Group leaders (professor, staff engineer, QA head) are both participants and gatekeepers. They contribute their own expertise, aggregate group input, and deliver a single consolidated response. No agent outside a group contacts group members directly.
 
 ## When to Use
 
-- HIP/CUDA kernel development on AMD MI-series GPUs
-- Performance-sensitive C++ requiring research, review, and benchmarking
+- Complex features requiring research, implementation, review, and testing
+- Performance-sensitive code requiring benchmarking and profiling
 - Tasks large enough to benefit from parallel research and implementation
-- Work needing both correctness verification and performance profiling
+- Work needing both correctness verification and performance validation
 
 **Do not use for:** Single-file fixes, documentation updates, simple refactors, or tasks completable by one agent in a few iterations.
 
@@ -122,7 +122,7 @@ digraph workflow {
 ### Phase 1: Startup
 
 1. Analyze the user's task.
-2. Create the team (`gpu-dev-team`).
+2. Create the team (`dev-team`).
 3. Create a worktree for code isolation.
 4. Spawn top-level agents: implementer, professor, staff-engineer, builder, qa-head.
 5. Professor spawns phd-1, phd-2, phd-3.
@@ -155,9 +155,9 @@ digraph workflow {
 
 **Test dimensions** (QA head selects based on the task):
 - **Correctness:** unit tests, integration tests, edge cases
-- **Performance:** benchmarks, profiling, roofline analysis
-- **Compatibility:** different GPU architectures (MI-series variants)
-- **Memory safety:** sanitizers, bounds checking
+- **Performance:** benchmarks, profiling, bottleneck analysis
+- **Compatibility:** different platforms, architectures, or configurations
+- **Safety:** sanitizers, bounds checking, static analysis
 
 **If tests fail:** Lead decides whether to send the implementer back to Phase 2 (iteration counter resets to 1 for the new fix cycle) or report to the user.
 
