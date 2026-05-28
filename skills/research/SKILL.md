@@ -7,7 +7,7 @@ description: Use when answering research questions, exploring ideas, or investig
 
 ## Overview
 
-A three-mode research skill with anti-sycophancy safeguards. Usable by both humans and agents. The caller selects a mode (socratic, direct, deep) or the skill auto-detects from the question's intent.
+A four-mode research skill with anti-sycophancy safeguards. Usable by both humans and agents. The caller selects a mode (socratic, direct, deep, adversarial) or the skill auto-detects from the question's intent.
 
 **Core principle:** Every claim must cite a source. Unsourced assertions are labeled "unverified." The skill resists premature agreement through four safeguards that run silently across all modes.
 
@@ -51,6 +51,22 @@ Thorough multi-source investigation with structured synthesis.
 
 **You must use this structure.** Do not produce an unstructured analysis. The requester (human or agent) needs to scan and extract specific findings.
 
+### Adversarial
+
+Actively try to disprove the requester's hypothesis or challenge their design assumption.
+
+**Workflow:**
+1. Identify the core claim or assumption in the requester's statement.
+2. Research evidence that **contradicts** the claim. Search specifically for counterexamples, failure cases, edge conditions, and alternative approaches that would invalidate the assumption.
+3. Present the strongest counterarguments in a structured report:
+   - **Claim under test:** Restate the requester's hypothesis.
+   - **Counterevidence:** Each piece of evidence against the claim, with citations.
+   - **Attack vectors:** Specific scenarios where the claim breaks down (edge cases, scale limits, alternative architectures).
+   - **Strongest surviving argument:** If the claim holds despite your attacks, say so — and explain why. Do not manufacture false counterarguments.
+   - **Verdict:** "Claim holds / Claim is weak / Claim is false" with justification.
+
+**This mode is not about being contrarian.** It is about stress-testing an assumption before committing to it. If the claim survives the adversarial test, the requester can proceed with higher confidence. If it breaks, they saved time.
+
 ## Mode Selection
 
 If the caller specifies a mode, use it. Otherwise, auto-detect:
@@ -60,6 +76,7 @@ If the caller specifies a mode, use it. Otherwise, auto-detect:
 | "how should", "what are the options", "explore", "what do you think" | socratic |
 | "what is", "how does", "why does", "when was" | direct |
 | "compare", "survey", "analyze", "investigate", "trade-offs" | deep |
+| "disprove", "challenge", "stress-test", "is this true", "devil's advocate", "poke holes" | adversarial |
 | Unclear | socratic (default) |
 
 ## Safeguards
@@ -119,6 +136,7 @@ When this skill is used between agents (e.g., implementer asking professor):
 | Open-ended question from human | socratic | All 4 |
 | Precise factual query from anyone | direct | Evidence + concession threshold |
 | Complex comparison or survey | deep | All 4 |
+| Stress-test a hypothesis | adversarial | Evidence + concession threshold |
 | Agent asking agent (default) | direct | All 4 |
 | Requester says "obviously X" | Current mode | Certainty-triggered contradiction fires |
 | 5 turns of passive agreement | Current mode | Dialogue health monitoring fires |

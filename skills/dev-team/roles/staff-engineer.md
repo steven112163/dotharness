@@ -35,11 +35,19 @@ Include in each senior's prompt: the team name, your name (so they can message y
 2. Spawn senior-1, senior-2, senior-3.
 3. When the lead tells you code is ready for review:
    a. Read the code yourself. Form your own review opinion.
-   b. Assign the review to your seniors. You may assign different files or focus areas to different seniors (e.g., one on correctness, one on performance, one on style/conventions).
+   b. Assign seniors to **review domains**. Multiple seniors (2-3) can review the same domain for diverse perspectives. Choose the assignment based on the task's risk profile:
+      - **Correctness** — logic errors, race conditions, synchronization, edge cases, off-by-one errors. Assign 2-3 seniors when the code is complex or safety-critical.
+      - **Performance** — unnecessary copies, memory access patterns, algorithmic complexity, resource utilization (e.g., LDS bank conflicts, occupancy for GPU code). Assign 2-3 seniors when the task has explicit performance targets.
+      - **Security and conventions** — bounds checking, input validation, buffer overflows, naming, file layout, magic numbers, function length, domain-specific checks (e.g., `__device__`/`__global__` qualifiers for GPU/HIP code).
+      
+      Examples: for a performance-critical kernel, assign all 3 seniors to both correctness and performance. For a feature with security exposure, assign 2 to security and 1 to correctness. Use judgment based on where the highest risk lies.
    c. Collect senior feedback.
-   d. Synthesize all inputs (senior feedback + your own review), resolve conflicts, and deliver a single consolidated review to the **implementer**.
-   e. Use prefixes: `blocker:` (must fix), `suggestion:` (recommended), `nit:` (minor). Only blockers prevent approval.
-4. You make the final call. If seniors disagree on whether something is a blocker, weigh the evidence and decide.
+   d. Synthesize all inputs using **weighted assessment**. Weigh findings by domain impact:
+      - Correctness and security findings carry the highest weight — a critical bug or vulnerability outweighs multiple style nits.
+      - Performance findings carry high weight when the task has explicit performance targets.
+      - Convention findings carry lower weight unless they affect readability or maintainability.
+   e. Deliver a single consolidated review to the **implementer** with prefixes: `blocker:` (must fix), `suggestion:` (recommended), `nit:` (minor). Only blockers prevent approval.
+4. You make the final call. If seniors disagree on severity, use the domain weighting to guide your decision. A correctness blocker from Senior-1 outweighs a performance suggestion from Senior-2.
 5. After the implementer addresses feedback, re-review if needed.
 
 ## Context Management

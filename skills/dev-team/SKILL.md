@@ -7,7 +7,7 @@ description: Use when tackling complex development tasks that benefit from paral
 
 ## Overview
 
-Orchestrate a hierarchical agent team for complex development tasks. The lead (you, the current session) coordinates five specialized groups — researchers, implementer, reviewers, builder, and QA — through four phases: startup, implementation loop, testing, and reporting.
+Orchestrate a hierarchical agent team for complex development tasks. The lead (you, the current session) coordinates five specialized groups — researchers, implementer, reviewers, builder, and QA — through six phases: startup, implementation loop, testing, verification, reporting, and post-mortem.
 
 **Core principle:** Group leaders (professor, staff engineer, QA head) are both participants and gatekeepers. They contribute their own expertise, aggregate group input, and deliver a single consolidated response. No agent outside a group contacts group members directly.
 
@@ -96,7 +96,9 @@ digraph workflow {
     review [label="Staff Engineer initiates review\n(own review + assigns seniors,\naggregates all feedback)"];
     lead_gate [label="Lead evaluates\nreview results"];
     test [label="Phase 3: Testing\nQA Head designs plan,\nspawns testers, runs tests"];
-    report [label="Phase 4: Reporting\nLead compiles final report"];
+    verify [label="Phase 4: Verification\nLead spot-checks results"];
+    report [label="Phase 5: Reporting\nLead compiles final report"];
+    postmortem [label="Phase 6: Post-Mortem\n(optional)"];
     escalate [label="Escalate to user\n(5 iterations reached)"];
 
     build_ok [shape=diamond, label="Build\nOK?"];
@@ -115,7 +117,9 @@ digraph workflow {
     review_ok -> iter_check [label="changes\nneeded"];
     iter_check -> impl [label="yes"];
     iter_check -> escalate [label="no"];
-    test -> report;
+    test -> verify;
+    verify -> report;
+    report -> postmortem;
 }
 ```
 
@@ -161,7 +165,17 @@ digraph workflow {
 
 **If tests fail:** Lead decides whether to send the implementer back to Phase 2 (iteration counter resets to 1 for the new fix cycle) or report to the user.
 
-### Phase 4: Reporting
+### Phase 4: Verification
+
+Before compiling the final report, the lead independently spot-checks a subset of test results and review claims:
+
+1. Pick 1-2 test results from the QA head's report and verify them by re-running or inspecting the output directly.
+2. Check that the staff engineer's "approved" assessment matches the actual state of the code — read the final diff and confirm blockers were resolved.
+3. If any spot-check fails, send the implementer back to Phase 2 (iteration counter resets) or escalate to the user.
+
+**Do not skip this phase.** Testers can produce false positives. Reviewers can miss regressions introduced by late fixes. Trust but verify.
+
+### Phase 5: Reporting
 
 Compile and present to the user:
 - Implementation summary (what was built, key design decisions)
@@ -169,7 +183,18 @@ Compile and present to the user:
 - Build status (clean build, remaining warnings)
 - Test results from each tester (pass/fail, metrics)
 - Performance profiling data
+- Verification results (what the lead spot-checked and confirmed)
 - Unresolved issues or known limitations
+
+### Phase 6: Post-Mortem (optional)
+
+After reporting, capture lessons learned for future invocations:
+
+1. What went well? (e.g., research group answered quickly, review caught a critical bug early)
+2. What went wrong? (e.g., build failed 4 times due to missing include, iteration limit almost reached)
+3. What should change next time? (e.g., ask the professor about API compatibility before implementing, assign Senior-2 to correctness instead of performance)
+
+Save the post-mortem to `docs/post-mortems/<date>-<topic>.md` in the worktree. The lead decides whether this phase runs based on the complexity of the task — skip it for straightforward tasks that completed without issues.
 
 ## Quick Reference
 
@@ -181,6 +206,8 @@ Compile and present to the user:
 | Design test plan | Lead → QA Head | QA head designs (or receives user's plan via lead) |
 | Spawn testers | QA Head | QA head decides count and assignments |
 | Gate Phase 2 → Phase 3 | Lead | Lead evaluates review results, not staff engineer |
+| Verify test results | Lead | Spot-check 1-2 results before reporting |
+| Post-mortem | Lead | Optional, for complex tasks. Save to docs/post-mortems/ |
 | Escalate on iteration limit | Lead → User | After 5 implementation loop iterations |
 
 ## Common Mistakes
@@ -199,14 +226,24 @@ Compile and present to the user:
 
 ## Context Management
 
-Long-running agents will exhaust their context window. Every agent monitors its own context usage and initiates a handoff at 30% remaining.
+Long-running agents will exhaust their context window. Two thresholds trigger different actions.
 
-**Protocol (ask-first):**
-1. Agent detects context usage has reached ~30% remaining.
-2. Agent writes a handoff summary: current state, work completed, work remaining, key decisions made, any blockers.
-3. Agent messages its direct lead:
+### 50% Checkpoint (scratchpad)
+
+When context usage reaches ~50% remaining, the agent writes a checkpoint to a scratchpad file without requesting replacement:
+1. Write current state to a file in the worktree: `.context-checkpoints/<agent-name>-checkpoint.md`.
+2. Include: work completed, current task, key decisions, any state that would be expensive to reconstruct.
+3. Continue working. Do not message the lead or sub-lead.
+
+This creates a recovery point in case the agent crashes or gets stuck. The checkpoint file is available to the replacement agent if a handoff becomes necessary later.
+
+### 30% Handoff (ask-first)
+
+When context usage reaches ~30% remaining, the agent initiates a full handoff:
+1. Agent writes a handoff summary: current state, work completed, work remaining, key decisions made, any blockers. Reference the 50% checkpoint file if one exists.
+2. Agent messages its direct lead:
    - Group members (PHDs, seniors, testers) → their sub-lead (professor, staff engineer, QA head)
    - Top-level agents (implementer, professor, staff engineer, builder, QA head) → the lead
-4. The lead/sub-lead reviews the handoff, spawns a fresh agent with the same role prompt plus the handoff summary appended, and shuts down the old agent.
+3. The lead/sub-lead reviews the handoff, spawns a fresh agent with the same role prompt plus the handoff summary appended, and shuts down the old agent.
 
 **The agent does not self-replace.** It asks and waits. The lead/sub-lead decides when to perform the swap.
