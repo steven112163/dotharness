@@ -80,6 +80,7 @@ Lifecycle hooks registered in `~/.claude/settings.json` by `setup.sh`. Scripts l
 |------|-------|---------|---------|
 | `anti-sycophancy.sh` | UserPromptSubmit | Every prompt | Detects confirmatory language ("right?", "looks good"), injects critical-thinking reminder |
 | `block-dangerous.sh` | PreToolUse | Bash commands | Blocks `rm -rf`, `git push --force`, `DROP TABLE`, `.env` writes, `killall` |
+| `commit-lint.sh` | PreToolUse | Bash commands | Validates commit messages against conventional commits format, rejects non-conforming messages |
 | `auto-approve.sh` | PreToolUse | Bash commands | Auto-approves known-safe read-only commands (linters, checkers, `ctest`) |
 | `auto-format.sh` | PostToolUse | Write/Edit | Runs clang-format (.cpp/.hip/.cu), ruff/black (.py), jq (.json), shfmt (.sh) |
 | `security-scan.sh` | PostToolUse | Write/Edit | Detects hardcoded AWS keys, API secrets, private keys, passwords, GitHub/GitLab tokens |

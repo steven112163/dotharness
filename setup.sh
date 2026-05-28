@@ -91,6 +91,7 @@ if [ -f "$SETTINGS" ] && command -v jq &>/dev/null; then
     register_hook "PostCompact"     "bash ~/.claude/hooks/context-restore.sh"  "context-restore hook" 5
     register_hook "Notification"    "bash ~/.claude/hooks/notify-prompt.sh"    "notify-prompt hook"   5
     register_hook "PreToolUse"      "bash ~/.claude/hooks/auto-approve.sh"     "auto-approve hook"    5  "Bash"
+    register_hook "PreToolUse"      "bash ~/.claude/hooks/commit-lint.sh"      "commit-lint hook"     5  "Bash"
 elif [ ! -f "$SETTINGS" ]; then
     echo "  skipped (no settings.json found)"
 elif ! command -v jq &>/dev/null; then

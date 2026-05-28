@@ -7,9 +7,13 @@
 
 ## Commit Message Format
 
+Subject line format (enforced by `commit-lint` hook):
+
 ```
 <type>(<scope>): <subject>
 ```
+
+Scope is optional. Subject uses imperative mood ("add", not "adds" or "added"), starts lowercase, and has no trailing period.
 
 | type | Purpose |
 |------|---------|
@@ -23,6 +27,10 @@
 | example | Adding or updating examples |
 | chore | Build, tooling, or dependency changes |
 
+Subject line limits:
+- Maximum 72 characters (type + scope + separator + subject combined).
+- Separate subject from body with a blank line.
+
 When a commit covers multiple points, use a body list:
 
 ```
@@ -31,6 +39,16 @@ feat(web): implement email verification workflow
 - Add token generation service
 - Create verification email template
 - Add API endpoint for token validation
+```
+
+Bad examples (rejected by hook):
+
+```
+Update files                          # missing type
+feat - add login                      # wrong separator
+Feat(web): Add login                  # type must be lowercase
+feat(web): Add login.                 # no trailing period
+feat(web):add login                   # missing space after colon
 ```
 
 ## Branch conventions
