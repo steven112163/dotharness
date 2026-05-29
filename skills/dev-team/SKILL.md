@@ -72,6 +72,8 @@ roles/
 
 Sub-leads (professor, staff engineer, QA head) read the role files for their group members and include them when spawning.
 
+**Every spawn also carries a task brief.** The role file says *who the agent is*; the task brief says *what this specific assignment is*. Append a filled brief from `templates/task-brief.md` to the `prompt` of every Agent spawn (lead spawning top-level agents, and sub-leads spawning members). A brief states the objective, the expected output format, explicit boundaries (what not to touch), and done-criteria. Vague assignments are the largest single source of duplicated and misdirected work; the brief is the cheapest defense.
+
 ### Communication Rules
 
 These are strict. Violating them defeats the purpose of the hierarchy.
@@ -81,6 +83,21 @@ These are strict. Violating them defeats the purpose of the hierarchy.
 - **QA group:** Only the QA head is contactable from outside. Testers talk only to the QA head.
 - **Professor is open:** Any agent can send research questions to the professor. This is the one cross-group channel.
 - **The lead does NOT write code.** The implementer writes all code. The lead orchestrates.
+- **Surface dissent, do not average it away.** When a sub-lead (professor, staff engineer, QA head) aggregates group input, it must report material disagreement to the requester, not just the synthesized verdict. Hiding a minority view that turns out correct is a coordination failure. State the majority position, the dissent, and why you ruled the way you did.
+
+## File and Message Conventions
+
+All files an agent writes (checkpoints, handoffs, reports, reviews) go under a single per-task directory:
+
+```
+.claude/.dev-team/<task_name>/<role>-<kind>.md
+```
+
+- `<task_name>` is a short slug the lead picks at startup (e.g. `fmha-backward`) and passes to every agent it spawns. Sub-leads pass it to their members.
+- `<kind>` is `checkpoint`, `handoff`, `report`, `review`, `test-report`, or a topic slug (e.g. `professor-tiling-report.md`, `staff-engineer-review.md`, `implementer-checkpoint.md`).
+- The lead ensures this directory is excluded from git at startup (see Phase 1). These are coordination scratch files, not deliverables — they must not enter the repo's git tree.
+
+**Artifact returns over chat returns.** Long outputs (a full consolidated review, a deep research report, a test report) are written to a file under the task directory. The producing agent then messages a path plus a summary of three lines or fewer, not the full text. Short, direct answers (a single spec value, a yes/no) go inline in the message. This keeps the lead's and sub-leads' context from filling with pasted reports.
 
 ## Workflow
 
@@ -125,13 +142,19 @@ digraph workflow {
 
 ### Phase 1: Startup
 
-1. Analyze the user's task.
+1. Analyze the user's task. Pick a short `<task_name>` slug (e.g. `fmha-backward`).
 2. Create the team (`dev-team`).
 3. Create a worktree for code isolation.
-4. Spawn top-level agents: implementer, professor, staff-engineer, builder, qa-head.
-5. Professor spawns phd-1, phd-2, phd-3.
-6. Staff engineer spawns senior-1, senior-2, senior-3.
-7. Implementer begins working in the worktree. If it needs information, it asks the professor.
+4. Exclude the coordination directory from git: add `.claude/.dev-team/` to `.git/info/exclude` if it is not already ignored. (`.git/info/exclude` is in the shared git dir, so it covers the worktree too, and it is not a tracked file — nothing in the repo's git tree changes.) Create `.claude/.dev-team/<task_name>/`.
+5. Spawn the top-level agents only: implementer, professor, staff-engineer, builder, qa-head. Pass each one the `<task_name>` and the team name. **Do not spawn group members yet.**
+6. Implementer begins working in the worktree. If it needs information, it asks the professor.
+
+**Spawn group members lazily, not eagerly.** A team of ~10 idle agents burns tokens and context for no benefit; spawning too many agents up front is a top failure mode. Sub-leads spawn their members only when work actually arrives:
+- **Professor** spawns PHDs on the first research question (count and model mix per the professor's sizing guidelines).
+- **Staff engineer** spawns seniors when the first build passes and review begins.
+- **QA head** spawns testers in Phase 3.
+
+A sub-lead with no incoming work stays a single agent. Members are spawned per the sizing guidelines in each sub-lead's role file.
 
 ### Phase 2: Implementation Loop (max 5 iterations)
 
@@ -139,7 +162,7 @@ digraph workflow {
 2. **Builder** builds the code.
    - On failure: builder reports errors to implementer. Implementer fixes and builder rebuilds. The build-fix sub-loop does not increment the iteration counter — only a complete implement-build-review cycle does.
    - On success: proceed to review.
-3. **Staff engineer** initiates review: reviews the code personally, assigns seniors to review, aggregates all feedback (including own), and sends consolidated feedback to implementer.
+3. **Staff engineer** initiates review: spawns seniors if not already spawned, reviews the code personally, assigns seniors to review, aggregates all feedback (including own), writes the consolidated review to `.claude/.dev-team/<task_name>/staff-engineer-review.md`, and messages the implementer the path plus a short summary. The review must surface any senior dissent, not just the staff engineer's verdict.
 4. **Lead evaluates** the review results. The lead — not the staff engineer — gates the transition to Phase 3.
    - If the lead judges the code quality sufficient: proceed to Phase 3.
    - If changes are needed: **increment iteration counter**, implementer fixes, return to step 1.
@@ -200,6 +223,10 @@ Save the post-mortem to `docs/post-mortems/<date>-<topic>.md` in the worktree. T
 
 | What | Who | Rule |
 |------|-----|------|
+| Spawn any agent | Lead / sub-leads | Append a filled `templates/task-brief.md` to the role prompt |
+| Spawn group members | Sub-leads | Lazily, on first real work — not at startup |
+| Return a long output | Producer | Write to `.claude/.dev-team/<task_name>/`, message path + ≤3-line summary |
+| Aggregate group input | Sub-leads | Report dissent, not just the synthesized verdict |
 | Ask a research question | Any agent → Professor | Professor routes to PHDs, aggregates, responds |
 | Request code review | Lead → Staff Engineer | Staff engineer reviews + assigns seniors, aggregates, responds to implementer |
 | Report build error | Builder → Implementer | Direct, no intermediary needed |
@@ -212,7 +239,13 @@ Save the post-mortem to `docs/post-mortems/<date>-<topic>.md` in the worktree. T
 
 ## Common Mistakes
 
-**Flat team instead of hierarchy.** Without this skill, agents create 3-4 direct reports (one researcher, one tester, one reviewer). The skill requires group leaders with subordinates: professor + 3 PHDs, staff engineer + 3 seniors, QA head + N testers.
+**Flat team instead of hierarchy.** Without this skill, agents create 3-4 direct reports (one researcher, one tester, one reviewer). The skill requires group leaders with subordinates: professor + PHDs, staff engineer + seniors, QA head + testers.
+
+**Eager spawning.** Spawning every PHD, senior, and tester at startup creates a crowd of idle agents that drain tokens and context before any work exists for them. Sub-leads spawn members only when work arrives (first research question, first passing build, Phase 3).
+
+**Synthesizing away disagreement.** When a sub-lead aggregates, collapsing a real conflict into a clean verdict hides the signal the lead needs. Report the dissent alongside the decision.
+
+**Pasting long reports into messages.** A full review or research report pasted into a message fills the recipient's context. Write it to a file under `.claude/.dev-team/<task_name>/` and send the path plus a short summary.
 
 **Lead writes code.** The lead orchestrates. The implementer writes all code. If you find yourself editing files, stop — that is the implementer's job.
 
@@ -232,7 +265,7 @@ Long-running agents will exhaust their context window. Three mechanisms prevent 
 
 When context usage reaches ~60% remaining, the agent writes a checkpoint without requesting replacement:
 1. Read `templates/context-checkpoint.md` for the template.
-2. Copy the template into `.context-checkpoints/<agent-name>-checkpoint.md` in the worktree. Fill in the common sections and your role-specific section. Set **Type** to `checkpoint`.
+2. Copy the template into `.claude/.dev-team/<task_name>/<role>-checkpoint.md`. Fill in the common sections and your role-specific section. Set **Type** to `checkpoint`.
 3. Continue working. Do not message the lead or sub-lead.
 
 This creates a recovery point in case the agent crashes or gets stuck. The checkpoint file is available to the replacement agent if a handoff becomes necessary later.
@@ -247,7 +280,7 @@ This prevents blowing past the handoff threshold in a single operation. A large 
 
 When context usage reaches ~40% remaining, the agent stops current work and initiates a full handoff:
 1. Read `templates/context-checkpoint.md` for the template.
-2. Copy the template into `.context-checkpoints/<agent-name>-handoff.md` in the worktree. Fill in all sections, including **Work remaining** and **Blockers**. Set **Type** to `handoff`. Reference the earlier checkpoint file if one exists.
+2. Copy the template into `.claude/.dev-team/<task_name>/<role>-handoff.md`. Fill in all sections, including **Work remaining** and **Blockers**. Set **Type** to `handoff`. Reference the earlier checkpoint file if one exists.
 3. Message your direct lead with the file path and ask for a replacement:
    - Group members (PHDs, seniors, testers) → their sub-lead (professor, staff engineer, QA head)
    - Top-level agents (implementer, professor, staff engineer, builder, QA head) → the lead

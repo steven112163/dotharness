@@ -83,7 +83,7 @@ Fill in the section that matches your role. Delete the others.
 
 ### 60% checkpoint
 
-1. Copy the template above into `.context-checkpoints/<agent-name>-checkpoint.md` in the worktree.
+1. Copy the template above into `.claude/.dev-team/<task_name>/<role>-checkpoint.md`.
 2. Fill in the common sections and your role-specific section.
 3. Set **Type** to `checkpoint`.
 4. Continue working. Do not message your lead.
@@ -92,7 +92,7 @@ Fill in the section that matches your role. Delete the others.
 ### 40% handoff
 
 1. Stop current work.
-2. Copy the template into `.context-checkpoints/<agent-name>-handoff.md` in the worktree.
+2. Copy the template into `.claude/.dev-team/<task_name>/<role>-handoff.md`.
 3. Fill in all sections, including **Work remaining** and **Blockers**.
 4. Set **Type** to `handoff`.
 5. Reference the earlier checkpoint file if one exists.
