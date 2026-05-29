@@ -23,9 +23,28 @@ fi
 # Skip --allow-empty-message
 echo "$cmd" | grep -qE '\b--allow-empty-message\b' && exit 0
 
-# Extract subject line from -m argument.
-# Handles: -m "msg", -m 'msg', and HEREDOC patterns.
+# Extract subject line from the message source.
+# Handles: -F/--file <file>, HEREDOC, -m "msg", and -m 'msg'.
 subject=""
+
+# Try -F <file> / --file <file> / --file=<file>: read the message file.
+msg_file=$(echo "$cmd" | grep -oP '(?<=\s-F\s)(\S+)' | head -1)
+[ -z "$msg_file" ] && msg_file=$(echo "$cmd" | grep -oP '(?<=--file=)(\S+)' | head -1)
+[ -z "$msg_file" ] && msg_file=$(echo "$cmd" | grep -oP '(?<=\s--file\s)(\S+)' | head -1)
+if [ -n "$msg_file" ]; then
+    # Message read from stdin (-F -) cannot be validated before execution.
+    [ "$msg_file" = "-" ] && exit 0
+    msg_file=${msg_file%\"}; msg_file=${msg_file#\"}
+    msg_file=${msg_file%\'}; msg_file=${msg_file#\'}
+    # First line that is neither blank nor a git comment.
+    [ -f "$msg_file" ] && subject=$(grep -vE '^[[:space:]]*(#|$)' "$msg_file" | head -1)
+fi
+
+# Try HEREDOC before -m so `-m "$(cat <<'EOF' ... EOF)"` reads the real
+# subject, not the command-substitution wrapper on the -m line.
+if [ -z "$subject" ] && echo "$cmd" | grep -qE '<<.*EOF'; then
+    subject=$(echo "$cmd" | sed -n "/<<.*EOF/,/EOF/p" | grep -vE '(EOF|<<)' | grep -v '^\s*$' | head -1)
+fi
 
 # Try -m "..." (double-quoted)
 if [ -z "$subject" ]; then
@@ -35,11 +54,6 @@ fi
 # Try -m '...' (single-quoted)
 if [ -z "$subject" ]; then
     subject=$(echo "$cmd" | grep -oP "(?<=-m\\s')([^']*)" | head -1)
-fi
-
-# Try HEREDOC: first non-blank line between << and EOF markers
-if [ -z "$subject" ]; then
-    subject=$(echo "$cmd" | sed -n "/<<.*EOF/,/EOF/p" | grep -vE '(EOF|<<)' | grep -v '^\s*$' | head -1)
 fi
 
 # No message found — nothing to validate
