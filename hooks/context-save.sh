@@ -1,8 +1,12 @@
 #!/bin/bash
 # PreCompact hook: capture session state before compaction.
 # Saves git state and working context so PostCompact can restore it.
+# Stored repo-locally (not $HOME) since the captured state is repo-specific.
 
-state_file="${HOME}/.claude/.session-state.md"
+root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+state_dir="$root/.claude/.dotharness"
+mkdir -p "$state_dir" 2>/dev/null
+state_file="$state_dir/session-state.md"
 
 {
     echo "# Session state (pre-compaction)"

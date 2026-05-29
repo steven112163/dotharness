@@ -31,3 +31,6 @@ echo "$cmd" | grep -qE '^ctest\b' && approve "ctest"
 echo "$cmd" | grep -qE '^cmake --build .+ --target (check|test)\b' && approve "cmake check/test"
 echo "$cmd" | grep -qE '^make (check|lint|test)\b' && approve "make check/lint/test"
 echo "$cmd" | grep -qE '^(shellcheck|shfmt -d)\b' && approve "shell linter"
+
+# No pattern matched: defer to the normal permission flow without erroring.
+exit 0
