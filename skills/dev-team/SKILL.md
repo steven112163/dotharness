@@ -27,12 +27,12 @@ Lead (you)
 ├── Implementer
 ├── Professor (research gatekeeper)
 │   ├── PHD-1
-│   ├── PHD-2
-│   └── PHD-3
+│   ├── ...
+│   └── PHD-N (1-5, decided by professor; PHDs can discuss with each other)
 ├── Staff Engineer (review gatekeeper)
 │   ├── Senior-1
-│   ├── Senior-2
-│   └── Senior-3
+│   ├── ...
+│   └── Senior-N (1-5, decided by staff engineer)
 ├── Builder
 └── QA Head (test gatekeeper)
     ├── Tester-1
@@ -47,9 +47,9 @@ Lead (you)
 | **Lead** | Orchestrate all groups, decompose user task, gate phase transitions, compile final report | User | Everyone |
 | **Implementer** | Write code in the worktree, fix bugs from builder, fix issues from review feedback | Lead | Lead, builder, staff-engineer, professor |
 | **Professor** | Receive research questions from any agent. Route to PHDs, contribute own research, aggregate all opinions, deliver final answer. Professor makes the final call. | Lead | Any agent in the team |
-| **PHD-1, PHD-2, PHD-3** | Answer research questions assigned by professor | Professor | Professor only |
-| **Staff Engineer** | Review code personally, assign reviews to seniors, aggregate all feedback (including own), deliver consolidated feedback to implementer. Staff engineer makes the final call. | Lead | Lead, implementer |
-| **Senior-1, Senior-2, Senior-3** | Review code assigned by staff engineer | Staff Engineer | Staff engineer only |
+| **PHD-1 ... N** | Answer research questions assigned by professor. Count and model mix decided by professor. PHDs can discuss findings with each other. | Professor | Professor and other PHDs |
+| **Staff Engineer** | Review code personally, spawn and assign seniors (1-5, based on task scope), aggregate all feedback (including own), deliver consolidated feedback to implementer. Staff engineer makes the final call. Spawn with model: `opus`. | Lead | Lead, implementer |
+| **Senior-1 ... N** | Review code assigned by staff engineer. Count and model mix decided by staff engineer (alternate `opus` and `sonnet` for diverse perspectives). | Staff Engineer | Staff engineer only |
 | **Builder** | Build implementer's code, report compilation errors/warnings to implementer | Lead | Lead, implementer |
 | **QA Head** | Receive task context from lead. Design test plan (or receive one from user via lead). Spawn testers, assign test tasks, aggregate results, report to lead. | Lead | Lead |
 | **Tester-1 ... N** | Execute assigned tests, report results to QA head. Count decided by QA head. | QA Head | QA head only |
@@ -76,7 +76,7 @@ Sub-leads (professor, staff engineer, QA head) read the role files for their gro
 
 These are strict. Violating them defeats the purpose of the hierarchy.
 
-- **Research group:** Only the professor is contactable from outside. PHDs talk only to the professor.
+- **Research group:** Only the professor is contactable from outside. PHDs can talk to the professor and to each other (peer discussion, debate). PHDs must not contact agents outside the research group.
 - **Review group:** Only the staff engineer is contactable from outside. Seniors talk only to the staff engineer.
 - **QA group:** Only the QA head is contactable from outside. Testers talk only to the QA head.
 - **Professor is open:** Any agent can send research questions to the professor. This is the one cross-group channel.
