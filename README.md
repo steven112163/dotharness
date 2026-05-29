@@ -14,11 +14,12 @@ skills/                          → own skills, symlinked to ~/.claude/skills/
   create-pr/                     → PR creation with CK team template
     SKILL.md                     → 5-step workflow (gather → collect → test → format → push)
 hooks/                           → hook scripts, symlinked to ~/.claude/hooks/
+output-styles/                   → output styles, symlinked to ~/.claude/output-styles/
 rules/                           → symlinked to ~/.claude/rules/
 third-party/
   mattpocock-skills/             → git submodule (engineering + productivity skills)
 statusline.sh                    → symlinked to ~/.claude/statusline.sh
-setup.sh                         → creates symlinks, registers hooks, installs plugins
+setup.sh                         → creates symlinks, registers hooks, sets output style, installs plugins
 ```
 
 ## Setup
@@ -28,7 +29,7 @@ git submodule update --init
 ./setup.sh
 ```
 
-Symlinks `skills/`, `hooks/`, `rules/`, third-party skills, and `statusline.sh` into `~/.claude/`. Registers hooks in `~/.claude/settings.json` (requires `jq`). Installs plugins via the Claude CLI. Existing files are backed up to `.bak`.
+Symlinks `skills/`, `hooks/`, `output-styles/`, `rules/`, third-party skills, and `statusline.sh` into `~/.claude/`. Registers hooks and sets the `dotharness` output style in `~/.claude/settings.json` (requires `jq`), creating that file if it does not yet exist (fresh-machine safe). Installs plugins via the Claude CLI. Existing files are backed up to `.bak`. Re-running is idempotent.
 
 ## Rules
 
@@ -82,15 +83,24 @@ Lifecycle hooks registered in `~/.claude/settings.json` by `setup.sh`. Scripts l
 | Hook | Event | Trigger | Purpose |
 |------|-------|---------|---------|
 | `anti-sycophancy.sh` | UserPromptSubmit | Every prompt | Detects confirmatory language ("right?", "looks good"), injects critical-thinking reminder |
-| `block-dangerous.sh` | PreToolUse | Bash commands | Blocks `rm -rf`, `git push --force`, `DROP TABLE`, `.env` writes, `killall` |
-| `commit-lint.sh` | PreToolUse | Bash commands | Validates commit messages against conventional commits format, rejects non-conforming messages |
+| `block-dangerous.sh` | PreToolUse | Bash / Write / Edit | Blocks `rm -rf`, `git push --force`, `DROP TABLE`, `killall`; denies Write/Edit to `.env`, SSH/AWS keys, `/etc/` |
 | `auto-approve.sh` | PreToolUse | Bash commands | Auto-approves known-safe read-only commands (linters, checkers, `ctest`) |
+| `commit-lint.sh` | PreToolUse | Bash commands | Validates commit messages against conventional commits format, rejects non-conforming messages |
 | `auto-format.sh` | PostToolUse | Write/Edit | Runs clang-format (.cpp/.hip/.cu), ruff/black (.py), jq (.json), shfmt (.sh) |
 | `security-scan.sh` | PostToolUse | Write/Edit | Detects hardcoded AWS keys, API secrets, private keys, passwords, GitHub/GitLab tokens |
-| `context-save.sh` | PreCompact | Compaction | Saves git state and working context to `~/.claude/.session-state.md` |
-| `context-restore.sh` | PostCompact | Compaction | Re-injects saved session state as additional context after compaction |
-| `notify-stop.sh` | Stop | Session stop | Desktop notification via `notify-send` (main session only, not sub-agents) |
+| `session-start.sh` | SessionStart | Start/resume/clear/compact | Injects git branch, status, recent commits; sets `PROJECT_ROOT`; re-injects saved state after compaction |
+| `session-end.sh` | SessionEnd | Session end | Prunes `.claude/.dev-team/` scratch older than 7 days, clears stale state, logs |
+| `context-save.sh` | PreCompact | Compaction | Saves git state to `.claude/.dotharness/session-state.md` (restored by `session-start.sh` on the next compact) |
+| `notify-stop.sh` | Stop | Session stop | Desktop notification via `notify-send` (main session only) |
 | `notify-prompt.sh` | Notification | Notifications | Desktop notification when Claude sends a notification |
+
+Hook-generated runtime files (saved session state, session log) are written repo-locally under `.claude/.dotharness/` (git root, falling back to cwd), never to system-level `~/.claude/`. Add `.claude/.dotharness/` to a project's ignore rules to keep them out of git.
+
+## Output styles
+
+Output styles in `output-styles/`, symlinked to `~/.claude/output-styles/`. An output style modifies the system prompt directly (persistent, not re-injected per turn). `setup.sh` activates `dotharness` unless you have already set `outputStyle`.
+
+- **dotharness** — concise, direct, evidence-driven voice (`keep-coding-instructions: true`, so coding behavior is preserved). Switch with `/output-style`.
 
 ## Statusline
 
