@@ -81,22 +81,42 @@ register_hook() {
     fi
 }
 
+# Ensure settings.json exists so hooks/outputStyle can be set on a fresh machine.
+if command -v jq &>/dev/null && [ ! -f "$SETTINGS" ]; then
+    echo '{}' > "$SETTINGS"
+    echo "  created $SETTINGS"
+fi
+
 if [ -f "$SETTINGS" ] && command -v jq &>/dev/null; then
     register_hook "UserPromptSubmit" "bash ~/.claude/hooks/anti-sycophancy.sh" "anti-sycophancy hook" 5
-    register_hook "PreToolUse"       "bash ~/.claude/hooks/block-dangerous.sh"  "block-dangerous hook" 5 "Bash"
+    register_hook "PreToolUse"       "bash ~/.claude/hooks/block-dangerous.sh"  "block-dangerous hook" 5 "Bash|Write|Edit"
     register_hook "PostToolUse"      "bash ~/.claude/hooks/auto-format.sh"      "auto-format hook"     10 "Write|Edit"
     register_hook "PostToolUse"      "bash ~/.claude/hooks/security-scan.sh"    "security-scan hook"   5  "Write|Edit"
     register_hook "Stop"             "bash ~/.claude/hooks/notify-stop.sh"      "notify-stop hook"     5
     register_hook "PreCompact"      "bash ~/.claude/hooks/context-save.sh"     "context-save hook"    10
-    register_hook "PostCompact"     "bash ~/.claude/hooks/context-restore.sh"  "context-restore hook" 5
     register_hook "Notification"    "bash ~/.claude/hooks/notify-prompt.sh"    "notify-prompt hook"   5
     register_hook "PreToolUse"      "bash ~/.claude/hooks/auto-approve.sh"     "auto-approve hook"    5  "Bash"
     register_hook "PreToolUse"      "bash ~/.claude/hooks/commit-lint.sh"      "commit-lint hook"     5  "Bash"
+    register_hook "SessionStart"    "bash ~/.claude/hooks/session-start.sh"    "session-start hook"   10
+    register_hook "SessionEnd"      "bash ~/.claude/hooks/session-end.sh"      "session-end hook"     10
+
+    # Activate the dotharness output style unless the user already set one.
+    if jq -e '.outputStyle' "$SETTINGS" >/dev/null 2>&1; then
+        echo "  ok  outputStyle"
+    else
+        jq '.outputStyle = "dotharness"' "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
+        echo "  set outputStyle=dotharness"
+    fi
 elif [ ! -f "$SETTINGS" ]; then
     echo "  skipped (no settings.json found)"
 elif ! command -v jq &>/dev/null; then
     echo "  skipped (jq not found, cannot update settings.json)"
 fi
+
+# --- Output styles ---
+echo "Output styles:"
+mkdir -p "$CLAUDE_DIR/output-styles"
+link_items "$REPO_DIR/output-styles" "$CLAUDE_DIR/output-styles"
 
 # --- Statusline ---
 echo "Statusline:"
