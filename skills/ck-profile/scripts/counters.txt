@@ -1,0 +1,8 @@
+pmc: TCC_HIT TCC_MISS
+pmc: FETCH_SIZE
+pmc: WRITE_SIZE
+pmc: MeanOccupancyPerCU
+pmc: VALUBusy SALUBusy
+pmc: MemUnitStalled
+pmc: LDSBankConflict
+pmc: SQ_VALU_MFMA_BUSY_CYCLES SQ_WAVES
