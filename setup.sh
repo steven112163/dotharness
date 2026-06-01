@@ -118,6 +118,12 @@ echo "Output styles:"
 mkdir -p "$CLAUDE_DIR/output-styles"
 link_items "$REPO_DIR/output-styles" "$CLAUDE_DIR/output-styles"
 
+# --- Binaries (linked into ~/bin, which is on PATH) ---
+echo "Binaries:"
+readonly BIN_DIR="${HOME}/bin"
+mkdir -p "$BIN_DIR"
+link_items "$REPO_DIR/bin" "$BIN_DIR"
+
 # --- Statusline ---
 echo "Statusline:"
 link "$REPO_DIR/statusline.sh" "$CLAUDE_DIR/statusline.sh"
