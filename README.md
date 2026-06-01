@@ -13,8 +13,14 @@ skills/                          → own skills, symlinked to ~/.claude/skills/
     SKILL.md                     → 4 modes (socratic, direct, deep, adversarial)
   create-pr/                     → PR creation with CK team template
     SKILL.md                     → 5-step workflow (gather → collect → test → format → push)
+  ck-profile/                    → runtime GPU profiling of a CK target with rocprofv3
+    SKILL.md                     → kernel-trace + PMC multipass, roofline-lite verdict
+    REFERENCE.md                 → counters, CSV layout, roofline thresholds
+    scripts/                     → run_profile.sh, aggregate.py, counters.txt
 hooks/                           → hook scripts, symlinked to ~/.claude/hooks/
 output-styles/                   → output styles, symlinked to ~/.claude/output-styles/
+bin/                             → helper scripts, symlinked to ~/bin/ (on PATH)
+  dockerRun                      → create/attach a named dev container from an image
 rules/                           → symlinked to ~/.claude/rules/
 third-party/
   mattpocock-skills/             → git submodule (engineering + productivity skills)
@@ -29,7 +35,7 @@ git submodule update --init
 ./setup.sh
 ```
 
-Symlinks `skills/`, `hooks/`, `output-styles/`, `rules/`, third-party skills, and `statusline.sh` into `~/.claude/`. Registers hooks and sets the `dotharness` output style in `~/.claude/settings.json` (requires `jq`), creating that file if it does not yet exist (fresh-machine safe). Installs plugins via the Claude CLI. Existing files are backed up to `.bak`. Re-running is idempotent.
+Symlinks `skills/`, `hooks/`, `output-styles/`, `rules/`, third-party skills, and `statusline.sh` into `~/.claude/`, and `bin/` scripts into `~/bin/`. Registers hooks and sets the `dotharness` output style in `~/.claude/settings.json` (requires `jq`), creating that file if it does not yet exist (fresh-machine safe). Installs plugins via the Claude CLI. Existing files are backed up to `.bak`. Re-running is idempotent.
 
 ## Rules
 
@@ -43,10 +49,13 @@ User-level rules loaded automatically by Claude Code. Tailored for C++ / HIP / G
 
 **Path-scoped** (loaded only when touching matching files):
 - `naming.md` — C++, Python, CMake naming conventions
+- `cpp-idioms.md` — language standard, type usage, include discipline
+- `gpu-kernels.md` — annotation discipline, occupancy, LDS, wavefront rules
 - `security.md` — memory safety, input validation, secrets
 - `error-handling.md` — fail-fast principles, RAII, HIP error checking
 - `performance.md` — algorithmic, memory, GPU/HIP optimization
 - `testing.md` — test design, organization, anti-patterns
+- `documentation.md` — comment policy, project docs, doc anti-patterns
 - `observability.md` — logging, metrics, CI observability
 
 ## Skills
@@ -56,6 +65,7 @@ Located in `skills/`, symlinked individually to `~/.claude/skills/`.
 - **dev-team** — hierarchical agent team (lead, implementer, professor + 3 PHDs, staff engineer + 3 seniors, builder, QA head + N testers). 6-phase workflow with verification gate, weighted code review, context checkpoints, and optional post-mortem.
 - **research** — four-mode research skill (socratic, direct, deep, adversarial) with anti-sycophancy safeguards. Usable by both humans and agents. Integrated into dev-team role prompts.
 - **create-pr** — create a pull request following the CK team's PR template (motivation, technical details, test plan, test result, submission checklist).
+- **ck-profile** — runtime GPU profiling of a Composable Kernel target with rocprofv3: kernel timing, HBM traffic, L2 hit ratio, occupancy, and VALU utilization across an argument sweep, with a roofline-lite compute/memory/latency bottleneck verdict.
 
 ### Third-party (mattpocock/skills, MIT)
 Engineering and productivity skills, linked from the submodule:
@@ -101,6 +111,12 @@ Hook-generated runtime files (saved session state, session log) are written repo
 Output styles in `output-styles/`, symlinked to `~/.claude/output-styles/`. An output style modifies the system prompt directly (persistent, not re-injected per turn). `setup.sh` activates `dotharness` unless you have already set `outputStyle`.
 
 - **dotharness** — concise, direct, evidence-driven voice (`keep-coding-instructions: true`, so coding behavior is preserved). Switch with `/output-style`.
+
+## Binaries
+
+Helper scripts in `bin/`, symlinked individually into `~/bin/` (already on `PATH`).
+
+- **dockerRun** — create a named dev container from an image, or print the attach command if it already exists. Used by the `ck-profile` skill to spin up its profiling container.
 
 ## Statusline
 
