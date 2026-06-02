@@ -1,2 +1,6 @@
 .claude/
 docs/specs/*
+
+# Python
+__pycache__/
+*.pyc
