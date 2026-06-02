@@ -95,11 +95,16 @@ are visible on the host). Report scope: for a focused ask ("spills",
    ```
    `--iters` (e.g. warmup+repeat) or `--marker` (a kernel firing once per
    pipeline) gives per-iteration numbers; otherwise values are per-run. Writes
-   `summary_overall.csv` and `per_kernel_<variant>.csv`.
-4. **Report.** Present the per-variant table (gpu_ms, L2 hit %, fetch/write MB,
-   occupancy, VALU/SALU %, mem-stall %, achieved BW, BW-util %, **verdict**) and
-   the per-kernel breakdown. For a focused ask, lead with the verdict and the
-   two ratios behind it (see the taxonomy in REFERENCE.md).
+   `summary.md` (readable report), `summary_overall.csv`, and
+   `per_kernel_<variant>.csv`.
+4. **Report.** Show `ck_profile_out/summary.md` — a **Device spec** block (CUs,
+   wave size, SIMD/CU, max waves/CU, VGPR/AGPR file, LDS/CU, peak BW from
+   `gpu_specs.py`), the per-variant table (gpu_ms, L2 hit %, fetch/write MB,
+   occupancy, **occ-util %** = achieved ÷ max waves/CU, VALU/SALU %, mem-stall %,
+   achieved BW, BW-util %, **verdict**), and the per-kernel breakdown. For a
+   focused ask, lead with the verdict and the two ratios behind it (see the
+   taxonomy in REFERENCE.md). The static `build_report.md` carries the same
+   device-spec block so per-kernel VGPR/LDS have context.
 
 ## Both
 

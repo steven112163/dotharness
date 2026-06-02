@@ -15,10 +15,15 @@ occupancy implication, and writes a CSV plus a short markdown report.
 """
 import argparse
 import csv
+import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gpu_specs import get_spec, peak_mem_gbs  # per-arch hardware specs (shared with aggregate.py)
 
 TAG = "[-Rpass-analysis=kernel-resource-usage]"
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -130,6 +135,18 @@ def write_report(records, arch, target, path):
     lines += [f"- Kernels analyzed: **{len(records)}**",
               f"- With spills or scratch: **{len(spilled)}**",
               f"- With dynamic stack: **{len(dynstack)}**", ""]
+    spec = get_spec(arch)
+    if spec:
+        sv = lambda x, s="": f"{x}{s}" if x is not None else "n/a"
+        lines += [f"## Device spec — {arch} ({spec['product']})", "",
+                  "| CUs | wave | SIMD/CU | max waves/CU | VGPR/SIMD | AGPR/SIMD | LDS/CU | peak mem BW |",
+                  "| --- | --- | --- | --- | --- | --- | --- | --- |",
+                  f"| {sv(spec['cu'])} | {sv(spec['wave'])} | {sv(spec['simd_per_cu'])} | "
+                  f"{sv(spec['max_waves_cu'])} | {sv(spec['vgpr_per_simd'])} | {sv(spec['agpr_per_simd'])} | "
+                  f"{sv(spec['lds_kb_per_cu'], ' KB')} | {sv(peak_mem_gbs(arch), ' GB/s')} |",
+                  "", "Per-kernel VGPR/AGPR/LDS below are reserved out of the per-SIMD VGPR file "
+                  "and per-CU LDS shown here; the closer a kernel gets to those, the fewer waves "
+                  "fit. n/a = value not published for this arch.", ""]
     lines += ["## Occupancy (waves/SIMD) distribution", "",
               "| waves/SIMD | kernels |", "| --- | --- |"]
     for occ in sorted(occ_hist):

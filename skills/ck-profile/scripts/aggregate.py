@@ -13,9 +13,11 @@ For each variant (sweep value), averaged over all runs:
 Usage:
   aggregate.py --raw DIR [--arch gfx942] [--iters N | --marker SUBSTR] [--out DIR]
 """
-import argparse, csv, glob, os, re, statistics
+import argparse, csv, glob, os, re, statistics, sys
 
-PEAK_HBM_GBS = {"gfx942": 5300.0, "gfx950": 8000.0}  # gfx950 approximate — verify
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from gpu_specs import PEAK_MEM_GBS, get_spec  # peak bandwidth + per-arch hardware specs
+
 COMPUTE_BOUND_PCT = 60.0
 BW_BOUND_PCT = 60.0
 # Counters reported as a duration-weighted mean (percentages/rates); the rest summed.
@@ -121,12 +123,18 @@ def main():
     ap.add_argument("--iters", type=int, default=0)
     ap.add_argument("--marker", default="")
     ap.add_argument("--out", default="")
+    ap.add_argument("--peak-gbs", type=float, default=0.0,
+                    help="override peak device-memory bandwidth (GB/s); needed for "
+                         "exact RDNA SKUs since one gfx ID covers many cards")
     a = ap.parse_args()
     out = a.out or os.path.dirname(a.raw.rstrip("/")) or "."
-    peak = PEAK_HBM_GBS.get(a.arch)
+    peak = a.peak_gbs or PEAK_MEM_GBS.get(a.arch)
+    spec = get_spec(a.arch)
+    max_waves = spec["max_waves_cu"] if spec else None
 
     variants = sorted(d for d in glob.glob(os.path.join(a.raw, "*")) if os.path.isdir(d))
     overall = []
+    pk_rows = {}  # variant -> list of per-kernel rows (for markdown + CSV)
     for vd in variants:
         name = os.path.basename(vd)
         runs = sorted(glob.glob(os.path.join(vd, "run_*")))
@@ -160,40 +168,82 @@ def main():
         bw_util = 100.0 * m["bw"][0] / peak if peak else float("nan")
         compute_util = max(m["valu"][0], m["salu"][0])
         verdict = classify(compute_util, bw_util) if peak else "n/a (unknown arch peak)"
-        overall.append((name, len(runs), m, bw_util, verdict))
+        occ_util = 100.0 * m["occ"][0] / max_waves if max_waves else float("nan")
+        overall.append((name, len(runs), m, bw_util, verdict, occ_util))
 
+        tot = sum(statistics.mean(k["us"]) for k in kern.values()) or 1
+        rows = []
+        for lbl, k in sorted(kern.items(), key=lambda x: -statistics.mean(x[1]["us"])):
+            us = statistics.mean(k["us"])
+            rows.append([lbl, k["calls"], round(us, 2), round(100 * us / tot, 1),
+                         k["vgpr"], k["sgpr"], k["lds"], k["scr"]])
+        pk_rows[name] = rows
         with open(os.path.join(out, f"per_kernel_{name}.csv"), "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(["kernel", "calls", "us_total", "pct", "VGPR", "SGPR", "LDS_bytes", "scratch"])
-            tot = sum(statistics.mean(k["us"]) for k in kern.values()) or 1
-            for lbl, k in sorted(kern.items(), key=lambda x: -statistics.mean(x[1]["us"])):
-                us = statistics.mean(k["us"])
-                w.writerow([lbl, k["calls"], f"{us:.2f}", f"{100*us/tot:.1f}",
-                            k["vgpr"], k["sgpr"], k["lds"], k["scr"]])
+            w.writerows(rows)
 
     with open(os.path.join(out, "summary_overall.csv"), "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["variant", "runs", "gpu_ms", "gpu_ms_sd", "prog_ms", "L2_hit_pct",
-                    "fetch_MB", "write_MB", "occupancy", "valu_pct", "salu_pct",
+                    "fetch_MB", "write_MB", "occupancy", "occ_util_pct", "valu_pct", "salu_pct",
                     "mem_stall_pct", "lds_bank_conflicts", "mfma_busy_cycles", "wavefronts",
                     "achieved_BW_GBs", "BW_util_pct", "verdict"])
-        for name, nr, m, bwu, verdict in overall:
+        for name, nr, m, bwu, verdict, occu in overall:
             w.writerow([name, nr, f"{m['gpu_ms'][0]:.4f}", f"{m['gpu_ms'][1]:.4f}",
                         f"{m['prog'][0]:.4f}", f"{m['hr'][0]:.2f}", f"{m['fmb'][0]:.3f}",
-                        f"{m['wmb'][0]:.3f}", f"{m['occ'][0]:.2f}", f"{m['valu'][0]:.2f}",
+                        f"{m['wmb'][0]:.3f}", f"{m['occ'][0]:.2f}", f"{occu:.1f}", f"{m['valu'][0]:.2f}",
                         f"{m['salu'][0]:.2f}", f"{m['memstall'][0]:.2f}",
                         f"{m['lds'][0]:.0f}", f"{m['mfma_cyc'][0]:.0f}", f"{m['waves'][0]:.0f}",
                         f"{m['bw'][0]:.1f}", f"{bwu:.1f}", verdict])
 
     unit = "per-iter" if (a.iters or a.marker) else "per-run"
-    print(f"arch={a.arch}  peak_HBM={peak} GB/s  normalization={unit}")
+
+    def sv(x, suffix=""):  # spec value, or "n/a" when unverified/unreleased
+        return f"{x}{suffix}" if x is not None else "n/a"
+
+    # --- markdown summary (readable report) ---
+    md = [f"# Dynamic profiling summary", "",
+          f"- arch: **{a.arch}**  (peak mem BW {peak} GB/s)" if peak else f"- arch: **{a.arch}**",
+          f"- normalization: **{unit}**", ""]
+    if spec:
+        md += [f"## Device spec — {a.arch} ({spec['product']})", "",
+               "| CUs | wave | SIMD/CU | max waves/CU | VGPR/SIMD | AGPR/SIMD | LDS/CU | peak mem BW |",
+               "| --- | --- | --- | --- | --- | --- | --- | --- |",
+               f"| {sv(spec['cu'])} | {sv(spec['wave'])} | {sv(spec['simd_per_cu'])} | "
+               f"{sv(spec['max_waves_cu'])} | {sv(spec['vgpr_per_simd'])} | {sv(spec['agpr_per_simd'])} | "
+               f"{sv(spec['lds_kb_per_cu'], ' KB')} | {sv(peak, ' GB/s')} |",
+               "", "max waves/CU is the occupancy ceiling; the **occ util %** column below is "
+               "achieved occupancy as a fraction of it. n/a = value not published for this arch.", ""]
+    md += ["## Per-variant metrics", "",
+           "| variant | runs | gpu_ms | L2 hit % | fetch MB | write MB | occ/CU | occ util % | VALU % | SALU % | mem-stall % | BW GB/s | BW util % | verdict |",
+           "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+    for name, nr, m, bwu, verdict, occu in overall:
+        md.append(f"| {name} | {nr} | {m['gpu_ms'][0]:.4f} ± {m['gpu_ms'][1]:.3f} | "
+                  f"{m['hr'][0]:.1f} | {m['fmb'][0]:.2f} | {m['wmb'][0]:.2f} | {m['occ'][0]:.2f} | "
+                  f"{occu:.1f} | {m['valu'][0]:.2f} | {m['salu'][0]:.2f} | {m['memstall'][0]:.2f} | "
+                  f"{m['bw'][0]:.1f} | {bwu:.1f} | **{verdict}** |")
+    for name, *_ in overall:
+        md += ["", f"## Per-kernel breakdown — {name} ({unit})", "",
+               "| kernel | calls | µs | % | VGPR | SGPR | LDS B | scratch |",
+               "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+        for r in pk_rows.get(name, [])[:12]:
+            md.append("| " + " | ".join(str(c) for c in r) + " |")
+    with open(os.path.join(out, "summary.md"), "w") as f:
+        f.write("\n".join(md) + "\n")
+
+    if spec:
+        print(f"arch={a.arch} ({spec['product']})  CUs={sv(spec['cu'])}  wave={sv(spec['wave'])}  "
+              f"max_waves/CU={sv(spec['max_waves_cu'])}  peak_mem={peak} GB/s  normalization={unit}")
+    else:
+        print(f"arch={a.arch}  peak_mem={peak} GB/s  normalization={unit}")
     print(f"{'variant':9} {'runs':4} {'gpu_ms':>8} {'L2%':>6} {'fetMB':>7} {'wrMB':>7} "
-          f"{'occ':>5} {'VALU%':>6} {'SALU%':>6} {'memStl%':>7} {'BW%':>5}  verdict")
-    for name, nr, m, bwu, verdict in overall:
+          f"{'occ':>5} {'occ%':>6} {'VALU%':>6} {'SALU%':>6} {'memStl%':>7} {'BW%':>5}  verdict")
+    for name, nr, m, bwu, verdict, occu in overall:
         print(f"{name:9} {nr:4d} {m['gpu_ms'][0]:8.4f} {m['hr'][0]:6.1f} {m['fmb'][0]:7.2f} "
-              f"{m['wmb'][0]:7.2f} {m['occ'][0]:5.2f} {m['valu'][0]:6.2f} {m['salu'][0]:6.2f} "
+              f"{m['wmb'][0]:7.2f} {m['occ'][0]:5.2f} {occu:6.1f} {m['valu'][0]:6.2f} {m['salu'][0]:6.2f} "
               f"{m['memstall'][0]:7.2f} {bwu:5.1f}  {verdict}")
-    print(f"\nwrote {os.path.join(out, 'summary_overall.csv')} and per_kernel_*.csv")
+    print(f"\nwrote {os.path.join(out, 'summary.md')}, summary_overall.csv, per_kernel_*.csv")
 
 
 if __name__ == "__main__":

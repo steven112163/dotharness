@@ -69,8 +69,61 @@ Note: `VALUBusy` may understate compute for MFMA-heavy GEMMs (the matrix engine
 is a separate pipe). If `mfma_busy_cycles` is large but the verdict says
 latency-bound, treat compute as a candidate and confirm with omniperf.
 
-Peak HBM table lives in `aggregate.py` (`PEAK_HBM_GBS`). gfx942 (MI300X) ≈ 5300
-GB/s is verified; **verify any other arch before trusting its BW verdict.**
+Peak memory-bandwidth and per-arch hardware specs both live in `gpu_specs.py`
+(`PEAK_MEM_GBS` and `SPECS`), imported by both `aggregate.py` (dynamic) and
+`parse_resource_usage.py` (static) so the two reports cannot disagree.
+Theoretical peak from AMD specs, not host-measured, so no matching hardware is
+needed. gfx IDs are confirmed against AMD's internal GFX/LLVM-target reference
+sheet.
+
+CDNA (Instinct, HBM) — exact, one product family per gfx ID:
+- gfx942 (MI300X/MI325X, HBM3) = 5300
+- gfx950 (MI350X/MI355X, HBM3E) = 8000
+- gfx1250 (MI450/MI455X, HBM4) = 19600, gfx1251 (MI430X, HBM4) = 19600
+
+RDNA (Radeon, GDDR) — **one gfx ID covers many SKUs with different memory**, so
+the table holds the *flagship* of each family; for an exact card pass
+`--peak-gbs <value>`:
+- gfx1201 (RX 9070 XT) = 640, gfx1200 (RX 9060 XT) = 320
+- gfx1100 (RX 7900 XTX) = 960, gfx1101 (RX 7800 XT) = 624, gfx1102 (RX 7600) = 288
+
+Add a new arch's peak (or use `--peak-gbs`) before trusting its BW verdict.
+
+## Device specs (`SPECS` in gpu_specs.py)
+
+Per-arch hardware resources shown in a **Device spec** block at the top of both
+the dynamic `summary.md` and the static `build_report.md`. The dynamic report
+also turns one of them into a ratio: **occ util %** = measured
+`MeanOccupancyPerCU` ÷ `max_waves_cu` (achieved occupancy as a fraction of the
+ceiling — the occupancy analogue of BW util %). The rest (CU count, wave size,
+SIMD/CU, VGPR/AGPR file, LDS/CU) are informational context for the grid size and
+the static per-kernel VGPR/LDS, not computed into ratios.
+
+| gfx | SKU(s) | CUs | wave | SIMD/CU | max waves/CU | VGPR/SIMD | AGPR/SIMD | LDS/CU |
+|-----|--------|-----|------|---------|--------------|-----------|-----------|--------|
+| gfx942 | MI300X/MI325X | 304 | 64 | 4 | 32 | 256 | 256 | 64 KB |
+| gfx950 | MI350X/MI355X | 256 | 64 | 4 | 32 | 256 | 256 | 160 KB |
+| gfx1250 | MI450/MI455X | n/a | 64 | n/a | n/a | n/a | n/a | n/a |
+| gfx1251 | MI430X | n/a | 64 | n/a | n/a | n/a | n/a | n/a |
+| gfx1201 | RX 9070 XT | 64 | 32 | 2 | 32 | 1536 | 0 | 128 KB |
+| gfx1200 | RX 9060 XT | 32 | 32 | 2 | 32 | 1536 | 0 | 128 KB |
+| gfx1100 | RX 7900 XTX | 96 | 32 | 2 | 32 | 1536 | 0 | 128 KB |
+| gfx1101 | RX 7800 XT | 60 | 32 | 2 | 32 | 1536 | 0 | 128 KB |
+| gfx1102 | RX 7600 | 32 | 32 | 2 | 32 | 1024 | 0 | 128 KB |
+
+Three caveats baked into these numbers:
+- **max waves/CU = 32 is derived, not quoted verbatim.** CDNA = 8 waves/SIMD × 4
+  SIMD; RDNA = 16 waves/SIMD × 2 SIMD. Both give 32. The legacy "10 waves/SIMD →
+  40/CU" is GCN-era and does not apply to CDNA3/RDNA3+.
+- **RDNA CU counts are the flagship of each gfx family** (one gfx ID spans many
+  SKUs), same convention as the bandwidth table. AGPR is 0 — RDNA has no separate
+  accumulation register file.
+- **gfx1250/gfx1251 (MI450/MI455X/MI430X) are unreleased**: only HBM4 bandwidth
+  is public, so their `SPECS` fields are `None` and print as `n/a`. The bandwidth
+  verdict still works.
+
+Sources: ROCm GPU hardware specs page; AMD CDNA3 ISA guide + CDNA3/CDNA4
+whitepapers; TechPowerUp GPU database (RDNA SKUs); GPUOpen "Occupancy explained".
 
 ## Bottleneck taxonomy (what to look at next)
 

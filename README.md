@@ -13,10 +13,10 @@ skills/                          → own skills, symlinked to ~/.claude/skills/
     SKILL.md                     → 4 modes (socratic, direct, deep, adversarial)
   create-pr/                     → PR creation with CK team template
     SKILL.md                     → 5-step workflow (gather → collect → test → format → push)
-  ck-profile/                    → runtime GPU profiling of a CK target with rocprofv3
-    SKILL.md                     → kernel-trace + PMC multipass, roofline-lite verdict
-    REFERENCE.md                 → counters, CSV layout, roofline thresholds
-    scripts/                     → run_profile.sh, aggregate.py, counters.txt
+  ck-profile/                    → static + runtime GPU profiling of a CK target
+    SKILL.md                     → static (resource usage) + dynamic (rocprofv3) modes, roofline-lite verdict
+    REFERENCE.md                 → counters, CSV layout, roofline thresholds, per-arch device specs
+    scripts/                     → run_profile.sh, static_profile.sh, aggregate.py, parse_resource_usage.py, gpu_specs.py, counters.txt
 hooks/                           → hook scripts, symlinked to ~/.claude/hooks/
 output-styles/                   → output styles, symlinked to ~/.claude/output-styles/
 bin/                             → helper scripts, symlinked to ~/bin/ (on PATH)
@@ -65,7 +65,7 @@ Located in `skills/`, symlinked individually to `~/.claude/skills/`.
 - **dev-team** — hierarchical agent team (lead, implementer, professor + 3 PHDs, staff engineer + 3 seniors, builder, QA head + N testers). 6-phase workflow with verification gate, weighted code review, context checkpoints, and optional post-mortem.
 - **research** — four-mode research skill (socratic, direct, deep, adversarial) with anti-sycophancy safeguards. Usable by both humans and agents. Integrated into dev-team role prompts.
 - **create-pr** — create a pull request following the CK team's PR template (motivation, technical details, test plan, test result, submission checklist).
-- **ck-profile** — runtime GPU profiling of a Composable Kernel target with rocprofv3: kernel timing, HBM traffic, L2 hit ratio, occupancy, and VALU utilization across an argument sweep, with a roofline-lite compute/memory/latency bottleneck verdict.
+- **ck-profile** — profile a Composable Kernel target two ways: static compile-time resource analysis (VGPR/AGPR/SGPR, occupancy ceiling, spills, scratch, LDS) and dynamic runtime profiling with rocprofv3 (kernel timing, HBM traffic, L2 hit ratio, occupancy, VALU). Per-arch hardware specs (`gpu_specs.py`) drive a device-spec block and an occupancy-util ratio, with a roofline-lite compute/memory/latency bottleneck verdict.
 
 ### Third-party (mattpocock/skills, MIT)
 Engineering and productivity skills, linked from the submodule:
