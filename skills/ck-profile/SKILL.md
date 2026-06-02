@@ -64,8 +64,10 @@ CONTAINER=<container> REPO=$REPO TARGET=<target> ARCH=$ARCH \
 
 It builds with the resource-usage remark flag, parses the log (demangling kernel
 names with `c++filt`), and prints a summary; full report + CSV land under the
-repo at `ck_profile_out/static/<target>-<arch>/build_report.{md,csv}` (so they
-are visible on the host). Report scope: for a focused ask ("spills",
+repo at `ck_profile_out/static/<target>-<arch>/build_report.{md,csv,html}` (so
+they are visible on the host; the `.html` is a self-contained chart view —
+occupancy histogram, effective-VGPR bars with the cliff marked, spill rows
+highlighted). Report scope: for a focused ask ("spills",
 "occupancy", "LDS"), filter to the relevant columns; otherwise give the overview
 + worst offenders. The occupancy cliff to watch is **129 effective VGPRs**
 (128→4 waves, 129→3 waves). See REFERENCE.md.
@@ -97,14 +99,17 @@ are visible on the host). Report scope: for a focused ask ("spills",
    pipeline) gives per-iteration numbers; otherwise values are per-run. Writes
    `summary.md` (readable report), `summary_overall.csv`, and
    `per_kernel_<variant>.csv`.
-4. **Report.** Show `ck_profile_out/summary.md` — a **Device spec** block (CUs,
-   wave size, SIMD/CU, max waves/CU, VGPR/AGPR file, LDS/CU, peak BW from
-   `gpu_specs.py`), the per-variant table (gpu_ms, L2 hit %, fetch/write MB,
-   occupancy, **occ-util %** = achieved ÷ max waves/CU, VALU/SALU %, mem-stall %,
-   achieved BW, BW-util %, **verdict**), and the per-kernel breakdown. For a
-   focused ask, lead with the verdict and the two ratios behind it (see the
-   taxonomy in REFERENCE.md). The static `build_report.md` carries the same
-   device-spec block so per-kernel VGPR/LDS have context.
+4. **Report.** `aggregate.py` writes `summary.md` (markdown), `summary.html`
+   (self-contained, opens offline — runtime bar chart, per-variant roofline
+   gauges + verdict badges, per-kernel bars), `summary_overall.csv`, and
+   `per_kernel_*.csv`. Show `summary.md` (point the user at `summary.html` for the
+   charts) — a **Device spec** block (CUs, wave size, SIMD/CU, max waves/CU,
+   VGPR/AGPR file, LDS/CU, peak BW from `gpu_specs.py`), the per-variant table
+   (gpu_ms, L2 hit %, fetch/write MB, occupancy, **occ-util %** = achieved ÷ max
+   waves/CU, VALU/SALU %, mem-stall %, achieved BW, BW-util %, **verdict**), and
+   the per-kernel breakdown. For a focused ask, lead with the verdict and the two
+   ratios behind it (see the taxonomy in REFERENCE.md). The static report is
+   emitted as `build_report.{md,csv,html}` with the same device-spec block.
 
 ## Both
 

@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gpu_specs import get_spec, peak_mem_gbs  # per-arch hardware specs (shared with aggregate.py)
+import html_report as H  # zero-dependency self-contained HTML report
 
 TAG = "[-Rpass-analysis=kernel-resource-usage]"
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -166,6 +167,64 @@ def write_report(records, arch, target, path):
     Path(path).write_text("\n".join(lines))
 
 
+def write_html(records, arch, target, path):
+    spilled = [r for r in records if has_spill(r)]
+    dynstack = [r for r in records if r["dynamic_stack"]]
+    occ_hist = {}
+    for r in records:
+        occ_hist[r["occupancy"]] = occ_hist.get(r["occupancy"], 0) + 1
+    worst = sorted(records, key=lambda r: (r["scratch_size"], r["vgpr_spill"], r["effective_vgprs"]),
+                   reverse=True)[:15]
+
+    parts = [f"<h1>CK static kernel resource report</h1>",
+             f"<p class='sub'>{H.esc(target or '(target)')} &middot; arch <b>{H.esc(arch)}</b> "
+             f"&middot; {len(records)} kernels &middot; "
+             f"<b>{len(spilled)}</b> with spills/scratch &middot; "
+             f"<b>{len(dynstack)}</b> with dynamic stack</p>"]
+
+    spec = get_spec(arch)
+    sv = lambda x, s="": f"{x}{s}" if x is not None else "n/a"
+    if spec:
+        rows = [[sv(spec["cu"]), sv(spec["wave"]), sv(spec["simd_per_cu"]),
+                 sv(spec["max_waves_cu"]), sv(spec["vgpr_per_simd"]), sv(spec["agpr_per_simd"]),
+                 sv(spec["lds_kb_per_cu"], " KB"), sv(peak_mem_gbs(arch), " GB/s")]]
+        parts.append(H.section(f"Device spec — {arch} ({spec['product']})",
+                     H.table(["CUs", "wave", "SIMD/CU", "max waves/CU", "VGPR/SIMD",
+                              "AGPR/SIMD", "LDS/CU", "peak mem BW"], rows, num_cols=range(8))))
+
+    hist = [(f"{occ} waves/SIMD", occ_hist[occ], str(occ_hist[occ])) for occ in sorted(occ_hist)]
+    parts.append(H.section("Occupancy ceiling distribution (waves/SIMD)",
+                 f"<div class='card'>{H.bars(hist)}</div>"))
+
+    # Effective-VGPR bars with the CDNA 128/129 occupancy cliff marked.
+    max_eff = max((r["effective_vgprs"] for r in worst), default=1)
+    cdna_cliff = 128
+    mx = max(max_eff, cdna_cliff + 1)
+    tick = cdna_cliff / mx if arch.startswith("gfx9") else None
+    vbars = [(r["readable"][:60], r["effective_vgprs"], str(r["effective_vgprs"])) for r in worst[:12]]
+    note = (" Red line = 128 eff-VGPR cliff (129 drops a wave/SIMD)." if tick is not None else "")
+    parts.append(H.section("Effective VGPR per kernel (top 12)",
+                 f"<div class='card'>{H.bars(vbars, max_value=mx, tick_frac=tick)}</div>"
+                 f"<p class='sub'>{note}</p>"))
+
+    headers = ["kernel", "eff VGPR", "VGPR", "AGPR", "SGPR", "scratch", "vgpr_spill",
+               "sgpr_spill", "LDS", "occ", "dyn-stack"]
+    rows, flags = [], set()
+    for i, r in enumerate(worst):
+        if has_spill(r) or r["dynamic_stack"]:
+            flags.add(i)
+        rows.append([r["readable"][:70], r["effective_vgprs"], r["vgprs"], r["agprs"],
+                     r["total_sgprs"], r["scratch_size"], r["vgpr_spill"], r["sgpr_spill"],
+                     r["lds_size"], r["occupancy"], "yes" if r["dynamic_stack"] else "no"])
+    parts.append(H.section("Highest resource usage (top 15)",
+                 H.table(headers, rows, num_cols=range(1, 10), flag_rows=flags)))
+
+    parts.append("<p class='foot'>Self-contained report — CSS/SVG bars, no external "
+                 "dependencies. Highlighted rows spill or use a dynamic stack "
+                 "(per-lane global-memory traffic). Companion files: same-stem .md and .csv.</p>")
+    Path(path).write_text(H.page(f"CK static resource report — {arch}", "".join(parts)))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("log_file")
@@ -186,15 +245,17 @@ def main():
         r["effective_vgprs"] = effective_vgprs(r, a.arch)
 
     stem = Path(a.out or Path(a.log_file).parent) / (Path(a.log_file).stem + "_report")
-    csv_path, md_path = f"{stem}.csv", f"{stem}.md"
+    csv_path, md_path, html_path = f"{stem}.csv", f"{stem}.md", f"{stem}.html"
     write_csv(records, a.arch, csv_path)
     write_report(records, a.arch, a.target, md_path)
+    write_html(records, a.arch, a.target, html_path)
 
     spilled = sum(1 for r in records if has_spill(r))
     dynstack = sum(1 for r in records if r["dynamic_stack"])
     print(f"Parsed {len(records)} kernels  (spills/scratch: {spilled}, dynamic stack: {dynstack})")
     print(f"  CSV:    {csv_path}")
     print(f"  Report: {md_path}")
+    print(f"  HTML:   {html_path}")
 
 
 if __name__ == "__main__":

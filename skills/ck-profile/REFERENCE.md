@@ -48,6 +48,17 @@ run_NN/
   {t,p}.stdout / .stderr  program output / rocprof logs
 ```
 
+Aggregated reports (written next to `raw/` by `aggregate.py`): `summary.md`,
+`summary_overall.csv`, `per_kernel_<variant>.csv`, and **`summary.html`** — a
+self-contained report (inline CSS/SVG bars, no CDN, opens offline) with the
+device-spec table, a runtime-across-variants bar chart, per-variant roofline
+gauges (occ-util/BW-util/VALU/SALU/mem-stall/L2) with a colored verdict badge,
+and per-kernel breakdown bars. The static parser likewise emits
+`build_report.{md,csv,html}`; the HTML adds an occupancy histogram, an
+effective-VGPR bar chart with the 128/129 cliff marked, and spill/scratch rows
+highlighted. HTML generation lives in the shared `html_report.py` (no
+dependencies — pure string templating).
+
 Kernel names: trace uses `-T` (GEMMs show as `kentry`); PMC shows full mangled
 template names (commas inside — parse with a real CSV reader, not `cut -d,`).
 

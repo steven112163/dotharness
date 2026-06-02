@@ -17,6 +17,7 @@ import argparse, csv, glob, os, re, statistics, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gpu_specs import PEAK_MEM_GBS, get_spec  # peak bandwidth + per-arch hardware specs
+import html_report as H  # zero-dependency self-contained HTML report
 
 COMPUTE_BOUND_PCT = 60.0
 BW_BOUND_PCT = 60.0
@@ -114,6 +115,53 @@ def classify(compute_pct, bw_util_pct):
     if compute_pct < 25 and bw_util_pct < 25:
         return "latency/occupancy-bound"
     return "mixed / partially bound"
+
+
+def write_html(overall, pk_rows, spec, peak, arch, unit, out):
+    sv = lambda x, s="": f"{x}{s}" if x is not None else "n/a"
+    parts = [f"<h1>CK dynamic profiling</h1>",
+             f"<p class='sub'>arch <b>{H.esc(arch)}</b>"
+             + (f" &middot; peak mem BW {peak} GB/s" if peak else "")
+             + f" &middot; normalization <b>{H.esc(unit)}</b></p>"]
+
+    if spec:
+        rows = [[sv(spec["cu"]), sv(spec["wave"]), sv(spec["simd_per_cu"]),
+                 sv(spec["max_waves_cu"]), sv(spec["vgpr_per_simd"]), sv(spec["agpr_per_simd"]),
+                 sv(spec["lds_kb_per_cu"], " KB"), sv(peak, " GB/s")]]
+        parts.append(H.section(f"Device spec — {arch} ({spec['product']})",
+                     H.table(["CUs", "wave", "SIMD/CU", "max waves/CU", "VGPR/SIMD",
+                              "AGPR/SIMD", "LDS/CU", "peak mem BW"], rows, num_cols=range(8))))
+
+    gms = [(name, m["gpu_ms"][0], f"{m['gpu_ms'][0]:.4f} ms") for name, _, m, _, _, _ in overall]
+    parts.append(H.section(f"Runtime across variants ({unit}, lower is better)",
+                 f"<div class='card'>{H.bars(gms)}</div>"))
+
+    cards = []
+    for name, nr, m, bwu, verdict, occu in overall:
+        g = H.gauges([("occ util % (achieved/max waves)", occu), ("BW util %", bwu),
+                      ("VALU %", m["valu"][0]), ("SALU %", m["salu"][0]),
+                      ("mem-stall %", m["memstall"][0]), ("L2 hit %", m["hr"][0])])
+        nums = ("<div class='grid2'>"
+                + f"<div>gpu_ms: <b>{m['gpu_ms'][0]:.4f}</b> &plusmn; {m['gpu_ms'][1]:.3f}</div>"
+                + f"<div>occupancy: <b>{m['occ'][0]:.2f}</b> waves/CU</div>"
+                + f"<div>achieved BW: <b>{m['bw'][0]:.1f}</b> GB/s</div>"
+                + f"<div>fetch / write: <b>{m['fmb'][0]:.2f}</b> / <b>{m['wmb'][0]:.2f}</b> MB</div>"
+                + "</div>")
+        cards.append(f"<div class='card'><div class='row'><h3>{H.esc(name)} "
+                     f"&nbsp; ({nr} runs)</h3>&nbsp;{H.badge(verdict)}</div>{g}{nums}</div>")
+    parts.append(H.section("Per-variant roofline metrics", "".join(cards)))
+
+    for name, *_ in overall:
+        rows = pk_rows.get(name, [])
+        items = [(r[0], r[3], f"{r[2]} µs ({r[3]}%)") for r in rows[:12]]  # label, pct, disp
+        parts.append(H.section(f"Per-kernel breakdown — {name} ({unit})",
+                     f"<div class='card'>{H.bars(items, max_value=100.0)}</div>"))
+
+    parts.append("<p class='foot'>Self-contained report — CSS/SVG bars, no external "
+                 "dependencies. Companion files: summary.md, summary_overall.csv, "
+                 "per_kernel_*.csv.</p>")
+    with open(os.path.join(out, "summary.html"), "w") as f:
+        f.write(H.page(f"CK dynamic profiling — {arch}", "".join(parts)))
 
 
 def main():
@@ -232,6 +280,8 @@ def main():
     with open(os.path.join(out, "summary.md"), "w") as f:
         f.write("\n".join(md) + "\n")
 
+    write_html(overall, pk_rows, spec, peak, a.arch, unit, out)
+
     if spec:
         print(f"arch={a.arch} ({spec['product']})  CUs={sv(spec['cu'])}  wave={sv(spec['wave'])}  "
               f"max_waves/CU={sv(spec['max_waves_cu'])}  peak_mem={peak} GB/s  normalization={unit}")
@@ -243,7 +293,7 @@ def main():
         print(f"{name:9} {nr:4d} {m['gpu_ms'][0]:8.4f} {m['hr'][0]:6.1f} {m['fmb'][0]:7.2f} "
               f"{m['wmb'][0]:7.2f} {m['occ'][0]:5.2f} {occu:6.1f} {m['valu'][0]:6.2f} {m['salu'][0]:6.2f} "
               f"{m['memstall'][0]:7.2f} {bwu:5.1f}  {verdict}")
-    print(f"\nwrote {os.path.join(out, 'summary.md')}, summary_overall.csv, per_kernel_*.csv")
+    print(f"\nwrote {os.path.join(out, 'summary.html')}, summary.md, summary_overall.csv, per_kernel_*.csv")
 
 
 if __name__ == "__main__":
