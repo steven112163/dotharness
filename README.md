@@ -84,7 +84,13 @@ Engineering and productivity skills, linked from the submodule:
 - **write-a-skill** — create new skills with proper structure
 
 ### Plugins
-- **superpowers** — installed via `claude-plugins-official` marketplace
+Installed by `setup.sh` via the Claude CLI. The `claude-plugins-official` marketplace is registered by default; `setup.sh` adds the `anthropic-agent-skills` marketplace (`anthropics/skills`) before installing from it.
+
+- **superpowers** (`claude-plugins-official`) — disciplined workflows (brainstorming, TDD, debugging).
+- **example-skills** (`anthropic-agent-skills`) — bundle of 12 Anthropic example skills. Used here for **skill-creator** (author/eval/optimize skills), **frontend-design** and **theme-factory** (styling the ck-profile HTML reports), **webapp-testing** (Playwright — screenshot-verify the reports), and **mcp-builder**. The rest of the bundle stays inert unless its trigger fires.
+- **claude-api** (`anthropic-agent-skills`) — Claude API / Anthropic SDK reference for building LLM-powered tooling.
+
+Plugin granularity is per-plugin: `example-skills` is all-or-nothing, so the wanted skills arrive bundled with others. Skills are description-triggered and lazy, so unused ones cost nothing at runtime.
 
 ## Hooks
 

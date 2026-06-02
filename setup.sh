@@ -131,12 +131,22 @@ link "$REPO_DIR/statusline.sh" "$CLAUDE_DIR/statusline.sh"
 # --- Plugins (requires claude CLI) ---
 echo "Plugins:"
 if command -v claude &>/dev/null; then
-    for plugin in "superpowers@claude-plugins-official"; do
+    # claude-plugins-official is registered by default; add the Anthropic skills marketplace.
+    if grep -q '"anthropic-agent-skills"' "$CLAUDE_DIR/plugins/known_marketplaces.json" 2>/dev/null; then
+        echo "  ok  marketplace anthropic-agent-skills"
+    else
+        echo "  adding marketplace anthropic-agent-skills (anthropics/skills)"
+        claude plugin marketplace add anthropics/skills
+    fi
+    for plugin in \
+        "superpowers@claude-plugins-official" \
+        "example-skills@anthropic-agent-skills" \
+        "claude-api@anthropic-agent-skills"; do
         if grep -q "$plugin" "$CLAUDE_DIR/plugins/installed_plugins.json" 2>/dev/null; then
             echo "  ok  $plugin"
         else
             echo "  installing $plugin"
-            claude /plugin install "$plugin"
+            claude plugin install "$plugin"
         fi
     done
 else
