@@ -21,6 +21,31 @@ set -u
 CONTAINER=${CONTAINER:-styuan_dev}
 REPO=${REPO:-$PWD}
 BIN=${BIN:?set BIN to the binary path under REPO, e.g. build/bin/<target>}
+
+# Resolve REPO to the CK project root even if the caller's cwd drifted into a
+# subdir (which silently makes $REPO/$BIN nonexistent): walk up from REPO, then
+# $PWD, looking for script/cmake-ck-dev.sh. Then fail fast if the binary is still
+# not found, instead of running every rocprof pass against a missing path and
+# producing empty results.
+_find_ck_root() {
+  local d="$1"
+  while [ -n "$d" ] && [ "$d" != "/" ]; do
+    [ -e "$d/script/cmake-ck-dev.sh" ] && { printf '%s\n' "$d"; return 0; }
+    d=$(dirname "$d")
+  done
+  return 1
+}
+if [ ! -e "$REPO/$BIN" ]; then
+  alt=$(_find_ck_root "$REPO" || _find_ck_root "$PWD") && REPO="$alt"
+fi
+if [ ! -e "$REPO/$BIN" ]; then
+  echo "ERROR: binary not found: \$REPO/\$BIN = $REPO/$BIN" >&2
+  echo "  Set REPO to the CK project root (dir containing script/cmake-ck-dev.sh)" >&2
+  echo "  and BIN to the binary under it, e.g." >&2
+  echo "  REPO=\$(git rev-parse --show-toplevel) BIN=build/bin/<target>" >&2
+  exit 1
+fi
+
 BASE_ARGS=${BASE_ARGS:--v=0}
 SWEEP_FLAG=${SWEEP_FLAG:-}
 SWEEP_VALS=${SWEEP_VALS:-}

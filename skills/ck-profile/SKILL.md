@@ -43,10 +43,16 @@ format, and the roofline thresholds.
 
 ## Common setup (both modes)
 
-1. **Preconditions.** Confirm `pwd` is a CK repo (`script/cmake-ck-dev.sh`
-   exists); set `$REPO=$PWD`. The repo and `$HOME` are bind-mounted at the same
-   path inside the container, so host and container paths (including this
-   skill's scripts) match.
+1. **Preconditions.** Set `$REPO` to the **CK project root** (the directory
+   containing `script/cmake-ck-dev.sh`) as an **absolute path**. Do not use a
+   bare `$REPO=$PWD`: the shell cwd can drift into a subdir between commands, and
+   a wrong `REPO` makes `$REPO/build/bin/<target>` nonexistent so every rocprof
+   pass fails silently (all runs exit 1, empty results). Prefer
+   `REPO=$(git rev-parse --show-toplevel)` when that is the CK root, or `cd` to
+   the CK root first and pass an absolute path. The scripts self-correct (walk up
+   for `script/cmake-ck-dev.sh`) and fail fast if the binary/marker is missing,
+   but set `REPO` correctly regardless. The repo and `$HOME` are bind-mounted at
+   the same path inside the container, so host and container paths match.
 2. **Container.** `docker ps --filter name=^<container>$`. If not running, start
    it with `~/bin/dockerRun <image> <container>` using the default image above.
 3. **GPU arch.** `docker exec <container> bash -c "rocminfo | grep -m1 -oE 'gfx[0-9a-z]+'"`.
@@ -113,6 +119,12 @@ highlighted). Report scope: for a focused ask ("spills",
 
 ## Both
 
-Run static and dynamic and combine: the static occupancy *ceiling* explains a
-low achieved-occupancy / latency-bound dynamic verdict (e.g. register spills or
-high VGPR pressure capping the wave count).
+Run the two modes **sequentially, static first, then dynamic — never in
+parallel**. The static instrumented build is CPU-saturating and shares the
+container with the GPU run; overlapping them contends for resources and skews the
+dynamic timing/counter measurements. Wait for the static build + parse to finish
+before starting `run_profile.sh`.
+
+Then combine: the static occupancy *ceiling* explains a low achieved-occupancy /
+latency-bound dynamic verdict (e.g. register spills or high VGPR pressure capping
+the wave count).
