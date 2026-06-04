@@ -1,5 +1,42 @@
 # ck-profile reference
 
+## GPU execution model and terminology
+
+The reports and the CK source mix AMD, HIP/CUDA, and CK names for the same
+things. Canonical AMD/ROCm terms are used throughout this skill; this table maps
+the synonyms.
+
+| Concept | AMD / ROCm (used here) | HIP / CUDA | NVIDIA HW | CK config field |
+|---|---|---|---|---|
+| one execution lane | work-item (a *lane*) | thread | thread | — |
+| lockstep SIMT group | **wavefront** (64 lanes on CDNA, 32 on RDNA wave32) | warp (implicit) | warp (32 lanes) | the lanes of one `*_Warp` |
+| group sharing LDS + barriers | **workgroup** | block / thread block | thread block | one *block tile* = one workgroup |
+| whole launch | grid | grid | grid | — |
+| physical core | **Compute Unit (CU)** | — | SM | — |
+| issue unit inside a CU | **SIMD** (4 per CU on CDNA) | — | SM sub-partition | — |
+| resident-wave budget | waves/SIMD (8 → 32/CU on gfx942) | occupancy | occupancy | — |
+
+Hardware nesting (gfx942): GPU → 304 **CU** → 4 **SIMD** each. A SIMD issues one
+64-lane **wavefront** per cycle and holds up to **8 wavefronts resident** (= 32
+per CU) for latency hiding. Each SIMD owns a 256-entry VGPR file plus a 256-entry
+AGPR file; LDS (64 KB) and L1 are shared by the whole CU.
+
+Launch nesting: a kernel launch is a **grid** of **workgroups (blocks)**; each
+workgroup is placed on one CU and split into 64-lane **wavefronts** (a 256-thread
+block is 4 wavefronts). Work-items in a workgroup share LDS and can
+`__syncthreads()`; work-items in different workgroups cannot.
+
+Two naming traps:
+- **"wave" means "wavefront"**, not a 32-lane NVIDIA warp. A CDNA wavefront is 64
+  lanes. The PMC counters (`SQ_WAVES`, `MeanOccupancyPerCU`) and the static
+  remark `Occupancy [waves/SIMD]` all count 64-lane wavefronts.
+- **CK names the per-block wavefront grid `*_Warp`** (`M_Warp`/`N_Warp`/`K_Warp`),
+  an NVIDIA-ism. On AMD each is a wavefront, so `M_Warp=2, N_Warp=2, K_Warp=1` is
+  **4 wavefronts**, not 4 NVIDIA warps. The grid is only a wavefront *count*;
+  work-items per block = wavefronts × the wavefront size, and the wavefront size is
+  set by the build target (64 on CDNA/gfx9, 32 on RDNA wave32), not by the config.
+  So 4 wavefronts is 256 work-items on gfx942, 128 on an RDNA wave32 build.
+
 ## Why two rocprofv3 modes
 
 | Mode | Command | Gives | Notes |
@@ -137,6 +174,32 @@ Three caveats baked into these numbers:
 
 Sources: ROCm GPU hardware specs page; AMD CDNA3 ISA guide + CDNA3/CDNA4
 whitepapers; TechPowerUp GPU database (RDNA SKUs); GPUOpen "Occupancy explained".
+
+## MFMA instruction family
+
+AMD matrix cores run GEMMs via MFMA (Matrix Fused Multiply-Add) instructions;
+their busy cycles show up in `SQ_VALU_MFMA_BUSY_CYCLES` and drive the compute-mode
+roofline. Naming: `v_mfma_<accum>_<M>x<N>x<K>_<input-type>` (e.g.
+`v_mfma_f32_32x32x8_f16` = fp16 inputs, fp32 accumulate, a 32×32 output tile, K=8
+contraction). Two axes vary independently:
+- **M×N** is the accumulator tile a single wavefront produces. 32×32 means fewer,
+  larger instructions and more VGPR/AGPR per wavefront; 16×16 means smaller
+  fragments and a deeper K per instruction.
+- **K** is the contraction depth per instruction, roughly `bytes_per_lane /
+  sizeof(element)`, so it grows as the element narrows.
+
+| Input type | Typical gfx942 shapes (M×N×K) |
+|---|---|
+| fp32 | 16×16×4, 32×32×2 |
+| fp16 / bf16 | 16×16×16, 32×32×8 |
+| int8 | 16×16×32, 32×32×16 |
+| fp8 / bf8 | 16×16×32, 32×32×16 |
+| fp64 | 16×16×4 |
+
+K doubles from fp16's 32×32×8 to int8/fp8's 32×32×16 as the element halves to one
+byte. The fp16/bf16/fp32 rows are firm; the exact int8/fp8 set is arch-specific,
+so get the authoritative list from AMD's `amd_matrix_instruction_calculator`
+(`--architecture gfx942 --list-instructions`) rather than this table.
 
 ## Bottleneck taxonomy (what to look at next)
 
