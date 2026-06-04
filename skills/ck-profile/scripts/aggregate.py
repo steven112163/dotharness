@@ -251,9 +251,20 @@ def main():
         return f"{x}{suffix}" if x is not None else "n/a"
 
     # --- markdown summary (readable report) ---
-    md = [f"# Dynamic profiling summary", "",
+    md = [f"# dynamic mode — runtime profiling summary", "",
           f"- arch: **{a.arch}**  (peak mem BW {peak} GB/s)" if peak else f"- arch: **{a.arch}**",
-          f"- normalization: **{unit}**", ""]
+          f"- normalization: **{unit}**", "",
+          "## How to read", "",
+          "- Open **`summary.html`** for the charted version (offline). This `.md` is the "
+          "same data as text; `summary_overall.csv` + `per_kernel_*.csv` are for scripts; "
+          "`raw/` holds the per-run rocprofv3 CSVs.",
+          "- **Per-variant table** is the headline. The two ratios that drive the "
+          "**verdict**: *occ util %* (achieved occupancy ÷ ceiling) and *BW util %* "
+          "(achieved ÷ peak HBM). Low both + low VALU% = latency/occupancy-bound; high "
+          "VALU% = compute-bound; high BW% = memory-bound.",
+          "- **Per-kernel breakdown** ranks kernels by time; pair a hot kernel's VGPR/LDS "
+          "here with the static report's occupancy ceiling to see if registers cap it.",
+          "- Numbers are mean ± stdev over the runs, normalized per the unit above.", ""]
     if spec:
         md += [f"## Device spec — {a.arch} ({spec['product']})", "",
                "| CUs | wave | SIMD/CU | max waves/CU | VGPR/SIMD | AGPR/SIMD | LDS/CU | peak mem BW |",

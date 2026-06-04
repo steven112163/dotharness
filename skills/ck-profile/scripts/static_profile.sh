@@ -52,10 +52,12 @@ dx() { docker exec -w "$REPO" "$CONTAINER" bash -c "$1"; }
 # clangd) activates on a build tree and keeps touching files, which makes the
 # Cursor "Live Preview" webview reload repeatedly when the report sits inside it.
 # Reports go to a clean dir with nothing but the .md/.csv/.html.
-BUILD=$REPO/ck_profile_out/static-build/$TARGET-$ARCH   # throwaway build tree (big)
-REPORTDIR=$REPO/ck_profile_out/static/$TARGET-$ARCH     # clean: reports only
+REPORTDIR=$REPO/ck_profile_out/static
+BUILD=$REPORTDIR/build
 LOG=$BUILD/build.log
 mkdir -p "$BUILD" "$REPORTDIR"
+cp "$SELF_DIR/profile_readme.md" "$REPO/ck_profile_out/README.md" 2>/dev/null || true
+bash "$SELF_DIR/git_exclude_outdir.sh" "$REPO" 2>/dev/null || true  # ignore output via .git/info/exclude
 
 echo "Configuring static-analysis build ($ARCH) in container $BUILD ..."
 dx "cmake -S '$REPO' -B '$BUILD' -GNinja \

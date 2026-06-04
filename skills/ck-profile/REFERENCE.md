@@ -39,6 +39,8 @@ roofline. Other useful extras: `SPI_RA_WVLIM_STALL_CSN` (occupancy-limited),
 
 ## Output CSV layout (per run)
 
+Per-run raw data lives under `ck_profile_out/dynamic/raw/<variant>/`:
+
 ```
 run_NN/
   t_kernel_trace.csv     raw per-launch: timestamps, VGPR/SGPR, LDS, scratch, grid/block
@@ -48,7 +50,7 @@ run_NN/
   {t,p}.stdout / .stderr  program output / rocprof logs
 ```
 
-Aggregated reports (written next to `raw/` by `aggregate.py`): `summary.md`,
+Aggregated reports (written to `ck_profile_out/dynamic/` by `aggregate.py`): `summary.md`,
 `summary_overall.csv`, `per_kernel_<variant>.csv`, and **`summary.html`** — a
 self-contained report (inline CSS/SVG bars, no CDN, opens offline) with the
 device-spec table, a runtime-across-variants bar chart, per-variant roofline
@@ -156,8 +158,8 @@ the cause is one of:
 ## Static mode (compile-time resource usage)
 
 `static_profile.sh` builds the target with `-Rpass-analysis=kernel-resource-usage`
-in a separate build dir under the repo (`ck_profile_out/static/<target>-<arch>/`,
-main `build/` untouched, log/reports host-visible), then
+in a separate build dir (`ck_profile_out/static/build/`, the project's own
+`build/` untouched) with the reports at `ck_profile_out/static/` (host-visible), then
 `parse_resource_usage.py` extracts one block of remarks per kernel and demangles
 names with `c++filt`. Raw format (ANSI-colored; each line tagged
 `[-Rpass-analysis=kernel-resource-usage]`):
@@ -188,6 +190,139 @@ Effective VGPRs and the occupancy cliff:
 This is the *ceiling*; the dynamic mode's `MeanOccupancyPerCU` is what was
 *achieved*. A low achieved occupancy with a high VGPR count points at register
 pressure as the limiter.
+
+## Trace mode (rocprofv3 timeline)
+
+`trace_profile.sh` runs `rocprofv3 --sys-trace -f pftrace csv` once per variant.
+`--sys-trace` records HIP + HSA API, kernel dispatches, and memory ops on one
+time axis with host↔device correlation. Output per run:
+
+```
+trace/raw/<variant>/run_NN/
+  timeline.html                  offline HTML timeline (open in Live Preview)
+  trace_results.pftrace          perfetto timeline (drag into ui.perfetto.dev)
+  trace_kernel_trace.csv         dispatch order/timing (feeds timeline + depgraph)
+  trace_hip_api_trace.csv, trace_hsa_api_trace.csv, trace_memory_*_trace.csv
+  pc.{stdout,stderr}             PC-sampling pass (best-effort)
+```
+
+### timeline.html (trace_timeline.py)
+
+`trace_profile.sh` calls `trace_timeline.py` (pure stdlib, runs on the host) per
+run to render an offline-standalone HTML timeline from the CSVs — the in-editor
+alternative to the perfetto web UI for a remote `.pftrace`. Lanes, top to bottom:
+**HIP API** (host), an optional **COPY** lane (SDMA `memory_copy` rows when any
+fall in the window), and **GPU** (kernel dispatches). Construction notes:
+
+- `Kernel_Name` carries template commas, so it parses with `csv.DictReader`
+  (never `cut -d,`); device labels use the shared `aggregate.short`.
+- Host lane is filtered to the runtime loop (`launch`/`memcpy`/`memset`/
+  `synchron`/`event`), dropping one-time setup (`__hipRegister*`, push/pop config,
+  `hipGetDevice*`). Host/copy events are kept only if they overlap the kernel
+  window; the display origin then spans all kept events so host launches that
+  precede the first kernel are not pushed to negative offsets.
+- Device kernels get a stable color per short-name (first-seen order) so the
+  repeating pipeline is visually obvious; host bars are colored by kind
+  (launch / sync / mem / event).
+- Bars are server-rendered at a "fit" scale (≈1500 px for the full span) with
+  `data-t0`/`data-du` (µs); a small static `<script>` adds ctrl+wheel zoom at the
+  cursor, drag-to-pan (native horizontal scroll), and a `textContent` tooltip
+  (`white-space:pre-wrap`, so template `<…>` is never reinterpreted as HTML).
+  Without JS the initial fit-scale timeline still shows; CSS/JS are inline (no
+  CDN), so it opens offline.
+- **Fidelity:** the useful 80% (ordering, gaps, overlap, dominant kernel, host↔
+  device overlap). Not in scope vs. perfetto: flow arrows, counter tracks, SQL
+  queries, CPU scheduling, sub-µs precision — use the `.pftrace` for those.
+
+PC sampling (`--pc-sampling-beta-enabled --pc-sampling-method stochastic
+--pc-sampling-unit instructions`) is beta and **driver-dependent** — on this
+gfx942 container it reports unsupported and is skipped. Trace vs dynamic: same
+tool, different subsystem. dynamic = aggregated PMC counters + a verdict (numbers,
+with variance, but PMC serializes kernels); trace = a single-run event timeline
+(structure: ordering, gaps, launch latency, but `--sys-trace` adds overhead).
+Use dynamic for *how much*, trace for *when / in what order*.
+
+## CFG mode (ISA control-flow graphs)
+
+`cfg_dump.sh` → `cfg_to_dot.py`. The device code object is extracted from the
+host binary (`roc-obj-ls` gives the `hipv4-amdgcn-amd-amdhsa--gfx<arch>` URI,
+`roc-obj-extract` writes a `.co`) and disassembled with
+`/opt/rocm/llvm/bin/llvm-objdump -d`. Note: `llvm-objdump` on the *executable*
+shows x86 host code — you must extract the device object first.
+
+`llvm-objdump` emits, per instruction:
+`<tab>MNEMONIC ops   // <hexaddr>: <encoding> [<symbol+0xoff>]`. The trailing
+`<symbol+0xoff>` on branches already resolves the target, so the parser builds
+basic blocks without decoding relative offsets:
+
+- **Leaders**: kernel entry; any branch target; the instruction after any
+  `s_branch` / `s_cbranch*` / `s_endpgm`.
+- **Terminators / edges**: `s_branch` → unconditional edge to target;
+  `s_cbranch*` → taken edge (target) + fall-through edge (next); `s_endpgm` /
+  `s_setpc*` → terminal (no successor); anything else → fall-through.
+- Trailing inter-kernel padding after the final `s_endpgm` (alignment `s_nop`s)
+  is dropped.
+
+One `cfg/<short>.dot` per kernel (dark-themed digraph: blocks = boxes labelled
+`addr-range / N insn / terminator`; edge colors green=taken, grey=fall,
+violet=jump) plus `index.md` (blocks/edges/insns, demangled). **DOT only** —
+preview in VS Code's Graphviz extension or `dot -Tsvg x.dot` where graphviz
+exists (not installed in-container by choice).
+
+## Dependency graphs (depgraph.py)
+
+Two complementary `.dot` views:
+
+- **data_dependency.dot** — logical producer→consumer DAG. `SSD_PIPELINE` at the
+  top of `depgraph.py` encodes each stage's read/write buffers exactly as launched
+  in `ssd_fwd.hpp`; edges are added by **last-writer-wins over program order**, so
+  the reused `pa`/`pb` scratch buffers correctly link each pack to the single GEMM
+  that consumes it. Input/output tensors are ellipse nodes, kernels are boxes,
+  edges labelled with the connecting buffer. Tied to the SSD pipeline; extend the
+  table for other targets.
+- **runtime_trace.dot** — as-executed graph from a rocprofv3 kernel-trace CSV
+  (any `*kernel_trace.csv` under `--raw`, or `--trace-csv`). Dispatches are sorted
+  by start time; nodes = kernels (calls + total/avg µs, names via `aggregate.short`),
+  edges = consecutive transitions with `xN` weights, so the recurring pipeline
+  appears as a cycle.
+
+## Compute mode (rocprof-compute)
+
+`compute_profile.sh`. `rocprof-compute` (ROCm Compute Profiler, package
+`rocprofiler-compute`) is the omniperf successor — roofline, speed-of-light, and
+memory-hierarchy panels. Two install facts learned the hard way:
+
+1. The apt package installs only the launcher (`/opt/rocm/bin/rocprof-compute`, a
+   symlink into `libexec/`), often **not on the non-login `docker exec` PATH** —
+   resolve it by path. Install needs **root** (`docker exec -u 0`; the default
+   user's sudo wants a password).
+2. The launcher is a Python app whose deps are **not** in the apt package; the
+   official install runs `pip install -r
+   /opt/rocm/libexec/rocprofiler-compute/requirements.txt`. Ubuntu 24.04 blocks
+   system pip (PEP 668), so the script installs them into a **persistent venv**
+   at `$HOME/pyenv/rocprof-compute-py<ver>` (python version in the name to avoid
+   interpreter collisions; override `VENV=`; `uv venv`+`uv pip` if `uv` is
+   installed, else `python3 -m venv --system-site-packages`+pip) and runs the launcher with that
+   venv's python. The venv lives under `$HOME` (bind-mounted, so it persists and
+   is reused across container sessions) but is **container-only**: it is built
+   with the container's python (e.g. 3.12) and the host python differs (3.10), so
+   the same venv can't run on the host — and the host has no in-container ROCm to
+   run rocprof-compute regardless. Reversible: delete the dir.
+
+`rocprof-compute profile -n <wl> -p <dir> -- <app>` runs the app multi-pass
+(slow) and writes the workload data **directly into `<dir>`** (sysinfo.csv,
+pmc_perf.csv, roofline.csv, perfmon/, ...) — there is no `workloads/<wl>/<arch>`
+nesting. Analysis is exported as **per-panel CSVs** with
+`analyze -p <dir> --output-format csv --output-name <name>` — note `--output-name`
+must be a **bare** name (alnum/`_`/`-`, no slashes/dots) created in the **current
+working dir**, so run it with the working dir set to `raw/`. `compute_report.py`
+then reads those panels (`2.1_System_Speed-of-Light.csv`, `0.1_Top_Kernels.csv`,
+`1.1_System_Info.csv`, ...) and renders `<wl>_report.html` + `<wl>_report.md`:
+Speed-of-Light rows become %-of-peak gauges, top kernels become bars, and a
+verdict is derived (max FLOP/IOP % vs max cache/LDS BW %, same taxonomy as the
+dynamic roofline-lite). A plain-text `analyze` dump is also kept in
+`raw/<wl>_analyze.txt`. `--gui` serves the interactive dashboard. Use this for the
+MFMA/roofline attribution that the dynamic mode's single `VALUBusy` cannot give.
 
 ## Known gotchas
 

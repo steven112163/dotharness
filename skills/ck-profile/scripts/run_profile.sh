@@ -13,7 +13,7 @@
 #   SWEEP_VALS  comma list, e.g. "fp32,fp16,bf16"  (optional)
 #   NRUNS       runs per variant                   (default: 20)
 #   COUNTERS    path to counters.txt               (default: alongside this script)
-#   OUTDIR      where raw output is written        (default: REPO/ck_profile_out/raw)
+#   OUTDIR      where raw output is written        (default: REPO/ck_profile_out/dynamic/raw)
 #
 # Profiling uses BASE_ARGS as given; pass -v=0 there to skip CPU verification.
 set -u
@@ -52,11 +52,14 @@ SWEEP_VALS=${SWEEP_VALS:-}
 NRUNS=${NRUNS:-20}
 SELF_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 COUNTERS=${COUNTERS:-$SELF_DIR/counters.txt}
-OUTDIR=${OUTDIR:-$REPO/ck_profile_out/raw}
+OUTDIR=${OUTDIR:-$REPO/ck_profile_out/dynamic/raw}
 
 binbase=$(basename "$BIN")
 dx() { docker exec -w "$REPO" "$CONTAINER" bash -c "$1"; }
 kill_orphans() { docker exec "$CONTAINER" pkill -9 -f "$binbase" 2>/dev/null; }
+
+mkdir -p "$REPO/ck_profile_out"; cp "$SELF_DIR/profile_readme.md" "$REPO/ck_profile_out/README.md" 2>/dev/null || true
+bash "$SELF_DIR/git_exclude_outdir.sh" "$REPO" 2>/dev/null || true  # ignore output via .git/info/exclude
 
 # Copy counters.txt to a repo-visible path so the container can read it.
 cp "$COUNTERS" "$REPO/.ck_profile_counters.txt"

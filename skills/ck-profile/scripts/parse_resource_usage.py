@@ -132,10 +132,22 @@ def write_report(records, arch, target, path):
     for r in records:
         occ_hist[r["occupancy"]] = occ_hist.get(r["occupancy"], 0) + 1
 
-    lines = [f"# Static kernel resource report — {target or '(target)'} ({arch})", ""]
+    lines = [f"# static mode — kernel resource report — {target or '(target)'} ({arch})", ""]
     lines += [f"- Kernels analyzed: **{len(records)}**",
               f"- With spills or scratch: **{len(spilled)}**",
-              f"- With dynamic stack: **{len(dynstack)}**", ""]
+              f"- With dynamic stack: **{len(dynstack)}**", "",
+              "## How to read", "",
+              "- Compile-time only (no GPU run). Open **`build_report.html`** for charts; "
+              "this `.md` mirrors it; `build_report.csv` is for scripts; `build/` is the "
+              "throwaway instrumented build tree.",
+              "- **Occupancy (waves/SIMD)** is the *ceiling* each kernel allows; the "
+              "dynamic report's *occ util %* is what was actually achieved against it.",
+              "- **Effective VGPR** drives the ceiling: cliff at **129** (128 → 4 waves, "
+              "129 → 3). Non-zero **scratch / spill** or **dynamic stack** = per-lane "
+              "global-memory traffic — a red flag (highlighted rows).",
+              "- The top table is sorted worst-first (scratch, then spill, then eff-VGPR). "
+              "A heavy kernel here that is also hot in the dynamic report is the one to "
+              "attack first.", ""]
     spec = get_spec(arch)
     if spec:
         sv = lambda x, s="": f"{x}{s}" if x is not None else "n/a"
