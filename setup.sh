@@ -64,18 +64,20 @@ link_items "$REPO_DIR/hooks" "$CLAUDE_DIR/hooks"
 readonly SETTINGS="$CLAUDE_DIR/settings.json"
 register_hook() {
     local event="$1" command="$2" name="$3" timeout="${4:-10}"
-    local matcher="${5:-}"
+    local matcher="${5:-}" async_rewake="${6:-0}"
     if jq -e ".hooks.${event}[]? | .hooks[]? | select(.command == \"$command\")" "$SETTINGS" >/dev/null 2>&1; then
         echo "  ok  $name"
     else
         echo "  add $name"
+        local aw=false
+        [ "$async_rewake" = "1" ] && aw=true
         if [ -n "$matcher" ]; then
-            jq --arg evt "$event" --arg cmd "$command" --argjson to "$timeout" --arg mat "$matcher" \
-                '.hooks = (.hooks // {}) | .hooks[$evt] = ((.hooks[$evt] // []) + [{"matcher": $mat, "hooks": [{"type": "command", "command": $cmd, "timeout": $to}]}])' \
+            jq --arg evt "$event" --arg cmd "$command" --argjson to "$timeout" --arg mat "$matcher" --argjson aw "$aw" \
+                '.hooks = (.hooks // {}) | .hooks[$evt] = ((.hooks[$evt] // []) + [{"matcher": $mat, "hooks": [({"type": "command", "command": $cmd, "timeout": $to} + (if $aw then {"asyncRewake": true} else {} end))]}])' \
                 "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
         else
-            jq --arg evt "$event" --arg cmd "$command" --argjson to "$timeout" \
-                '.hooks = (.hooks // {}) | .hooks[$evt] = ((.hooks[$evt] // []) + [{"hooks": [{"type": "command", "command": $cmd, "timeout": $to}]}])' \
+            jq --arg evt "$event" --arg cmd "$command" --argjson to "$timeout" --argjson aw "$aw" \
+                '.hooks = (.hooks // {}) | .hooks[$evt] = ((.hooks[$evt] // []) + [{"hooks": [({"type": "command", "command": $cmd, "timeout": $to} + (if $aw then {"asyncRewake": true} else {} end))]}])' \
                 "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
         fi
     fi
@@ -91,7 +93,7 @@ if [ -f "$SETTINGS" ] && command -v jq &>/dev/null; then
     register_hook "UserPromptSubmit" "bash ~/.claude/hooks/anti-sycophancy.sh" "anti-sycophancy hook" 5
     register_hook "PreToolUse"       "bash ~/.claude/hooks/block-dangerous.sh"  "block-dangerous hook" 5 "Bash|Write|Edit"
     register_hook "PostToolUse"      "bash ~/.claude/hooks/auto-format.sh"      "auto-format hook"     10 "Write|Edit"
-    register_hook "PostToolUse"      "bash ~/.claude/hooks/security-scan.sh"    "security-scan hook"   5  "Write|Edit"
+    register_hook "PostToolUse"      "bash ~/.claude/hooks/security-scan.sh"    "security-scan hook"   5  "Write|Edit" 1
     register_hook "Stop"             "bash ~/.claude/hooks/notify-stop.sh"      "notify-stop hook"     5
     register_hook "PreCompact"      "bash ~/.claude/hooks/context-save.sh"     "context-save hook"    10
     register_hook "Notification"    "bash ~/.claude/hooks/notify-prompt.sh"    "notify-prompt hook"   5

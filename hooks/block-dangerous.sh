@@ -5,9 +5,14 @@ input=$(cat)
 tool=$(echo "$input" | jq -r '.tool_name // empty')
 
 deny() {
+    # Emit the structured deny (advanced PreToolUse protocol) on stdout, and the
+    # same reason on stderr. exit 2 keeps the block fail-closed if a client does
+    # not honor the JSON; the stderr line is what that exit-2 path surfaces to
+    # Claude, so the reason reaches it on either channel.
     cat <<ENDJSON
 {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "Blocked: $1"}}
 ENDJSON
+    echo "Blocked: $1" >&2
     exit 2
 }
 

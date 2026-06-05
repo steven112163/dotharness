@@ -1,5 +1,10 @@
 #!/bin/bash
 # PostToolUse hook: scan edited files for hardcoded secrets.
+#
+# Registered with asyncRewake, so it runs in the background off the edit's
+# critical path and only wakes Claude when it finds something: exit 2 with the
+# warning on stderr surfaces it as a system reminder. A clean scan exits 0 and
+# stays silent.
 
 input=$(cat)
 file=$(echo "$input" | jq -r '.tool_input.file_path // .tool_response.filePath // empty')
@@ -46,7 +51,7 @@ if grep -qE 'glpat-[A-Za-z0-9_-]{20,}' "$file" 2>/dev/null; then
 fi
 
 if [ -n "$findings" ]; then
-    cat <<ENDJSON
-{"systemMessage": "Security scan warning for $file: $findings Review the file and remove any hardcoded secrets before committing."}
-ENDJSON
+    echo "Security scan warning for $file: ${findings}Review the file and remove any hardcoded secrets before committing." >&2
+    exit 2
 fi
+exit 0
