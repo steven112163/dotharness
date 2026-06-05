@@ -64,6 +64,12 @@ Fill in the section that matches your role. Delete the others.
 - **Results so far:** <pass/fail counts, notable failures>
 - **Remaining tests:** <list>
 
+### Profiler
+- **Candidates profiled:** <id: verdict + headline metric>
+- **Modes run / pending:** <ck-profile modes done, what is queued>
+- **Ranked directions returned:** <per candidate, top direction>
+- **In-flight profiling run:** <candidate or "none" — only one at a time>
+
 ### PHD / Senior Engineer
 - **Assigned focus:** <topic or review domain>
 - **Findings so far:** <list>
