@@ -251,8 +251,9 @@ For each chosen direction, create a candidate:
 3. **Build + profile (serialized).** Process candidates one at a time through the
    shared builder and profiler — CK builds saturate CPU and the GPU/counters allow
    only one profiling run at a time:
-   - **Builder** builds the candidate's worktree (ccache/sccache keeps the cold build cheap).
-     Build-fix retries with the implementer do not count as a refine iteration.
+   - **Builder** builds the candidate's worktree with `ckBuild` (the standard CK build
+     command; its compiler cache keeps the cold build cheap). Build-fix retries with
+     the implementer do not count as a refine iteration.
    - **Staff engineer** reviews the candidate (surfacing senior dissent).
    - **Profiler** runs `ck-profile` on the built candidate, diagnoses the bottleneck,
      and returns **ranked optimization directions** vs the baseline.
@@ -395,10 +396,13 @@ independent on-disk checkout sharing the same `.git` object store.
   `build/` and its first build is a **cold full build**. Do not copy a built tree
   between worktrees — CMake/Ninja bake in absolute paths and it will reconfigure
   anyway.
-- **Shared ccache/sccache makes cold builds cheap.** Point every worktree at one persistent
-  ccache/sccache dir (CK supports ccache/sccache). The user's pre-build warms it; each candidate's
-  cold build then reuses cached objects. Refining a candidate **in place** in its own
-  worktree is a true incremental build — only the first build per candidate is cold.
+- **Build with `ckBuild`; the shared cache makes cold builds cheap.** `ckBuild` is the
+  standard CK build command (`REPO=<worktree> ckBuild <target>`); on a first/scratch
+  configure it adds a compiler-launcher (prefers ccache, falls back to sccache)
+  pointed at one persistent cache dir. The user's pre-build warms it, so each
+  candidate's cold build reuses cached objects. Refining a candidate **in place** in
+  its own worktree is a true incremental build — only the first build per candidate is
+  cold.
 - **Serialize the shared stages.** Implementation is parallel; **build and profile
   are queued** (CPU saturation; one GPU profiling run at a time). Disk for N CK build
   trees and cold-build time bound how wide the fan-out can go — 2–3 with ccache/sccache,

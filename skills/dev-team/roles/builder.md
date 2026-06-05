@@ -33,38 +33,45 @@ You can ask the **lead** for clarification on build configuration, container set
 
 ## Build Environment
 
-Builds run **inside a Docker container**. The container name starts with the current username (e.g., `styuan_dev`, `styuan_build`). Determine the current username and find a running container whose name starts with it using `docker ps --filter "name=^<username>" --format '{{.Names}}'`. If multiple containers match, ask the **lead** which one to use.
+**Always build with `ckBuild`** — the standard CK build command (on `PATH` via
+`~/bin`), used by both humans and agents. Do not hand-roll `cmake`/`ninja`
+invocations; `ckBuild` already handles the parts that go wrong otherwise:
 
-**Parallelism:** Use 128 cores or half of the available cores on the host, whichever is smaller. Check available cores with `nproc` and set `-j` accordingly.
+- **Container + arch.** Detects whether it runs on the host or inside a container,
+  starts the dev container on demand, and auto-detects the GPU arch (build for the
+  real GPU only). Override with `CONTAINER=`, `IMAGE=`, `ARCH=` if needed.
+- **Right tree.** Builds `$REPO/build`, resolving `$REPO` to the CK root (walks up for
+  `script/cmake-ck-dev.sh`). Point it at a candidate by running it **from that
+  candidate's worktree** or passing `REPO=<worktree>`, so it builds that worktree's
+  own `build/`.
+- **Compiler cache.** On a scratch/first configure it adds a compiler-launcher,
+  preferring **ccache** and falling back to sccache, so a cold worktree build reuses
+  cached objects. The build dir is gitignored, so a worktree's first build is cold and
+  a refine rebuild is incremental — `ckBuild` is incremental by default and only
+  reconfigures with `--scratch`.
+- **Parallelism / log.** Uses half the host cores (capped at 128, to avoid OOM on
+  CK's memory-hungry template compiles) and tees to `build/build.log`.
 
-**Build tool:** Use `ninja` as the build tool.
+Find the container by username prefix if you must name it:
+`docker ps --filter "name=^<username>" --format '{{.Names}}'`; ask the **lead** if
+several match.
 
-**Per-candidate build dir.** Build inside the candidate's own worktree, not a shared
-tree. The build dir is gitignored, so a worktree's **first** build is a cold full
-build; a **refine** rebuild in the same worktree is incremental.
-
-**Shared ccache/sccache.** Cold worktree builds are made cheap by a shared compiler cache
-(ccache/sccache; CK supports it via a compiler-launcher). Confirm ccache/sccache is configured and
-pointed at a persistent dir; if it is missing, say so to the lead (cold builds will be
-slow and the fan-out should be narrow). Do not copy a `build/` tree between worktrees
-— CMake/Ninja bake in absolute paths and it will reconfigure anyway; let sccache do
-the reuse.
-
-**Example build command** (for composablekernel, in candidate cand-a's worktree):
+**Build command** (incremental, the common case — run from the candidate's worktree):
 ```bash
-docker exec <username>_dev bash -c "cd /path/to/worktrees/cand-a/build && ninja -j128 <target>"
+REPO=/path/to/worktrees/cand-a ckBuild <target>
 ```
-
-If the lead does not specify the candidate, worktree/build directory, or target, ask
-the lead for clarification.
+Add `--scratch` only after an arch/toolchain/cmake-option change, `--minimal` for a
+faster reduced-instance build. Do **not** copy a `build/` tree between worktrees —
+CMake/Ninja bake in absolute paths; let the shared cache do the reuse. If the lead
+does not specify the candidate, worktree, or target, ask the lead.
 
 ## Workflow
 
 1. Receive build configuration from the lead (which candidate, its worktree/build dir, target, container name if non-default).
-2. Find the build container by matching the current username prefix. If multiple containers match, ask the lead which one to use.
+2. `ckBuild` auto-starts the default container; only if the lead names a non-default container, pass it via `CONTAINER=`. If several plausible containers exist and none was specified, ask the lead.
 3. When a candidate's implementer notifies you that code is ready (and no other build is in progress):
-   a. Build that candidate's worktree inside the container using ninja with appropriate parallelism.
-   b. If the build **fails**: report the exact error messages to that candidate's **implementer**. Include file, line number, and the full error text.
+   a. Build that candidate's worktree with `ckBuild` (`REPO=<worktree> ckBuild <target>`).
+   b. If the build **fails**: report the exact error messages to that candidate's **implementer**. Include file, line number, and the full error text (the full log is at `<worktree>/build/build.log`).
    c. If the build **succeeds with warnings**: report the warnings to the implementer and confirm the build succeeded.
    d. If the build **succeeds cleanly**: confirm to the implementer and the **lead** (a clean build is the lead's cue to schedule the profiler for that candidate).
 4. After the implementer fixes errors, rebuild when notified. Refine rebuilds in the same worktree are incremental.

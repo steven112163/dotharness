@@ -111,12 +111,15 @@ highlighted). Report scope: for a focused ask ("spills",
 
 ## Dynamic mode
 
-1. **Ensure the binary exists.** If `build/bin/<target>` is missing, configure
-   and build for the host arch only (delegate the build — logs are large):
+1. **Ensure the binary exists.** If `build/bin/<target>` is missing, build it with
+   `ckBuild` (the standard CK build command; it auto-detects the container and arch,
+   configures with a compiler cache, and builds for the host arch only — delegate it,
+   logs are large):
    ```bash
-   docker exec -w $REPO/build <container> bash -c \
-     "../script/cmake-ck-dev.sh --minimal .. $ARCH -G Ninja && ninja <target>"
+   CONTAINER=<container> REPO=$REPO ckBuild --minimal <target>
    ```
+   `ckBuild` is incremental by default (reuses `build/`); add `--scratch` only after
+   an arch/toolchain/cmake-option change. Run from the CK root or pass `REPO`.
 2. **Profile.** The harness writes per-run CSVs under
    `ck_profile_out/dynamic/raw/<variant>/run_NN/` and is robust to PMC counter-capacity
    crashes (kills orphaned app processes; cleans the `.rocprofv3/` scratch dir):
