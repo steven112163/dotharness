@@ -46,8 +46,14 @@ Modes are independent and may be combined; **graphs (`cfg`, `depgraph`) emit DOT
 only** — preview `.dot` in VS Code's Graphviz extension (no graphviz/SVG).
 
 See [REFERENCE.md](REFERENCE.md) for counters, CSV layout, the static remark
-format, the roofline thresholds, the CFG basic-block rules, and the
-dependency-graph semantics.
+format, the roofline thresholds, the CFG basic-block rules, the dependency-graph
+semantics, and — for turning numbers into action — the **diagnosis playbook**
+(pattern → signals → fix) and the **ranked optimization directions** rule.
+
+**Golden rule: profile → diagnose → recommend, in that order. Never guess.** Don't
+invent a bottleneck before the report; don't propose a fix you can't tie to a
+counter value. The deliverable is a short, ranked list of next optimizations, each
+citing the specific numbers that justify it.
 
 ## Inputs
 
@@ -232,6 +238,23 @@ automatically if installed, else stdlib `venv`+`pip`). The venv is built with th
 theme as the other reports. The CSV panels, the text dump (`<wl>_analyze.txt`),
 the workload, and `profile.log` stay under `raw/`. Re-open interactively with
 `rocprof-compute analyze -p ck_profile_out/compute/raw/<wl>` (add `--gui`).
+
+## Diagnose & recommend
+
+Profiling is not done when the report renders — it is done when you have named the
+limiter and what to try next. After the relevant mode(s) report:
+
+1. **Read the verdict** (dynamic/compute) or the resource ceiling (static).
+2. **Match the diagnosis playbook** in REFERENCE.md: find the pattern(s) whose
+   *Signals* the data satisfies. Most kernels match two to four; note each.
+3. **Emit ranked optimization directions** (REFERENCE.md rule): at most 3–5, ranked
+   by evidence strength × roofline headroom × inverse effort, each citing specific
+   counter values and the mode that would confirm the fix. No `Est. Speedup` oracle
+   exists for rocprofv3 — rank by judgement, and say so when a signal is inferred or
+   needs an added counter / PC sampling.
+
+This step is what the dev-team profiler role consumes to drive its candidate loop,
+and what a solo user reads to pick the next change.
 
 ## Combining modes
 

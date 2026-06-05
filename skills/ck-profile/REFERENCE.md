@@ -218,6 +218,202 @@ the cause is one of:
 | System: launch overhead / PCIe / multi-GPU / throttling | many tiny kernels (trace count); H2D/D2H; XGMI/RCCL; clock |
 | Algorithmic: serial fraction (Amdahl) | sequential kernels in the trace |
 
+## Diagnosis playbook (pattern → fix)
+
+The taxonomy says *where* to look; this playbook says *what it means and what to do*.
+Each entry is **Signals** (a predicate over data we actually collect), **Why**,
+**First-line fix** (cheapest), **Deeper fixes**, **Exceptions** (when the pattern is
+expected and should be left alone), and **Confirm with** (the mode/counter that
+corroborates). Most kernels match two to four patterns at once; rank by magnitude
+(the ranked-directions rule below), fix the biggest first.
+
+Signal vocabulary. Counters in the default `scripts/counters.txt`: `VALUBusy`,
+`SALUBusy`, `SQ_VALU_MFMA_BUSY_CYCLES`, `SQ_WAVES`, `TCC_HIT`/`TCC_MISS`,
+`FETCH_SIZE`, `WRITE_SIZE`, `MeanOccupancyPerCU`, `MemUnitStalled`,
+`LDSBankConflict`. Derived by `aggregate.py`: **occ-util %** (achieved ÷ max
+waves/CU), **BW-util %** (achieved HBM ÷ peak), achieved BW, L2 hit %. From the
+static report: effective VGPR, occupancy ceiling, `scratch_size`, spill, dynamic
+stack. Counters tagged **(add a pmc line)** are not in the default set — add them to
+`counters.txt` (one group per pass; verify the group fits one pass) before relying
+on them. Signals tagged **(PC sampling)** need per-instruction sampling, which is
+beta and driver-dependent (reports unsupported on the gfx942 container), so treat
+them as best-effort or fall back to `cfg`.
+
+### Memory-bandwidth-bound (HBM)
+- **Signals:** BW-util % ≥ 60; achieved BW near peak (`gpu_specs.py PEAK_MEM_GBS`); `FETCH_SIZE`+`WRITE_SIZE` large per iteration.
+- **Why:** the kernel moves bytes faster than it computes; HBM is the limiter.
+- **First-line fix:** cut bytes — fuse producer/consumer kernels (see depgraph), reuse via LDS, narrow dtype (fp16/bf16/fp8) if accuracy allows.
+- **Deeper fixes:** recompute instead of reloading; tile so reused data stays in L2/LDS; pack/quantize the workspace.
+- **Exceptions:** genuinely streaming kernels (copy, elementwise) — already optimal at high BW-util.
+- **Confirm with:** dynamic verdict; `compute` mode roofline (DRAM ceiling).
+
+### Compute-bound — VALU / SALU
+- **Signals:** `VALUBusy` (or `SALUBusy`) ≥ 60%; BW-util low.
+- **Why:** the vector (or scalar) ALU pipe is saturated.
+- **First-line fix:** reduce instruction count — strength-reduce, hoist invariants, vectorize (`global_load_dwordx4`), drop redundant address math (often the SALU source).
+- **Deeper fixes:** move matrix work to MFMA; rebalance VALU/SALU; pick a tile with less per-element overhead.
+- **Exceptions:** legitimately arithmetic-heavy kernels already near peak.
+- **Confirm with:** `compute` mode speed-of-light; `cfg` for the hot straight-line block.
+
+### Compute-bound — MFMA / matrix
+- **Signals:** `SQ_VALU_MFMA_BUSY_CYCLES` large while `VALUBusy` is modest (the dynamic verdict may then read latency-bound because `VALUBusy` undercounts the matrix pipe).
+- **Why:** the matrix engine is the real worker; the roofline-lite verdict can't see it (raw cycles, no per-CU normalization).
+- **First-line fix:** treat as compute-bound; improve MFMA feeding (LDS staging, larger K per instruction) rather than chasing the misleading latency verdict.
+- **Deeper fixes:** pick MFMA shapes matched to the dtype (see the MFMA table above); overlap MMA with global/LDS loads.
+- **Exceptions:** none — this is the desired state for a GEMM; the note exists to avoid misreading the verdict.
+- **Confirm with:** `compute` mode (MFMA roofline) — the only mode that attributes this properly.
+
+### Occupancy capped by registers
+- **Signals:** static effective VGPR at/over the **129 cliff** (128→4 waves, 129→3); low `MeanOccupancyPerCU` / occ-util %.
+- **Why:** each wave reserves too many VGPRs, so fewer waves stay resident to hide latency.
+- **First-line fix:** `__launch_bounds__(block, min_waves)` to cap the register budget; cut live values.
+- **Deeper fixes:** split the kernel; recompute instead of caching; shrink the tile.
+- **Exceptions:** large fused kernels (FlashAttention-style) that trade occupancy for upstream savings.
+- **Confirm with:** `static` mode (the ceiling) vs dynamic occ-util % (the achieved).
+
+### Occupancy capped by LDS
+- **Signals:** LDS/block (static) high relative to LDS/CU (`gpu_specs.py lds_kb_per_cu`); low occ-util % with VGPR below the cliff.
+- **Why:** the workgroup's LDS allocation limits resident workgroups per CU.
+- **First-line fix:** shrink the LDS tile, or split the LDS-heavy phase.
+- **Deeper fixes:** stage in smaller chunks; reuse one LDS buffer across phases.
+- **Exceptions:** kernels deliberately trading occupancy for large-tile reuse.
+- **Confirm with:** `static` LDS column; dynamic occ-util %.
+
+### Register spill / scratch
+- **Signals:** static `scratch_size` > 0, non-zero spill, or dynamic stack (highlighted rows).
+- **Why:** the compiler ran out of registers and spilled to scratch (global-backed) — per-lane DRAM traffic on every access.
+- **First-line fix:** `__launch_bounds__`; remove the largest live arrays.
+- **Deeper fixes:** split the kernel; move per-thread arrays to LDS with explicit indexing.
+- **Exceptions:** rarely acceptable; spill almost always costs more than it saves.
+- **Confirm with:** `static` mode (authoritative); shows even without a GPU run.
+
+### Latency-bound — dependent loads
+- **Signals:** the roofline-lite **below-both** verdict (compute util < 25% **and** BW-util < 25%, per the thresholds above); corroborated by low occ-util % and elevated `MemUnitStalled`; `SQ_WAIT_INST_*` **(add a pmc line)**.
+- **Why:** waves issue a load then stall on the result before the next dependent op, and there aren't enough other waves resident to hide it.
+- **First-line fix:** add ILP — unroll so several loads are in flight before the first is used; raise occupancy (see the two occupancy patterns).
+- **Deeper fixes:** async/bulk loads; software-pipeline (preload tile N+1 while computing N); move reuse to LDS.
+- **Exceptions:** pointer-chasing / graph traversal — the dependency chain is fundamental.
+- **Confirm with:** `trace` (gaps between small dispatches); `static` (is it the occupancy ceiling?).
+
+### LDS bank conflicts
+- **Signals:** `LDSBankConflict` high relative to LDS access volume.
+- **Why:** LDS has 32 banks; same-bank accesses in a wave serialize.
+- **First-line fix:** pad the leading dimension (`tile[N][N+1]`) to break the stride.
+- **Deeper fixes:** swizzle (XOR-scramble) indices; restructure so lanes hit distinct banks.
+- **Exceptions:** broadcast reads (all lanes same address) are conflict-free; low LDS volume — ignore.
+- **Confirm with:** dynamic `LDSBankConflict`; `cfg` to locate the `ds_*` ops.
+
+### Uncoalesced / low-utilization HBM traffic
+- **Signals:** achieved BW low while `FETCH_SIZE` is high (bytes moved but throughput poor); per-access coalescing metrics need **(PC sampling)** — rocprofv3 has no direct sectors/request counter like NCU.
+- **Why:** lanes in a wave touch non-contiguous addresses, so hardware fetches sectors only a few lanes use.
+- **First-line fix:** rework the thread↔data map so consecutive lanes read consecutive addresses; vectorize loads.
+- **Deeper fixes:** AoS→SoA; stage through LDS as a transposer.
+- **Exceptions:** gather/scatter by random index (embedding, sparse) — inherently uncoalesced; sort indices for locality if feasible.
+- **Confirm with:** `compute` mode (L1/L2 sector efficiency); `cfg`/source for the offending load.
+
+### Atomics contention
+- **Signals:** high L2 traffic with low compute throughput; atomic-specific counters (`TCC_EA_*` atom/red) need **(add a pmc line)**.
+- **Why:** many threads atomically update few locations and serialize.
+- **First-line fix:** reduce hierarchically — wave-level (`ds_swizzle`/DPP/`__shfl`), then LDS within the workgroup, then one global atomic per workgroup.
+- **Deeper fixes:** LDS histogram flushed in one coalesced pass; bucket then merge.
+- **Exceptions:** RCCL-style collectives where atomics are fundamental.
+- **Confirm with:** `compute` mode (L2 atomic rows).
+
+### Barrier / synchronization overhead
+- **Signals:** barrier stalls dominate **(PC sampling)**; otherwise infer from many `s_barrier` in `cfg` plus workgroup imbalance.
+- **Why:** `s_barrier` waits for the slowest wave; any per-wave imbalance amplifies it.
+- **First-line fix:** replace workgroup syncs with wave-scoped primitives (DPP/`ds_permute`/`__shfl`) where only wave-scope is needed; consolidate sync phases.
+- **Deeper fixes:** wave-specialized producer/consumer with named barriers instead of full `s_barrier`.
+- **Exceptions:** correctness-required barriers — do not remove.
+- **Confirm with:** `cfg` (count `s_barrier`); PC sampling if the driver supports it.
+
+### Pipeline bubbles (no compute/memory overlap)
+- **Signals:** `trace` timeline shows a sawtooth (compute and HBM alternate, never overlap); `MemUnitStalled` high while BW also high.
+- **Why:** single-buffered — load tile, compute, load next; nothing overlaps.
+- **First-line fix:** double-buffer two LDS tiles; compute on A while loading B.
+- **Deeper fixes:** multi-stage software pipeline with async loads.
+- **Exceptions:** kernels too small to amortize the extra LDS.
+- **Confirm with:** `trace` (the shape is the evidence).
+
+### Tail / work imbalance
+- **Signals:** `trace` timeline shows a long gradual tail; grid only slightly exceeds a wave; per-input work skew (e.g. variable seq-len driving the inner loop).
+- **Why:** a few workgroups with more work keep running after the rest finish.
+- **First-line fix:** chunk the variable work into fixed-size pieces; or split long items across more workgroups with a small post-reduction.
+- **Deeper fixes:** sort/pack inputs by length; classify-and-dispatch (short vs long paths); persistent kernel with a work queue.
+- **Exceptions:** kernels short enough that the tail is absolute-small.
+- **Confirm with:** `trace` (tail shape); always inspect the input distribution (max/avg work ratio > 3–5 flags it).
+
+### Small grid / CU idle
+- **Signals:** total grid < CU count (`gpu_specs.py cu`), or waves/CU < 1; the chip is under-filled.
+- **Why:** each workgroup sits on one CU; with fewer workgroups than CUs, some CUs idle the whole kernel.
+- **First-line fix:** expose more parallelism — split-K for reductions/attention, split across heads/channels, grid-stride for cheap units.
+- **Deeper fixes:** persistent kernel dequeuing work; fuse adjacent kernels for more work per launch.
+- **Exceptions:** decode-style launches (batch 1) that are fundamentally small — split-K over KV is the standard mitigation.
+- **Confirm with:** `static`/`trace` launch geometry; dynamic occ-util %.
+
+### Unintended FP64
+- **Signals:** FP64 pipe active in a kernel meant to be FP32; no default counter — read the disassembly (`cfg`/`llvm-objdump` for `v_*_f64`) or the source.
+- **Why:** C++ literals (`1.0`, `0.5`) are `double`; `float x = a + 1.0*b` promotes the expression to FP64, slower than the intended fp32 path — and dramatically slower on parts with a reduced FP64 rate (consumer RDNA), though even on full-rate CDNA Instinct the promotion wastes the fp32 pipes.
+- **First-line fix:** add the `f` suffix to every literal (`1.0f`); use `__ocml`/`*f` transcendentals.
+- **Deeper fixes:** audit headers/macros for stray `double`.
+- **Exceptions:** kernels that genuinely need FP64.
+- **Confirm with:** `cfg` (grep for `_f64` instructions).
+
+### Branch divergence
+- **Signals:** `cfg` shows many small basic blocks / branchy structure; lanes in a wave take different paths.
+- **Why:** the wave serializes divergent paths; effective lane utilization drops.
+- **First-line fix:** make all lanes in a wave take the same branch (sort/partition data); predicate cheap `if/else` into `mask*a + (1-mask)*b`.
+- **Deeper fixes:** restructure the algorithm to remove the data-dependent branch.
+- **Exceptions:** tree-reduction tails and edge/boundary handling — not worth fighting.
+- **Confirm with:** `cfg` (block count/branch density); PC sampling for branch stalls if supported.
+
+### Front-end / I-cache
+- **Signals:** `SQC_ICACHE_BUSY_CYCLES`, `SQ_IFETCH_LEVEL` **(add a pmc line)** elevated with the compute pipes idle.
+- **Why:** instruction fetch can't keep the issue unit fed — usually an oversized unrolled body.
+- **First-line fix:** reduce code size (dial back unrolling, shrink the instruction footprint of the hot loop).
+- **Deeper fixes:** restructure so the hot path fits the I-cache.
+- **Exceptions:** rare; pursue only after compute/memory/occupancy are ruled out.
+- **Confirm with:** the added counters; `static` instruction count if available.
+
+## Ranked optimization directions (the recommendation)
+
+Profiling ends with a recommendation, not a wall of suggestions. After the verdict
+and the playbook match, emit a **ranked list of at most 3–5 directions**. More than
+five dilutes the signal; past the third, each usually contributes little.
+
+There is no `Est. Speedup` oracle here — `rocprofv3` has no rule engine like Nsight
+Compute. So rank by judgement, not a fabricated number:
+
+> **priority ≈ evidence strength × roofline headroom × (1 / effort)**
+
+- **evidence strength** — how directly the counters implicate this pattern (a clear
+  ≥60% `VALUBusy` outranks an inferred barrier guess).
+- **roofline headroom** — how far the limiter sits from peak (a kernel at 20%
+  BW-util has more to gain from a memory fix than one already at 85%).
+- **effort** — a flag rebuild (`__launch_bounds__`, `f` literals) outranks a tiling
+  rewrite at equal expected gain.
+
+Each direction cites **specific counter values**, never a vague label. Template:
+
+```
+Ranked optimization directions — <target> (<arch>), verdict: <verdict>
+
+1. <direction>  [effort: low|med|high]
+   Evidence: <counter = value, counter = value>  (playbook: <pattern>)
+   Lever: <which roofline ceiling this moves, and the current headroom>
+   Confirm with: <mode/counter to re-measure after the change>
+
+2. ...
+```
+
+Example: "1. Cap registers with `__launch_bounds__` [effort: low] — Evidence:
+effective VGPR 132 (over the 129 cliff → 3 waves), occ-util 38% (playbook:
+occupancy capped by registers). Lever: raises the occupancy ceiling toward 4 waves,
+which should lift the 38% achieved occupancy. Confirm with: static mode (new
+ceiling) + dynamic occ-util." Fill values from the actual report — the specificity
+is the deliverable. State a confidence/caveat line when a key signal is inferred or
+needs an added counter / PC sampling.
+
 ## Static mode (compile-time resource usage)
 
 `static_profile.sh` builds the target with `-Rpass-analysis=kernel-resource-usage`
