@@ -55,6 +55,11 @@ for category_dir in "$REPO_DIR"/third-party/*/skills/{engineering,productivity}/
     done
 done
 
+# --- Agents (native subagents, reusable as delegated subagents or team teammates) ---
+echo "Agents:"
+mkdir -p "$CLAUDE_DIR/agents"
+link_items "$REPO_DIR/agents" "$CLAUDE_DIR/agents"
+
 # --- Hooks ---
 echo "Hooks:"
 mkdir -p "$CLAUDE_DIR/hooks"

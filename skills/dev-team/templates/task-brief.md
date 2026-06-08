@@ -9,7 +9,7 @@ specific assignment is.
 
 **Task name:** <task_name>
 **Team:** dev-team
-**Report to:** <lead | professor | staff-engineer | qa-head>
+**Report to:** <lead | your coordinator (principal-researcher / software-architect / test-architect) | the requesting agent>
 
 **Objective:** What this agent must accomplish. One or two sentences, concrete.
 
@@ -41,6 +41,6 @@ or iteration cap — so the agent scales effort to the question.
   work in agent teams.
 - **Output format** is what makes artifact returns actually happen: it tells the
   agent when to write a file and return a pointer instead of pasting a wall of text.
-- **Boundaries** prevent collateral edits and cross-group contact violations.
+- **Boundaries** prevent collateral edits and out-of-scope work.
 - **Budget** lets the lead scale effort to complexity rather than over-researching a
   one-line question.

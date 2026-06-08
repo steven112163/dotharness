@@ -25,7 +25,7 @@ Columns:
 - **id / parent** — lineage; parent empty for an initial fan-out candidate.
 - **approach** — the one-line distinguishing idea.
 - **branch / worktree** — where it lives (for integration and cleanup).
-- **build / QA** — `ok`/`fail` from the builder and QA head.
+- **build / QA** — `ok`/`fail` from the builder and the test-architect (QA).
 - **profile** — the profiler's headline metric + verdict for this iteration.
 - **decision** — `keep` | `revise` | `reject` | `promote`.
 - **reason** — why, in a few words. **Never leave a rejection unexplained** — the

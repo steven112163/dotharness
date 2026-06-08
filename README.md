@@ -6,9 +6,9 @@ Personal monorepo for Claude Code skills, rules, and configuration.
 
 ```
 skills/                          → own skills, symlinked to ~/.claude/skills/
-  dev-team/                      → hierarchical agent team orchestration
-    SKILL.md                     → 6-phase workflow (startup → impl loop → test → verify → report → post-mortem)
-    roles/                       → per-agent role prompts (8 files)
+  dev-team/                      → agent team orchestration (lead spawns native agents as teammates)
+    SKILL.md                     → 8-phase candidate workflow (clarify → startup → draft/plan → candidate loop → QA → verify → report → post-mortem)
+    roles/                       → coordinator role prompts (principal-researcher, software-architect, test-architect)
   research/                      → multi-mode research with anti-sycophancy safeguards
     SKILL.md                     → 4 modes (socratic, direct, deep, adversarial)
   create-pr/                     → PR creation with CK team template
@@ -17,6 +17,8 @@ skills/                          → own skills, symlinked to ~/.claude/skills/
     SKILL.md                     → static (resource usage) + dynamic (rocprofv3) modes, roofline-lite verdict
     REFERENCE.md                 → counters, CSV layout, roofline thresholds, per-arch device specs
     scripts/                     → run_profile.sh, static_profile.sh, aggregate.py, parse_resource_usage.py, gpu_specs.py, counters.txt
+agents/                          → native subagents (worker roles), symlinked to ~/.claude/agents/
+  researcher, implementer, reviewer, tester, builder, profiler
 hooks/                           → hook scripts, symlinked to ~/.claude/hooks/
 output-styles/                   → output styles, symlinked to ~/.claude/output-styles/
 bin/                             → helper scripts, symlinked to ~/bin/ (on PATH)
@@ -62,7 +64,7 @@ User-level rules loaded automatically by Claude Code. Tailored for C++ / HIP / G
 
 ### Own skills
 Located in `skills/`, symlinked individually to `~/.claude/skills/`.
-- **dev-team** — hierarchical agent team (lead, implementer, professor + 3 PHDs, staff engineer + 3 seniors, builder, QA head + N testers). 6-phase workflow with verification gate, weighted code review, context checkpoints, and optional post-mortem.
+- **dev-team** — evidence-driven agent team. The lead (the only spawner) spawns native worker agents (researcher, implementer, reviewer, tester, builder, profiler) and synthesis coordinators (principal-researcher, software-architect, test-architect) as teammates, on demand, and stops them once they deliver. 8-phase candidate workflow: clarify a task contract, draft/plan, fan out 2–3 candidate implementations in worktrees, refine on profiling evidence, QA, verify, and report the best candidate plus alternatives.
 - **research** — four-mode research skill (socratic, direct, deep, adversarial) with anti-sycophancy safeguards. Usable by both humans and agents. Integrated into dev-team role prompts.
 - **create-pr** — create a pull request following the CK team's PR template (motivation, technical details, test plan, test result, submission checklist).
 - **ck-profile** — profile a Composable Kernel target two ways: static compile-time resource analysis (VGPR/AGPR/SGPR, occupancy ceiling, spills, scratch, LDS) and dynamic runtime profiling with rocprofv3 (kernel timing, HBM traffic, L2 hit ratio, occupancy, VALU). Per-arch hardware specs (`gpu_specs.py`) drive a device-spec block and an occupancy-util ratio, with a roofline-lite compute/memory/latency bottleneck verdict.
@@ -91,6 +93,21 @@ Installed by `setup.sh` via the Claude CLI. The `claude-plugins-official` market
 - **claude-api** (`anthropic-agent-skills`) — Claude API / Anthropic SDK reference for building LLM-powered tooling.
 
 Plugin granularity is per-plugin: `example-skills` is all-or-nothing, so the wanted skills arrive bundled with others. Skills are description-triggered and lazy, so unused ones cost nothing at runtime.
+
+## Agents
+
+Native subagents in `agents/`, symlinked individually to `~/.claude/agents/`. Each is reusable two ways: as a one-shot **delegated subagent** (returns a result to the caller, keeping its work out of the main context) or as an **agent-team teammate** (spawned into a team, where it also gains the coordination tools). They are worker roles — they never spawn other agents.
+
+- **researcher** — web + codebase research; returns a short, source-cited report. Preloads the `research` skill.
+- **implementer** — writes or modifies code to a spec in an isolated context.
+- **reviewer** — reviews a diff against the code-review checklist; returns severity-prefixed findings.
+- **tester** — authors and runs tests; reports pass/fail and benchmark-vs-target.
+- **builder** — builds a CK target via `ckBuild`; reports errors and warnings.
+- **profiler** — profiles a built target via the `ck-profile` skill; returns ranked optimization directions.
+
+Each agent also references external skills where useful — for example `implementer` uses `superpowers:test-driven-development`, `superpowers:systematic-debugging`, and `superpowers:verification-before-completion`; `reviewer` uses the built-in `/review` and `/security-review`; `profiler` pairs `ck-profile` with `superpowers:systematic-debugging`.
+
+The `dev-team` skill spawns these as teammates and pairs the research/review/QA workers with coordinators (principal-researcher, software-architect, test-architect) that synthesize their output. Because a subagent definition's `tools`/`model` apply in both modes (its `skills` preload only in delegated-subagent mode), the same six files serve solo delegation and team roles. The lead drives the workflow with orchestration skills — `superpowers:writing-plans`/`executing-plans`, `using-git-worktrees`, `dispatching-parallel-agents`, `requesting-code-review`, `verification-before-completion`, and `finishing-a-development-branch`.
 
 ## Hooks
 
