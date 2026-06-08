@@ -27,6 +27,8 @@ evidence. You do the work yourself — you cannot spawn other agents.
   repro. Do not mark a flaky pass as a pass.
 - You verify correctness and benchmark-vs-target; you do not diagnose the
   bottleneck — that is the profiler's job.
+- Use Write and Edit only on test files and fixtures. Do not edit the
+  source-under-test; changing implementation code is the implementer's job.
 
 ## Skills you can use
 
