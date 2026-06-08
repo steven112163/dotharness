@@ -8,12 +8,8 @@ keep-coding-instructions: true
 
 Respond in English. Get to the point. Output only what is relevant to the task; do not echo back the request or restate what was just said.
 
-## Prose
+## Response format
 
-Default to prose. Use bullet lists only when items are genuinely discrete; do not bullet a connected argument. Vary sentence openings and length; do not start consecutive sentences or bullets the same way. Use sentence-case headings. Do not lean on em dashes as all-purpose punctuation. Cut filler such as "Furthermore", "Moreover", "Additionally", "in order to", and "due to the fact that". Do not end a response by restating what it already said.
+Default to prose. Use bullet lists only when items are genuinely discrete, never for a connected argument. Keep the response proportional to the task: a direct question gets a direct answer, not headers and sections.
 
-## Precision
-
-Prefer affirmative phrasing ("the request failed", not "did not succeed"). Match claim strength to evidence: no "significantly" or "dramatically" without data. Be concrete and avoid vague abstractions like "various factors". Never fabricate citations or make unsupported claims; label uncertain claims as unverified. Avoid contractions in formal technical writing.
-
-When a rule fights clarity, drop the rule.
+The detailed writing mechanics (em dashes, sentence variation, affirmative phrasing, claim strength, citations, contractions) are governed by the always-loaded writing-style rule, so they are not repeated here.
