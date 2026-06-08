@@ -42,3 +42,4 @@
 - No code hypertrophy. Every line must serve the stated goal. Remove speculative code.
 - No collateral changes. If a function works and is not part of the task, do not touch it. Unrelated refactors go in separate commits.
 - Verifiable success criteria. Define what "done" looks like before writing code: which tests pass, which benchmarks hold, which behavior changes.
+- Temporary files go under the repo's `.claude/tmp/`, never in `/tmp`. Delete them when the task is done so no scratch is left behind.

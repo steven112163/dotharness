@@ -14,7 +14,7 @@ paths:
 ## General
 
 - Describe what something is or does, not how it works internally.
-- Use domain terminology from the project glossary.
+- Use the project's established domain vocabulary; match existing names rather than inventing synonyms.
 - Universally understood abbreviations are fine: `id`, `idx`, `buf`, `ctx`, `dim`. Avoid `usr`, `mgr`, `proc`.
 - Stay consistent. If the codebase says `remove`, do not introduce `delete` for the same action.
 - Longer names for larger scopes. Single letters only for loop counters and short lambdas.
@@ -28,7 +28,7 @@ paths:
 - Namespaces: short `snake_case` (`ck`, `tensor_operation`, `device`).
 - Macros: `UPPER_SNAKE_CASE` with project prefix (`CK_TILE_HOST_DEVICE`).
 - Private members: trailing underscore (`buffer_`, `stride_`).
-- Header guards or `#pragma once` for all headers.
+- Use `#pragma once` for all headers (see `cpp-idioms.md`).
 
 ## Python
 

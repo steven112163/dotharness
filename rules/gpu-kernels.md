@@ -25,7 +25,7 @@ paths:
 ## Shared memory (LDS)
 
 - Declare LDS size as a `constexpr` or template parameter, not a runtime variable.
-- Pad shared memory arrays to avoid bank conflicts. For 32-bank architectures, pad rows by one element when stride equals the bank count.
+- Pad shared memory arrays to avoid bank conflicts. When a row stride is a multiple of the bank count, pad by one element so consecutive rows map to different banks (AMD LDS is commonly 32 banks; confirm the count for the target architecture).
 - Never access LDS out of bounds. Off-by-one errors in LDS indexing cause silent data corruption.
 
 ## Synchronization
@@ -55,6 +55,13 @@ paths:
 - Use `__shfl_xor`, `__shfl_up`, `__shfl_down` for warp-level communication. Verify the mask covers all participating lanes.
 - Wavefront size is 64 on AMD (not 32). Code that assumes warp size 32 will silently produce wrong results.
 - Test on all target architectures listed in `GPU_TARGETS`. Behavior can differ across gfx generations.
+
+## Numerical correctness
+
+- Compare floating-point results against an explicit tolerance. Never assert bitwise equality on reduction or accumulation output.
+- Accumulate reductions in a wider type than the inputs (a `float` accumulator for `__half` data) to bound rounding error.
+- Handle NaN and Inf deliberately: decide whether they are valid inputs, and test the path that produces or consumes them.
+- Note when a kernel is non-deterministic. Atomics and multi-pass reductions change accumulation order, so run-to-run results can differ.
 
 ## Profiling workflow
 

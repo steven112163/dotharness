@@ -29,10 +29,9 @@ paths:
 
 ## GPU / HIP
 
-- Maximize occupancy: balance VGPR usage, LDS allocation, and wavefront count.
+- Kernel-level rules (occupancy, LDS, coalesced access, launch checks) live in `gpu-kernels.md`.
 - Minimize host-device transfers. Batch work on the GPU.
 - Use async memory copies and overlap computation with data movement.
-- Coalesce global memory accesses. Avoid strided or scattered reads.
 - Profile with `rocprof` before tuning. Do not guess at bottlenecks.
 
 ## Concurrency

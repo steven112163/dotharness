@@ -4,6 +4,7 @@
 
 - Do not commit unless explicitly asked.
 - Verify the code works before committing.
+- Do not add a `Co-Authored-By` trailer or any other tool attribution to commit messages.
 
 ## Commit Message Format
 

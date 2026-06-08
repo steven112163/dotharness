@@ -2,7 +2,7 @@
 
 ## LLM-Specific Anti-Patterns
 
-- Do not overuse bullet points. Use prose when items form a connected argument.
+- In prose, use prose when items form a connected argument; do not overuse bullet points. Reference and checklist documents, including these rule files, are legitimately bullet-form.
 - Do not lean on em dashes as all-purpose punctuation.
 - Do not start consecutive sentences or bullets the same way.
 - Avoid transition-word padding: "Furthermore", "Moreover", "Additionally."
