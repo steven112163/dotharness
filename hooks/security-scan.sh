@@ -5,9 +5,10 @@
 # critical path and only wakes Claude when it finds something: exit 2 with the
 # warning on stderr surfaces it as a system reminder. A clean scan exits 0 and
 # stays silent.
+set -euo pipefail
 
-input=$(cat)
-file=$(echo "$input" | jq -r '.tool_input.file_path // .tool_response.filePath // empty')
+input=$(cat || true)
+file=$(echo "$input" | jq -r '.tool_input.file_path // .tool_response.filePath // empty' 2>/dev/null || true)
 
 if [ -z "$file" ] || [ ! -f "$file" ]; then
     exit 0

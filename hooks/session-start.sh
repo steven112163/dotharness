@@ -4,16 +4,17 @@
 # former PostCompact context-restore hook. The PreCompact context-save hook still
 # writes the state file that the compact branch reads.
 # stdout (via additionalContext) is added to Claude's context.
+set -euo pipefail
 
-input=$(cat 2>/dev/null)
-source=$(echo "$input" | jq -r '.source // "startup"' 2>/dev/null)
+input=$(cat 2>/dev/null || true)
+source=$(echo "$input" | jq -r '.source // "startup"' 2>/dev/null || echo startup)
 
 root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 state_file="$root/.claude/.dotharness/session-state.md"
 
 emit() {
     local json
-    json=$(printf '%s' "$1" | jq -Rs .)
+    json=$(printf '%s' "$1" | jq -Rs . 2>/dev/null) || return 0
     cat <<ENDJSON
 {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": $json}}
 ENDJSON
@@ -28,14 +29,16 @@ fi
 # startup | resume | clear: inject fresh git context.
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 
+# Append PROJECT_ROOT once; the env file persists across a session, so re-running
+# on resume/clear must not stack duplicate lines.
 if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -n "$root" ]; then
-    echo "PROJECT_ROOT=$root" >> "$CLAUDE_ENV_FILE"
+    grep -qxF "PROJECT_ROOT=$root" "$CLAUDE_ENV_FILE" 2>/dev/null || echo "PROJECT_ROOT=$root" >> "$CLAUDE_ENV_FILE"
 fi
 
 ctx=$(
     echo "## Session context (auto-loaded at ${source})"
     echo "**Branch:** $(git branch --show-current 2>/dev/null || echo detached)"
-    changed=$(git status --short 2>/dev/null | head -20)
+    changed=$(git status --short 2>/dev/null | head -20 || true)
     if [ -n "$changed" ]; then
         echo "**Uncommitted changes:**"
         echo '```'
@@ -46,7 +49,7 @@ ctx=$(
     fi
     echo "**Recent commits:**"
     echo '```'
-    git log --oneline -5 2>/dev/null
+    git log --oneline -5 2>/dev/null || true
     echo '```'
 )
 emit "$ctx"

@@ -8,12 +8,13 @@
 #   2. ~/.claude/.dotharness/teams-webhook   (one line: the Workflow POST URL)
 #
 # Usage: teams-notify.sh "<title>" "<body>"
+set -euo pipefail
 
 title=${1:-Claude Code}
 body=${2:-Needs your attention}
 
 webhook=${TEAMS_WEBHOOK_URL:-}
-[ -z "$webhook" ] && webhook=$(cat "$HOME/.claude/.dotharness/teams-webhook" 2>/dev/null)
+[ -z "$webhook" ] && webhook=$(cat "$HOME/.claude/.dotharness/teams-webhook" 2>/dev/null || true)
 [ -z "$webhook" ] && exit 0
 command -v curl &>/dev/null || exit 0
 command -v jq   &>/dev/null || exit 0

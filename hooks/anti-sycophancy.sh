@@ -6,9 +6,10 @@
 # rewrites the prompt so the model never sees the leading framing.
 # Uses stdout-based rewriting: whatever this hook prints to stdout
 # becomes additional context that Claude sees.
+set -euo pipefail
 
-input=$(cat)
-prompt=$(echo "$input" | jq -r '.prompt // empty')
+input=$(cat || true)
+prompt=$(echo "$input" | jq -r '.prompt // empty' 2>/dev/null || true)
 
 if [ -z "$prompt" ]; then
     exit 0
@@ -49,7 +50,7 @@ fi
 
 # Strip the confirmatory tail from the prompt to extract the core claim.
 # Use case-insensitive sed to remove the matched pattern and surrounding punctuation.
-core=$(echo "$prompt" | sed -E "s/[,;. ]*${matched_pattern}[?.!]*\s*$//Ii" | sed 's/[[:space:]]*$//')
+core=$(echo "$prompt" | sed -E "s/[,;. ]*${matched_pattern}[?.!]*\s*$//Ii" | sed 's/[[:space:]]*$//' || true)
 
 # If stripping left nothing useful, fall back to the original prompt.
 if [ ${#core} -lt 5 ]; then

@@ -1,23 +1,23 @@
 #!/bin/bash
 # PreToolUse hook: auto-approve known-safe read-only commands.
 # Runs before the permission prompt; emits permissionDecision=allow to skip it.
+set -euo pipefail
 
-input=$(cat)
-tool=$(echo "$input" | jq -r '.tool_name // empty')
+input=$(cat || true)
+tool=$(echo "$input" | jq -r '.tool_name // empty' 2>/dev/null || true)
 
 if [ "$tool" != "Bash" ]; then
     exit 0
 fi
 
-cmd=$(echo "$input" | jq -r '.tool_input.command // empty')
+cmd=$(echo "$input" | jq -r '.tool_input.command // empty' 2>/dev/null || true)
 if [ -z "$cmd" ]; then
     exit 0
 fi
 
 approve() {
-    cat <<ENDJSON
-{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow", "permissionDecisionReason": "Auto-approved: $1"}}
-ENDJSON
+    jq -nc --arg reason "Auto-approved: $1" \
+        '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "allow", permissionDecisionReason: $reason}}'
     exit 0
 }
 

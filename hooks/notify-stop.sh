@@ -4,10 +4,11 @@
 # the Notification hook's idle_prompt instead.
 # notify-send is time-bounded: on a host with no notification daemon it blocks
 # ~50s on D-Bus, which would otherwise trip the hook's 5s timeout.
+set -euo pipefail
 
 if command -v notify-send &>/dev/null; then
-    input=$(cat)
-    dir=$(echo "$input" | jq -r '.cwd // ""' 2>/dev/null)
+    input=$(cat || true)
+    dir=$(echo "$input" | jq -r '.cwd // ""' 2>/dev/null || true)
     dir=${dir##*/}
     body="Finished — waiting for input"
     [ -n "$dir" ] && body="$body  ($dir)"

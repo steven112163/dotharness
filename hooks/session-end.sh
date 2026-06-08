@@ -2,9 +2,10 @@
 # SessionEnd hook: conservative cleanup of coordination scratch and stale state.
 # Non-blocking. SessionEnd cannot inject context, so this only cleans and logs.
 # All runtime files live repo-locally under .claude/.dotharness (not $HOME).
+set -euo pipefail
 
-input=$(cat 2>/dev/null)
-reason=$(echo "$input" | jq -r '.reason // "unknown"' 2>/dev/null)
+input=$(cat 2>/dev/null || true)
+reason=$(echo "$input" | jq -r '.reason // "unknown"' 2>/dev/null || echo unknown)
 
 root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 run_dir="$root/.claude/.dotharness"
@@ -22,8 +23,8 @@ if [ -d "$scratch" ]; then
 fi
 
 # Drop the pre-compaction state file; the next session's PreCompact rewrites it.
-rm -f "$run_dir/session-state.md" 2>/dev/null
+rm -f "$run_dir/session-state.md" 2>/dev/null || true
 
-mkdir -p "$run_dir" 2>/dev/null
-echo "$(date -Iseconds) end reason=${reason} cwd=$(pwd) pruned=[${removed% }]" >> "$run_dir/session.log" 2>/dev/null
+mkdir -p "$run_dir" 2>/dev/null || true
+echo "$(date -Iseconds) end reason=${reason} cwd=$(pwd) pruned=[${removed% }]" >> "$run_dir/session.log" 2>/dev/null || true
 exit 0
