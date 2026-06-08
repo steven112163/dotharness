@@ -1,6 +1,6 @@
 ---
 name: dev-team
-description: Use when tackling complex development tasks that benefit from an iterative, evidence-driven team workflow — clarify a task contract, draft and plan, fan out several candidate implementations, refine them on profiling evidence, then report the best candidate plus the alternatives. Coordinates research, parallel implementation, code review, building, profiling, and testing through native agents reused as delegated subagents or team teammates. Triggers include kernel development, performance-sensitive code, optimization work where multiple approaches should be tried and compared, tasks requiring both correctness verification and performance profiling, or any workload where a single agent would struggle with scope.
+description: Use for complex development tasks that benefit from an iterative, evidence-driven team workflow that fans out several candidate implementations, refines them on profiling evidence, then reports the best candidate plus the alternatives. Coordinates research, implementation, code review, building, profiling, and testing through native agents used as delegated subagents or team teammates. Triggers include kernel development, performance-sensitive or optimization work where multiple approaches should be compared, tasks needing both correctness verification and performance profiling, or any workload too large for a single agent. Not for small, well-scoped single-file changes.
 ---
 
 # Dev Team

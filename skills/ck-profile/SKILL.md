@@ -1,18 +1,17 @@
 ---
 name: ck-profile
 description: >-
-  Profile a Composable Kernel (CK) build target two ways: STATIC compile-time
-  resource analysis (VGPR/AGPR/SGPR, occupancy ceiling, register spills,
-  scratch, LDS via -Rpass-analysis) and DYNAMIC runtime profiling with rocprofv3
-  (kernel timing, HBM fetch/write, L2 hit ratio, occupancy, VALU/SALU,
-  memory-stall %, LDS bank conflicts) averaged over N runs and across an
-  argument sweep, with a roofline-lite compute/memory/latency bottleneck
-  verdict. Use when the user wants to profile, benchmark, or find the
-  performance bottleneck of a CK example/test binary; says "profile <target>",
+  Profile a Composable Kernel (CK) build target two ways: static compile-time
+  resource analysis (registers, occupancy ceiling, spills, scratch, LDS) and
+  dynamic runtime profiling with rocprofv3 (timing, HBM traffic, cache, occupancy)
+  averaged over N runs and an argument sweep, with a roofline-lite
+  compute/memory/latency verdict. Use when the user wants to profile, benchmark,
+  or find the bottleneck of a CK example/test binary; says "profile <target>",
   "is <target> compute- or memory-bound", "check register spills / occupancy",
   "benchmark fp16 vs bf16", "rocprof <target>", "static/dynamic profile", or
   "sweep -B / -prec and compare". The user selects one or more of six modes:
-  static, dynamic, trace, cfg, depgraph, compute.
+  static, dynamic, trace, cfg, depgraph, compute. Not for non-CK or CPU-only
+  targets, or for correctness testing.
 ---
 
 # CK profiling (ck-profile)
@@ -50,8 +49,8 @@ format, the roofline thresholds, the CFG basic-block rules, the dependency-graph
 semantics, and — for turning numbers into action — the **diagnosis playbook**
 (pattern → signals → fix) and the **ranked optimization directions** rule.
 
-**Golden rule: profile → diagnose → recommend, in that order. Never guess.** Don't
-invent a bottleneck before the report; don't propose a fix you can't tie to a
+**Golden rule: profile → diagnose → recommend, in that order. Never guess.** Do not
+invent a bottleneck before the report; do not propose a fix you cannot tie to a
 counter value. The deliverable is a short, ranked list of next optimizations, each
 citing the specific numbers that justify it.
 
@@ -233,7 +232,7 @@ the script installs them into a **persistent venv at
 `VENV=`; reused across runs, reversible: delete the dir; `uv` is used
 automatically if installed, else stdlib `venv`+`pip`). The venv is built with the
 **container's** python and is **container-only** — the host python differs (e.g.
-3.10 vs 3.12) and the host can't run rocprof-compute anyway. It profiles into
+3.10 vs 3.12) and the host cannot run rocprof-compute anyway. It profiles into
 `ck_profile_out/compute/raw/<wl>`, exports the analysis as per-panel CSVs
 (`analyze --output-format csv`), then `compute_report.py` renders a **styled
 `ck_profile_out/compute/<wl>_report.html` + `<wl>_report.md`** (Speed-of-Light
