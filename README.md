@@ -16,7 +16,7 @@ skills/                          → own skills, symlinked to ~/.claude/skills/
   ck-profile/                    → static + runtime GPU profiling of a CK target
     SKILL.md                     → static (resource usage) + dynamic (rocprofv3) modes, roofline-lite verdict
     REFERENCE.md                 → counters, CSV layout, roofline thresholds, per-arch device specs
-    scripts/                     → run_profile.sh, static_profile.sh, aggregate.py, parse_resource_usage.py, gpu_specs.py, counters.txt
+    scripts/                     → per-mode drivers (run_profile, static_profile, trace_profile, compute_profile, cfg_dump, depgraph) plus reporting/util helpers (aggregate, html_report, gpu_specs, parse_resource_usage, counters.txt, …)
 agents/                          → native subagents (worker roles), symlinked to ~/.claude/agents/
   researcher, implementer, reviewer, tester, builder, profiler
 hooks/                           → hook scripts, symlinked to ~/.claude/hooks/
@@ -116,7 +116,7 @@ Lifecycle hooks registered in `~/.claude/settings.json` by `setup.sh`. Scripts l
 | Hook | Event | Trigger | Purpose |
 |------|-------|---------|---------|
 | `anti-sycophancy.sh` | UserPromptSubmit | Every prompt | Detects confirmatory language ("right?", "looks good"), injects critical-thinking reminder |
-| `block-dangerous.sh` | PreToolUse | Bash / Write / Edit | Blocks `rm -rf`, `git push --force`, `DROP TABLE`, `killall`; denies Write/Edit to `.env`, SSH/AWS keys, `/etc/` |
+| `block-dangerous.sh` | PreToolUse | Bash / Write / Edit | Blocks `rm -rf`, `git push --force`, `DROP TABLE`, `killall`; denies Write/Edit to `.env`, SSH/AWS keys, `/etc/`, and system temp (`/tmp`, `/var/tmp`) — scratch goes in the repo's `.claude/tmp` |
 | `auto-approve.sh` | PreToolUse | Bash commands | Auto-approves known-safe read-only commands (linters, checkers, `ctest`) |
 | `commit-lint.sh` | PreToolUse | Bash commands | Validates commit messages against conventional commits format, rejects non-conforming messages |
 | `auto-format.sh` | PostToolUse | Write/Edit | Runs clang-format (.cpp/.hip/.cu), ruff/black (.py), jq (.json), shfmt (.sh) |
@@ -154,7 +154,7 @@ The sender always shows as "Workflows" (the Flow bot's fixed name — Microsoft 
 
 Output styles in `output-styles/`, symlinked to `~/.claude/output-styles/`. An output style modifies the system prompt directly (persistent, not re-injected per turn). `setup.sh` activates `dotharness` unless you have already set `outputStyle`.
 
-- **dotharness** — concise, direct, evidence-driven voice (`keep-coding-instructions: true`, so coding behavior is preserved). Switch with `/output-style`.
+- **dotharness** — concise, direct, evidence-driven voice (`keep-coding-instructions: true`, so coding behavior is preserved). Switch via `/config` → Output style (the `/output-style` command has been removed).
 
 ## Binaries
 
