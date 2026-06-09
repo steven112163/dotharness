@@ -31,7 +31,9 @@ git submodule update --init
 ./setup.sh
 ```
 
-Symlinks `skills/`, `hooks/`, `output-styles/`, `rules/`, third-party skills, and `statusline.sh` into `~/.claude/`, and `bin/` scripts into `~/bin/`. Registers hooks and sets the `dotharness` output style in `~/.claude/settings.json` (requires `jq`), creating that file if it does not yet exist (fresh-machine safe). Installs plugins via the Claude CLI. Provisions a repo-local `.venv` with `pre-commit` and installs the git pre-commit hook. Existing files are backed up to `.bak`. Re-running is idempotent.
+Symlinks `skills/`, `hooks/`, `output-styles/`, `rules/`, third-party skills, and `statusline.sh` into `~/.claude/`, and `bin/` scripts into `~/bin/`. Registers hooks and sets the `dotharness` output style in `~/.claude/settings.json` (requires `jq`), creating that file if it does not yet exist (fresh-machine safe). Installs plugins via the Claude CLI. Provisions a repo-local `.venv` with `pre-commit` and installs the git pre-commit hook. Existing files are backed up to `.bak`. Re-running is idempotent. Per-folder `README.md` files are skipped, so they document the repo without being linked into the live `~/.claude/` tree.
+
+Optional: desktop notifications work out of the box, but Teams notifications need a webhook URL you configure manually — see [hooks/README.md](hooks/README.md#teams-notifications).
 
 ## Documentation
 

@@ -30,15 +30,23 @@ link_items() {
     local src_dir="$1" dst_dir="$2"
     for item in "$src_dir"/*; do
         [ -e "$item" ] || continue
+        # Folder docs live next to their code but must not be linked into the
+        # live ~/.claude tree, where Claude would parse them as agents/styles/rules.
+        [ "$(basename "$item")" = "README.md" ] && continue
         link "$item" "$dst_dir/$(basename "$item")"
     done
 }
 
 echo "Linking dotharness -> $CLAUDE_DIR"
 
-# --- Rules ---
+# --- Rules: per-file so the folder README is not linked as a rule ---
 echo "Rules:"
-link "$REPO_DIR/rules" "$CLAUDE_DIR/rules"
+if [ -L "$CLAUDE_DIR/rules" ]; then
+    echo "  converting $CLAUDE_DIR/rules from symlink to directory"
+    rm "$CLAUDE_DIR/rules"
+fi
+mkdir -p "$CLAUDE_DIR/rules"
+link_items "$REPO_DIR/rules" "$CLAUDE_DIR/rules"
 
 # --- Skills: merge own + third-party into commands/ ---
 echo "Skills:"
