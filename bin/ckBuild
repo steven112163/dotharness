@@ -23,7 +23,7 @@ ARCH=${ARCH:-}
 BUILD_DIR=${BUILD_DIR:-build}
 
 usage() {
-  cat >&2 <<EOF
+    cat >&2 <<EOF
 Usage: $(basename "$0") [--scratch] [--minimal] [target...] [-- <extra cmake args>]
 
   --scratch     wipe $BUILD_DIR/ and configure from zero (default: incremental)
@@ -35,7 +35,7 @@ Usage: $(basename "$0") [--scratch] [--minimal] [target...] [-- <extra cmake arg
 Env overrides: CONTAINER=$CONTAINER  IMAGE=<image>  REPO=$REPO
                ARCH=<gfx...> (default: auto-detect)  BUILD_DIR=$BUILD_DIR
 EOF
-  exit 1
+    exit 1
 }
 
 SCRATCH=0
@@ -43,36 +43,46 @@ MINIMAL=""
 TARGETS=()
 EXTRA_CMAKE=()
 while [ $# -gt 0 ]; do
-  case "$1" in
-    --scratch)    SCRATCH=1 ;;
-    --minimal)    MINIMAL="--minimal" ;;
-    -h|--help)    usage ;;
-    --)           shift; EXTRA_CMAKE=("$@"); break ;;
-    -*)           echo "Unknown option: $1" >&2; usage ;;
-    *)            TARGETS+=("$1") ;;
-  esac
-  shift
+    case "$1" in
+    --scratch) SCRATCH=1 ;;
+    --minimal) MINIMAL="--minimal" ;;
+    -h | --help) usage ;;
+    --)
+        shift
+        EXTRA_CMAKE=("$@")
+        break
+        ;;
+    -*)
+        echo "Unknown option: $1" >&2
+        usage
+        ;;
+    *) TARGETS+=("$1") ;;
+    esac
+    shift
 done
 
 # Resolve REPO to the CK project root even if cwd drifted into a subdir: walk up
 # looking for script/cmake-ck-dev.sh. Fail fast rather than configure in the
 # wrong place.
 _find_ck_root() {
-  local d=$1
-  while [ "$d" != / ] && [ -n "$d" ]; do
-    [ -e "$d/script/cmake-ck-dev.sh" ] && { printf '%s\n' "$d"; return 0; }
-    d=$(dirname "$d")
-  done
-  return 1
+    local d=$1
+    while [ "$d" != / ] && [ -n "$d" ]; do
+        [ -e "$d/script/cmake-ck-dev.sh" ] && {
+            printf '%s\n' "$d"
+            return 0
+        }
+        d=$(dirname "$d")
+    done
+    return 1
 }
 if [ ! -e "$REPO/script/cmake-ck-dev.sh" ]; then
-  alt=$(_find_ck_root "$REPO" || _find_ck_root "$PWD") && REPO="$alt"
+    alt=$(_find_ck_root "$REPO" || _find_ck_root "$PWD") && REPO="$alt"
 fi
 if [ ! -e "$REPO/CMakeLists.txt" ] || [ ! -e "$REPO/script/cmake-ck-dev.sh" ]; then
-  echo "ERROR: \$REPO ($REPO) is not the CK project root" >&2
-  echo "  (expected CMakeLists.txt and script/cmake-ck-dev.sh)." >&2
-  echo "  Set REPO, e.g. REPO=\$(git rev-parse --show-toplevel)." >&2
-  exit 1
+    echo "ERROR: \$REPO ($REPO) is not the CK project root" >&2
+    echo "  (expected CMakeLists.txt and script/cmake-ck-dev.sh)." >&2
+    echo "  Set REPO, e.g. REPO=\$(git rev-parse --show-toplevel)." >&2
+    exit 1
 fi
 
 # Detect whether we are already inside a container; if so, skip docker entirely.
@@ -81,32 +91,35 @@ if [ -f /.dockerenv ]; then IN_CONTAINER=1; else IN_CONTAINER=0; fi
 # On the host only: ensure the dev container is up (created on demand like the
 # ck-profile skill). Inside a container there is nothing to start.
 if [ "$IN_CONTAINER" -eq 0 ]; then
-  if ! docker ps --filter "name=^${CONTAINER}$" --format '{{.Names}}' | grep -q .; then
-    echo "Container '$CONTAINER' not running; creating via ~/bin/dockerRun ..."
-    "$HOME/bin/dockerRun" "$IMAGE" "$CONTAINER"
-  fi
+    if ! docker ps --filter "name=^${CONTAINER}$" --format '{{.Names}}' | grep -q .; then
+        echo "Container '$CONTAINER' not running; creating via ~/bin/dockerRun ..."
+        "$HOME/bin/dockerRun" "$IMAGE" "$CONTAINER"
+    fi
 fi
 
 # dx: run a command in a working dir. cx: run where cwd does not matter. Both
 # execute directly when inside a container, else dispatch via docker exec.
 dx() {
-  if [ "$IN_CONTAINER" -eq 1 ]; then ( cd "$1" && bash -c "$2" ); else docker exec -w "$1" "$CONTAINER" bash -c "$2"; fi
+    if [ "$IN_CONTAINER" -eq 1 ]; then (cd "$1" && bash -c "$2"); else docker exec -w "$1" "$CONTAINER" bash -c "$2"; fi
 }
 cx() {
-  if [ "$IN_CONTAINER" -eq 1 ]; then bash -c "$1"; else docker exec "$CONTAINER" bash -c "$1"; fi
+    if [ "$IN_CONTAINER" -eq 1 ]; then bash -c "$1"; else docker exec "$CONTAINER" bash -c "$1"; fi
 }
 
 # Build for the actual GPU only, unless ARCH was given.
 if [ -z "$ARCH" ]; then
-  ARCH=$(cx "rocminfo 2>/dev/null | grep -m1 -oE 'gfx[0-9a-z]+'" || true)
-  [ -z "$ARCH" ] && { echo "ERROR: could not detect GPU arch; set ARCH=gfx..." >&2; exit 1; }
+    ARCH=$(cx "rocminfo 2>/dev/null | grep -m1 -oE 'gfx[0-9a-z]+'" || true)
+    [ -z "$ARCH" ] && {
+        echo "ERROR: could not detect GPU arch; set ARCH=gfx..." >&2
+        exit 1
+    }
 fi
 
 BUILD_ABS="$REPO/$BUILD_DIR"
 
 if [ "$SCRATCH" -eq 1 ]; then
-  echo "Scratch build: removing $BUILD_ABS"
-  rm -rf "$BUILD_ABS"
+    echo "Scratch build: removing $BUILD_ABS"
+    rm -rf "$BUILD_ABS"
 fi
 mkdir -p "$BUILD_ABS"
 
@@ -118,28 +131,28 @@ mkdir -p "$BUILD_ABS"
 # A tree first configured without a cache (or by other means) stays uncached on
 # every incremental build until a `--scratch` reconfigure re-attaches it.
 if [ "$SCRATCH" -eq 1 ] || [ ! -f "$BUILD_ABS/build.ninja" ]; then
-  # A compile cache turns multi-hour rebuilds into minutes, but only if present
-  # in the container; adding the launchers without it would fail configure.
-  # Prefer ccache: it caches clang's `-x hip` compiles cleanly, whereas
-  # sccache 0.14.0 aborts on some HIP instance files with "Failed to parse
-  # included file path". Fall back to sccache only if ccache is absent.
-  CACHE_FLAGS=""
-  if cx "command -v ccache >/dev/null 2>&1"; then
-    CACHE_FLAGS="-DCMAKE_HIP_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache"
-  elif cx "command -v sccache >/dev/null 2>&1"; then
-    CACHE_FLAGS="-DCMAKE_HIP_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_C_COMPILER_LAUNCHER=sccache"
-  fi
-  echo "Configuring ($ARCH) in $BUILD_ABS ..."
-  dx "$BUILD_ABS" "../script/cmake-ck-dev.sh $MINIMAL .. $ARCH -G Ninja $CACHE_FLAGS ${EXTRA_CMAKE[*]:-}"
+    # A compile cache turns multi-hour rebuilds into minutes, but only if present
+    # in the container; adding the launchers without it would fail configure.
+    # Prefer ccache: it caches clang's `-x hip` compiles cleanly, whereas
+    # sccache 0.14.0 aborts on some HIP instance files with "Failed to parse
+    # included file path". Fall back to sccache only if ccache is absent.
+    CACHE_FLAGS=""
+    if cx "command -v ccache >/dev/null 2>&1"; then
+        CACHE_FLAGS="-DCMAKE_HIP_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache"
+    elif cx "command -v sccache >/dev/null 2>&1"; then
+        CACHE_FLAGS="-DCMAKE_HIP_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_C_COMPILER_LAUNCHER=sccache"
+    fi
+    echo "Configuring ($ARCH) in $BUILD_ABS ..."
+    dx "$BUILD_ABS" "../script/cmake-ck-dev.sh $MINIMAL .. $ARCH -G Ninja $CACHE_FLAGS ${EXTRA_CMAKE[*]:-}"
 else
-  echo "Incremental build: reusing $BUILD_ABS"
-  # Hint (best-effort): a tree configured without a compiler-cache launcher will
-  # build uncached. If a cache binary is available but the cache flag is absent
-  # from CMakeCache.txt, suggest a one-time --scratch to attach it.
-  if ! grep -q 'COMPILER_LAUNCHER' "$BUILD_ABS/CMakeCache.txt" 2>/dev/null \
-     && cx "command -v ccache >/dev/null 2>&1 || command -v sccache >/dev/null 2>&1"; then
-    echo "  hint: this tree has no compiler-cache launcher; run with --scratch once to enable ccache/sccache." >&2
-  fi
+    echo "Incremental build: reusing $BUILD_ABS"
+    # Hint (best-effort): a tree configured without a compiler-cache launcher will
+    # build uncached. If a cache binary is available but the cache flag is absent
+    # from CMakeCache.txt, suggest a one-time --scratch to attach it.
+    if ! grep -q 'COMPILER_LAUNCHER' "$BUILD_ABS/CMakeCache.txt" 2>/dev/null &&
+        cx "command -v ccache >/dev/null 2>&1 || command -v sccache >/dev/null 2>&1"; then
+        echo "  hint: this tree has no compiler-cache launcher; run with --scratch once to enable ccache/sccache." >&2
+    fi
 fi
 
 # Use half the cores (capped at 128) so the box stays responsive and CK's
@@ -147,8 +160,8 @@ fi
 # pipefail makes the exit status reflect ninja, not tee.
 if [ "${#TARGETS[@]}" -gt 0 ]; then echo "Building targets: ${TARGETS[*]} ..."; else echo "Building all ..."; fi
 if dx "$BUILD_ABS" "set -o pipefail; JOBS=\$(( \$(nproc) / 2 )); [ \$JOBS -gt 128 ] && JOBS=128; [ \$JOBS -lt 1 ] && JOBS=1; ninja -j\$JOBS ${TARGETS[*]:-} 2>&1 | tee build.log"; then
-  echo "Build successful (log: $BUILD_ABS/build.log)"
+    echo "Build successful (log: $BUILD_ABS/build.log)"
 else
-  echo "Build failed (log: $BUILD_ABS/build.log)" >&2
-  exit 1
+    echo "Build failed (log: $BUILD_ABS/build.log)" >&2
+    exit 1
 fi

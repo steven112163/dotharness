@@ -31,6 +31,6 @@ state_file="$state_dir/session-state.md"
     echo '```'
     git log --oneline -5 2>/dev/null || echo "No commits"
     echo '```'
-} > "$state_file" 2>/dev/null
+} >"$state_file" 2>/dev/null
 
 jq -nc --arg f "$state_file" '{systemMessage: ("Session state saved to " + $f + " before compaction.")}'

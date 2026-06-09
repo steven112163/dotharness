@@ -16,9 +16,9 @@ fi
 
 # Skip binary files and non-code files
 case "${file##*.}" in
-    png|jpg|jpeg|gif|bmp|ico|svg|woff|woff2|ttf|eot|pdf|zip|tar|gz|o|so|a|pyc)
-        exit 0
-        ;;
+png | jpg | jpeg | gif | bmp | ico | svg | woff | woff2 | ttf | eot | pdf | zip | tar | gz | o | so | a | pyc)
+    exit 0
+    ;;
 esac
 
 findings=""

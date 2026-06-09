@@ -4,6 +4,7 @@ parse_resource_usage.py (static). No matplotlib / plotly / pandas: charts are
 plain CSS bars and inline gauges, so the output is one self-contained .html file
 that opens offline anywhere (no CDN, no internet).
 """
+
 import html
 
 _CSS = """
@@ -169,11 +170,13 @@ def esc(s):
 
 
 def page(title, body):
-    return (f"<!doctype html><html lang='en'><head><meta charset='utf-8'>"
-            f"<meta name='viewport' content='width=device-width,initial-scale=1'>"
-            f"<meta name='color-scheme' content='dark'>"
-            f"<title>{esc(title)}</title><style>{_CSS}</style></head>"
-            f"<body><div class='wrap'>{body}</div></body></html>\n")
+    return (
+        f"<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        f"<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        f"<meta name='color-scheme' content='dark'>"
+        f"<title>{esc(title)}</title><style>{_CSS}</style></head>"
+        f"<body><div class='wrap'>{body}</div></body></html>\n"
+    )
 
 
 def section(title, inner):
@@ -183,16 +186,22 @@ def section(title, inner):
 def table(headers, rows, num_cols=(), flag_rows=()):
     """headers: list[str]; rows: list[list]; num_cols: indices right-aligned;
     flag_rows: set of row indices to highlight."""
-    head = "".join(f"<th class='num'>{esc(h)}</th>" if i in num_cols
-                   else f"<th>{esc(h)}</th>" for i, h in enumerate(headers))
+    head = "".join(
+        f"<th class='num'>{esc(h)}</th>" if i in num_cols else f"<th>{esc(h)}</th>"
+        for i, h in enumerate(headers)
+    )
     body = []
     for ri, r in enumerate(rows):
-        cells = "".join(f"<td class='num'>{esc(c)}</td>" if i in num_cols
-                        else f"<td>{esc(c)}</td>" for i, c in enumerate(r))
+        cells = "".join(
+            f"<td class='num'>{esc(c)}</td>" if i in num_cols else f"<td>{esc(c)}</td>"
+            for i, c in enumerate(r)
+        )
         cls = " class='flag'" if ri in flag_rows else ""
         body.append(f"<tr{cls}>{cells}</tr>")
-    return (f"<div class='tablewrap'><table><thead><tr>{head}</tr></thead>"
-            f"<tbody>{''.join(body)}</tbody></table></div>")
+    return (
+        f"<div class='tablewrap'><table><thead><tr>{head}</tr></thead>"
+        f"<tbody>{''.join(body)}</tbody></table></div>"
+    )
 
 
 def _fill_color(frac):
@@ -211,13 +220,17 @@ def bars(items, max_value=None, tick_frac=None):
     out = []
     for label, value, disp in items:
         frac = max(0.0, min(value / mx, 1.0)) if mx else 0.0
-        tick = (f"<span class='tick' style='left:{tick_frac*100:.1f}%'></span>"
-                if tick_frac is not None else "")
+        tick = (
+            f"<span class='tick' style='left:{tick_frac * 100:.1f}%'></span>"
+            if tick_frac is not None
+            else ""
+        )
         out.append(
             f"<div class='row'><div class='lbl' title='{esc(label)}'>{esc(label)}</div>"
-            f"<div class='track'>{tick}<div class='fill' style='width:{frac*100:.1f}%;"
+            f"<div class='track'>{tick}<div class='fill' style='width:{frac * 100:.1f}%;"
             f"--c:{_fill_color(frac)}'></div></div>"
-            f"<div class='val'>{esc(disp)}</div></div>")
+            f"<div class='val'>{esc(disp)}</div></div>"
+        )
     return "".join(out)
 
 
@@ -229,7 +242,15 @@ def gauges(items):
 
 def badge(verdict):
     v = verdict.lower()
-    cls = ("b-compute" if "compute" in v else "b-memory" if "bandwidth" in v or "memory" in v
-           else "b-latency" if "latency" in v or "occupancy" in v
-           else "b-na" if "n/a" in v else "b-mixed")
+    cls = (
+        "b-compute"
+        if "compute" in v
+        else "b-memory"
+        if "bandwidth" in v or "memory" in v
+        else "b-latency"
+        if "latency" in v or "occupancy" in v
+        else "b-na"
+        if "n/a" in v
+        else "b-mixed"
+    )
     return f"<span class='badge {cls}'>{esc(verdict)}</span>"

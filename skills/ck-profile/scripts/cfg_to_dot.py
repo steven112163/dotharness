@@ -12,17 +12,22 @@ so basic blocks are built from those resolved addresses without decoding offsets
 
     cfg_to_dot.py --out DIR [--arch gfx942] < disasm.txt
 """
+
 import argparse
 import os
 import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from parse_resource_usage import demangle_names  # one c++filt batch, identity on failure
+from parse_resource_usage import (
+    demangle_names,
+)  # one c++filt batch, identity on failure
 
 HEADER = re.compile(r"^([0-9a-fA-F]+)\s+<(.+)>:\s*$")
 # instruction line: "<ws>MNEMONIC ops   // <addr>: <enc> [<sym+0xoff>]"
-INSN = re.compile(r"^\s+(\S+)\s*(.*?)\s*//\s*([0-9a-fA-F]+):\s*[0-9a-fA-F ]+(?:<([^>]+)>)?\s*$")
+INSN = re.compile(
+    r"^\s+(\S+)\s*(.*?)\s*//\s*([0-9a-fA-F]+):\s*[0-9a-fA-F ]+(?:<([^>]+)>)?\s*$"
+)
 TARGET = re.compile(r"^(.*)\+0x([0-9a-fA-F]+)$")
 
 
@@ -75,9 +80,11 @@ def build_blocks(insns):
         return {}, []
     # Drop trailing inter-kernel alignment padding (s_nop / s_code_end) that the
     # disassembler lists after the kernel's final s_endpgm.
-    last_end = max((i for i, (_, m, _) in enumerate(insns) if m == "s_endpgm"), default=None)
+    last_end = max(
+        (i for i, (_, m, _) in enumerate(insns) if m == "s_endpgm"), default=None
+    )
     if last_end is not None:
-        insns = insns[:last_end + 1]
+        insns = insns[: last_end + 1]
     addrs = [a for a, _, _ in insns]
     addr_set = set(addrs)
     leaders = {insns[0][0]}
@@ -86,7 +93,7 @@ def build_blocks(insns):
             if i + 1 < len(insns):
                 leaders.add(insns[i + 1][0])  # fall-through point starts a block
             if target is not None and target in addr_set:
-                leaders.add(target)            # branch target starts a block
+                leaders.add(target)  # branch target starts a block
     leaders = sorted(leaders)
     # map each instruction index to its block start
     blocks, cur_start = {}, None
@@ -133,21 +140,25 @@ def slug(demangled, used):
 
 
 def emit_dot(name, short, blocks, edges):
-    lines = [f'digraph "{short}" {{',
-             '  rankdir=TB;',
-             '  graph [bgcolor="#0a0c10", fontname="monospace", fontcolor="#9aa3af"];',
-             '  node [shape=box, style="filled,rounded", fillcolor="#12151d", '
-             'color="#283042", fontname="monospace", fontsize=10, fontcolor="#e9eef4"];',
-             '  edge [color="#5ad1ff", fontname="monospace", fontsize=9, fontcolor="#828d9e"];',
-             f'  labelloc="t"; fontsize=12; label="{short}\\n{name}";']
+    lines = [
+        f'digraph "{short}" {{',
+        "  rankdir=TB;",
+        '  graph [bgcolor="#0a0c10", fontname="monospace", fontcolor="#9aa3af"];',
+        '  node [shape=box, style="filled,rounded", fillcolor="#12151d", '
+        'color="#283042", fontname="monospace", fontsize=10, fontcolor="#e9eef4"];',
+        '  edge [color="#5ad1ff", fontname="monospace", fontsize=9, fontcolor="#828d9e"];',
+        f'  labelloc="t"; fontsize=12; label="{short}\\n{name}";',
+    ]
     for start, blk in blocks.items():
         term = blk[-1][1]
         end = blk[-1][0]
         label = f"0x{start:x} – 0x{end:x}\\l{len(blk)} insn  ·  {term}\\l"
         lines.append(f'  "0x{start:x}" [label="{label}"];')
-    style = {"taken": ' [label="T",color="#5fd0a0"]',
-             "fall": ' [label="·",color="#5b6473"]',
-             "jmp": ' [color="#c08cff"]'}
+    style = {
+        "taken": ' [label="T",color="#5fd0a0"]',
+        "fall": ' [label="·",color="#5b6473"]',
+        "jmp": ' [color="#c08cff"]',
+    }
     for src, dst, kind in edges:
         lines.append(f'  "0x{src:x}" -> "0x{dst:x}"{style.get(kind, "")};')
     lines.append("}")
@@ -164,7 +175,10 @@ def main():
 
     kernels = parse(sys.stdin)
     if not kernels:
-        print("No kernels parsed from disassembly (empty or unexpected format).", file=sys.stderr)
+        print(
+            "No kernels parsed from disassembly (empty or unexpected format).",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     readable = demangle_names(list(kernels))
@@ -181,21 +195,26 @@ def main():
         rows.append((short, len(blocks), len(edges), ninsn, dem))
 
     rows.sort(key=lambda r: -r[3])
-    md = [f"# cfg mode — ISA control-flow graphs ({a.arch or 'amdgcn'})", "",
-          "## How to read", "",
-          "- One `dot/<kernel>.dot` per device kernel. Preview in VS Code's Graphviz "
-          "extension (open the `.dot`, right-click → Open Preview), or render with "
-          "`dot -Tsvg dot/x.dot -o x.svg` where graphviz is installed.",
-          "- **Nodes** are basic blocks labelled `start–end addr / N instructions / "
-          "terminator`. **Edges**: green = branch taken, grey = fall-through, "
-          "violet = unconditional jump. A back-edge to an earlier block is a loop.",
-          "- **What to look for:** loop nests (hot inner loops), highly-branchy kernels "
-          "(many small blocks = divergence risk), and the longest straight-line block "
-          "(scheduling unit). Cross-reference block counts with the static report's "
-          "VGPR/occupancy for the same kernel.",
-          "- Rows below are sorted by instruction count (largest kernels first).", "",
-          "| file | blocks | edges | insns | kernel |",
-          "| --- | --- | --- | --- | --- |"]
+    md = [
+        f"# cfg mode — ISA control-flow graphs ({a.arch or 'amdgcn'})",
+        "",
+        "## How to read",
+        "",
+        "- One `dot/<kernel>.dot` per device kernel. Preview in VS Code's Graphviz "
+        "extension (open the `.dot`, right-click → Open Preview), or render with "
+        "`dot -Tsvg dot/x.dot -o x.svg` where graphviz is installed.",
+        "- **Nodes** are basic blocks labelled `start–end addr / N instructions / "
+        "terminator`. **Edges**: green = branch taken, grey = fall-through, "
+        "violet = unconditional jump. A back-edge to an earlier block is a loop.",
+        "- **What to look for:** loop nests (hot inner loops), highly-branchy kernels "
+        "(many small blocks = divergence risk), and the longest straight-line block "
+        "(scheduling unit). Cross-reference block counts with the static report's "
+        "VGPR/occupancy for the same kernel.",
+        "- Rows below are sorted by instruction count (largest kernels first).",
+        "",
+        "| file | blocks | edges | insns | kernel |",
+        "| --- | --- | --- | --- | --- |",
+    ]
     for short, nb, ne, ni, dem in rows:
         d = dem if len(dem) <= 80 else dem[:77] + "..."
         md.append(f"| dot/{short}.dot | {nb} | {ne} | {ni} | {d} |")

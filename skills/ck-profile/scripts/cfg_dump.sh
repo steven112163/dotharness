@@ -17,20 +17,23 @@ BIN=${BIN:?set BIN to the binary path under REPO, e.g. build/bin/<target>}
 
 # Resolve REPO to the CK project root even if cwd drifted; fail fast otherwise.
 _find_ck_root() {
-  local d="$1"
-  while [ -n "$d" ] && [ "$d" != "/" ]; do
-    [ -e "$d/script/cmake-ck-dev.sh" ] && { printf '%s\n' "$d"; return 0; }
-    d=$(dirname "$d")
-  done
-  return 1
+    local d="$1"
+    while [ -n "$d" ] && [ "$d" != "/" ]; do
+        [ -e "$d/script/cmake-ck-dev.sh" ] && {
+            printf '%s\n' "$d"
+            return 0
+        }
+        d=$(dirname "$d")
+    done
+    return 1
 }
 if [ ! -e "$REPO/$BIN" ]; then
-  alt=$(_find_ck_root "$REPO" || _find_ck_root "$PWD") && REPO="$alt"
+    alt=$(_find_ck_root "$REPO" || _find_ck_root "$PWD") && REPO="$alt"
 fi
 if [ ! -e "$REPO/$BIN" ]; then
-  echo "ERROR: binary not found: \$REPO/\$BIN = $REPO/$BIN" >&2
-  echo "  Set REPO to the CK project root and BIN to build/bin/<target>." >&2
-  exit 1
+    echo "ERROR: binary not found: \$REPO/\$BIN = $REPO/$BIN" >&2
+    echo "  Set REPO to the CK project root and BIN to build/bin/<target>." >&2
+    exit 1
 fi
 
 ARCH=${ARCH:-}
@@ -43,7 +46,7 @@ dx() { docker exec -w "$REPO" "$CONTAINER" bash -c "$1"; }
 
 mkdir -p "$OUTDIR"
 cp "$SELF_DIR/profile_readme.md" "$REPO/ck_profile_out/README.md" 2>/dev/null || true
-bash "$SELF_DIR/git_exclude_outdir.sh" "$REPO" 2>/dev/null || true  # ignore output via .git/info/exclude
+bash "$SELF_DIR/git_exclude_outdir.sh" "$REPO" 2>/dev/null || true # ignore output via .git/info/exclude
 echo "Extracting amdgcn code object from $BIN and disassembling ($ARCH) ..."
 # Everything runs in the container: roc-obj-ls/-extract + llvm-objdump live there,
 # c++filt (used by cfg_to_dot.py for demangling) is there too. REPO and the skill

@@ -39,8 +39,10 @@ msg_file=$(echo "$cmd" | grep -oP '(?<=\s-F\s)(\S+)' | head -1 || true)
 if [ -n "$msg_file" ]; then
     # Message read from stdin (-F -) cannot be validated before execution.
     [ "$msg_file" = "-" ] && exit 0
-    msg_file=${msg_file%\"}; msg_file=${msg_file#\"}
-    msg_file=${msg_file%\'}; msg_file=${msg_file#\'}
+    msg_file=${msg_file%\"}
+    msg_file=${msg_file#\"}
+    msg_file=${msg_file%\'}
+    msg_file=${msg_file#\'}
     # First line that is neither blank nor a git comment.
     [ -f "$msg_file" ] && subject=$(grep -vE '^[[:space:]]*(#|$)' "$msg_file" | head -1 || true)
 fi

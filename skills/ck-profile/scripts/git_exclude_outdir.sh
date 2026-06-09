@@ -7,7 +7,7 @@
 #   $1  any path inside the repo (default: $PWD)
 repo="${1:-$PWD}"
 gdir=$(git -C "$repo" rev-parse --git-common-dir 2>/dev/null) || exit 0
-case "$gdir" in /*) ;; *) gdir="$repo/$gdir" ;; esac   # resolve relative common-dir
+case "$gdir" in /*) ;; *) gdir="$repo/$gdir" ;; esac # resolve relative common-dir
 mkdir -p "$gdir/info" 2>/dev/null || exit 0
 excl="$gdir/info/exclude"
-grep -qxF 'ck_profile_out/' "$excl" 2>/dev/null || printf 'ck_profile_out/\n' >> "$excl"
+grep -qxF 'ck_profile_out/' "$excl" 2>/dev/null || printf 'ck_profile_out/\n' >>"$excl"

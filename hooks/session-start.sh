@@ -32,7 +32,7 @@ git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 0
 # Append PROJECT_ROOT once; the env file persists across a session, so re-running
 # on resume/clear must not stack duplicate lines.
 if [ -n "${CLAUDE_ENV_FILE:-}" ] && [ -n "$root" ]; then
-    grep -qxF "PROJECT_ROOT=$root" "$CLAUDE_ENV_FILE" 2>/dev/null || echo "PROJECT_ROOT=$root" >> "$CLAUDE_ENV_FILE"
+    grep -qxF "PROJECT_ROOT=$root" "$CLAUDE_ENV_FILE" 2>/dev/null || echo "PROJECT_ROOT=$root" >>"$CLAUDE_ENV_FILE"
 fi
 
 ctx=$(

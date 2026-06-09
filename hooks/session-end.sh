@@ -26,5 +26,5 @@ fi
 rm -f "$run_dir/session-state.md" 2>/dev/null || true
 
 mkdir -p "$run_dir" 2>/dev/null || true
-echo "$(date -Iseconds) end reason=${reason} cwd=$(pwd) pruned=[${removed% }]" >> "$run_dir/session.log" 2>/dev/null || true
+echo "$(date -Iseconds) end reason=${reason} cwd=$(pwd) pruned=[${removed% }]" >>"$run_dir/session.log" 2>/dev/null || true
 exit 0

@@ -2,10 +2,10 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $(basename "$0") <image> [container-name]"
-  echo "  image          Docker image to run (e.g. ubuntu:22.04)"
-  echo "  container-name Name for the container (default: derived from image)"
-  exit 1
+    echo "Usage: $(basename "$0") <image> [container-name]"
+    echo "  image          Docker image to run (e.g. ubuntu:22.04)"
+    echo "  container-name Name for the container (default: derived from image)"
+    exit 1
 }
 
 [[ $# -lt 1 || $# -gt 2 ]] && usage
@@ -14,27 +14,27 @@ image="$1"
 name="${2:-$(echo "$image" | tr '/:' '__')}"
 
 if docker ps -a --format '{{.Names}}' | grep -qx "$name"; then
-  echo "Container '$name' already exists. Attach with: docker exec -it $name bash"
-  exit 0
+    echo "Container '$name' already exists. Attach with: docker exec -it $name bash"
+    exit 0
 fi
 
 docker run -d -it \
-  --security-opt seccomp=unconfined --privileged \
-  --network=host \
-  --cap-add=SYS_PTRACE \
-  --name "$name" \
-  --user "$(id -u):$(id -g)" \
-  --group-add "$(getent group render | cut -d: -f3)" \
-  --group-add "$(getent group video | cut -d: -f3)" \
-  -v "$HOME:$HOME" \
-  -v /etc/passwd:/etc/passwd:ro \
-  -v /etc/group:/etc/group:ro \
-  -v /dev/dri:/dev/dri \
-  -v /dev/kfd:/dev/kfd \
-  -w "$HOME" \
-  -e HOME="$HOME" \
-  -e IN_CONTAINER=1 \
-  -e CONTAINER_NAME="$name" \
-  "$image"
+    --security-opt seccomp=unconfined --privileged \
+    --network=host \
+    --cap-add=SYS_PTRACE \
+    --name "$name" \
+    --user "$(id -u):$(id -g)" \
+    --group-add "$(getent group render | cut -d: -f3)" \
+    --group-add "$(getent group video | cut -d: -f3)" \
+    -v "$HOME:$HOME" \
+    -v /etc/passwd:/etc/passwd:ro \
+    -v /etc/group:/etc/group:ro \
+    -v /dev/dri:/dev/dri \
+    -v /dev/kfd:/dev/kfd \
+    -w "$HOME" \
+    -e HOME="$HOME" \
+    -e IN_CONTAINER=1 \
+    -e CONTAINER_NAME="$name" \
+    "$image"
 
 echo "Started '$name'. Attach with: docker exec -it $name bash"

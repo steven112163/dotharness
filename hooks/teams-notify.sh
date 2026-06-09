@@ -17,11 +17,11 @@ webhook=${TEAMS_WEBHOOK_URL:-}
 [ -z "$webhook" ] && webhook=$(cat "$HOME/.claude/.dotharness/teams-webhook" 2>/dev/null || true)
 [ -z "$webhook" ] && exit 0
 command -v curl &>/dev/null || exit 0
-command -v jq   &>/dev/null || exit 0
+command -v jq &>/dev/null || exit 0
 
 # Flat payload; the Teams Workflow's "Post card" action builds the card from
 # these two fields (referenced as triggerBody()?['title'] / ['text']).
 payload=$(jq -n --arg t "$title" --arg b "$body" '{title: $t, text: $b}')
 
 curl -sS --max-time 5 -H "Content-Type: application/json" \
-  -d "$payload" "$webhook" >/dev/null 2>&1 || true
+    -d "$payload" "$webhook" >/dev/null 2>&1 || true

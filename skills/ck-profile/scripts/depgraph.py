@@ -16,6 +16,7 @@ DOT only — preview .dot in VS Code's Graphviz extension.
 
     depgraph.py --mode both --raw ck_profile_out/dynamic/raw --out ck_profile_out/depgraph
 """
+
 import argparse
 import csv
 import glob
@@ -32,31 +33,43 @@ from aggregate import short  # short kernel label, shared with the dynamic repor
 # everything else is a workspace buffer. Scratch buffers pa/pb are reused, so
 # last-writer-wins over program order gives the correct producer for each read.
 SSD_PIPELINE = [
-    ("cumsum",         "ssd_cumsum",            ["p_da"],                       ["cum"]),
-    ("packC1",         "pack_Cmat (IntraBMM1)", ["p_cm"],                       ["pa"]),
-    ("packB1",         "pack_Bmat (IntraBMM1)", ["p_bm"],                       ["pb"]),
-    ("gemm_intra1",    "GEMM IntraBMM1",        ["pa", "pb"],                   ["ibmm1"]),
-    ("segsum",         "ssd_segsum_pre_intra2", ["cum", "p_dlt", "ibmm1"],      ["pi2"]),
-    ("packX1",         "pack_X (IntraBMM2)",    ["p_x"],                        ["pa"]),
-    ("gemm_intra2",    "GEMM IntraBMM2",        ["pi2", "pa"],                  ["abmm2"]),
-    ("pre_inter1",     "ssd_pre_inter1",        ["cum", "p_dlt", "p_bm"],       ["pi1", "ce", "lv"]),
-    ("packX2",         "pack_X (InterBMM1)",    ["p_x"],                        ["pa"]),
-    ("gemm_inter1",    "GEMM InterBMM1",        ["pi1", "pa"],                  ["rbmm1"]),
-    ("state_prop",     "ssd_state_propagation", ["rbmm1", "lv"],               ["st"]),
-    ("packC2",         "pack_Cmat (InterBMM2)", ["p_cm"],                       ["pa"]),
-    ("packState",      "pack_state (InterBMM2)", ["st"],                        ["pb"]),
-    ("gemm_inter2",    "GEMM InterBMM2",        ["pa", "pb"],                   ["rbmm2"]),
-    ("epilogue",       "ssd_epilogue",          ["rbmm2", "abmm2", "ce", "p_x", "p_dp", "p_z"], ["p_y"]),
-    ("final_state",    "ssd_final_state",       ["rbmm1", "st", "lv"],          ["p_fs"]),
+    ("cumsum", "ssd_cumsum", ["p_da"], ["cum"]),
+    ("packC1", "pack_Cmat (IntraBMM1)", ["p_cm"], ["pa"]),
+    ("packB1", "pack_Bmat (IntraBMM1)", ["p_bm"], ["pb"]),
+    ("gemm_intra1", "GEMM IntraBMM1", ["pa", "pb"], ["ibmm1"]),
+    ("segsum", "ssd_segsum_pre_intra2", ["cum", "p_dlt", "ibmm1"], ["pi2"]),
+    ("packX1", "pack_X (IntraBMM2)", ["p_x"], ["pa"]),
+    ("gemm_intra2", "GEMM IntraBMM2", ["pi2", "pa"], ["abmm2"]),
+    ("pre_inter1", "ssd_pre_inter1", ["cum", "p_dlt", "p_bm"], ["pi1", "ce", "lv"]),
+    ("packX2", "pack_X (InterBMM1)", ["p_x"], ["pa"]),
+    ("gemm_inter1", "GEMM InterBMM1", ["pi1", "pa"], ["rbmm1"]),
+    ("state_prop", "ssd_state_propagation", ["rbmm1", "lv"], ["st"]),
+    ("packC2", "pack_Cmat (InterBMM2)", ["p_cm"], ["pa"]),
+    ("packState", "pack_state (InterBMM2)", ["st"], ["pb"]),
+    ("gemm_inter2", "GEMM InterBMM2", ["pa", "pb"], ["rbmm2"]),
+    (
+        "epilogue",
+        "ssd_epilogue",
+        ["rbmm2", "abmm2", "ce", "p_x", "p_dp", "p_z"],
+        ["p_y"],
+    ),
+    ("final_state", "ssd_final_state", ["rbmm1", "st", "lv"], ["p_fs"]),
 ]
 
-INPUT_TENSORS = {"p_x": "X", "p_da": "DeltaA", "p_dlt": "Delta", "p_bm": "B_mat",
-                 "p_cm": "C_mat", "p_dp": "D_param", "p_z": "Z"}
+INPUT_TENSORS = {
+    "p_x": "X",
+    "p_da": "DeltaA",
+    "p_dlt": "Delta",
+    "p_bm": "B_mat",
+    "p_cm": "C_mat",
+    "p_dp": "D_param",
+    "p_z": "Z",
+}
 OUTPUT_TENSORS = {"p_y": "Y", "p_fs": "Fstate"}
 
 _HEAD = [
-    'digraph {0} {{',
-    '  rankdir=TB;',
+    "digraph {0} {{",
+    "  rankdir=TB;",
     '  graph [bgcolor="#0a0c10", fontname="monospace", fontcolor="#9aa3af"];',
     '  node [shape=box, style="filled,rounded", fillcolor="#12151d", color="#283042",'
     ' fontname="monospace", fontsize=10, fontcolor="#e9eef4"];',
@@ -66,11 +79,17 @@ _HEAD = [
 
 def emit_data(out):
     lines = [s.format('"ssd_data_dependency"') for s in _HEAD]
-    lines.append('  labelloc="t"; fontsize=13; label="SSD forward — data-dependency DAG";')
+    lines.append(
+        '  labelloc="t"; fontsize=13; label="SSD forward — data-dependency DAG";'
+    )
     for t, lbl in INPUT_TENSORS.items():
-        lines.append(f'  "{t}" [shape=ellipse, fillcolor="#13263a", color="#2c6f8c", label="{lbl}"];')
+        lines.append(
+            f'  "{t}" [shape=ellipse, fillcolor="#13263a", color="#2c6f8c", label="{lbl}"];'
+        )
     for t, lbl in OUTPUT_TENSORS.items():
-        lines.append(f'  "{t}" [shape=ellipse, fillcolor="#143028", color="#2f6b4f", label="{lbl}"];')
+        lines.append(
+            f'  "{t}" [shape=ellipse, fillcolor="#143028", color="#2f6b4f", label="{lbl}"];'
+        )
     for sid, label, _r, _w in SSD_PIPELINE:
         lines.append(f'  "{sid}" [label="{label}"];')
     last_writer = {}
@@ -96,7 +115,9 @@ def find_trace_csv(raw, explicit):
         return explicit if os.path.exists(explicit) else None
     if not raw:
         return None
-    hits = sorted(glob.glob(os.path.join(raw, "**", "*kernel_trace.csv"), recursive=True))
+    hits = sorted(
+        glob.glob(os.path.join(raw, "**", "*kernel_trace.csv"), recursive=True)
+    )
     return hits[0] if hits else None
 
 
@@ -121,14 +142,18 @@ def emit_runtime(csv_path, out):
         return '"' + n.replace('"', "'") + '"'
 
     lines = [s.format('"ssd_runtime_trace"') for s in _HEAD]
-    lines.append('  labelloc="t"; fontsize=13; label="SSD forward — runtime dispatch graph '
-                 f'({len(rows)} dispatches, transitions aggregated)";')
+    lines.append(
+        '  labelloc="t"; fontsize=13; label="SSD forward — runtime dispatch graph '
+        f'({len(rows)} dispatches, transitions aggregated)";'
+    )
     for n, e in node.items():
         avg = e["us"] / e["calls"] if e["calls"] else 0.0
-        lines.append(f'  {nid(n)} [label="{n}\\l{e["calls"]}x  ·  {e["us"]:.1f} us tot  ·  {avg:.1f} us avg\\l"];')
+        lines.append(
+            f'  {nid(n)} [label="{n}\\l{e["calls"]}x  ·  {e["us"]:.1f} us tot  ·  {avg:.1f} us avg\\l"];'
+        )
     for (a, b), w in sorted(trans.items(), key=lambda x: -x[1]):
         lbl = f' [label="x{w}"]' if w > 1 else ""
-        lines.append(f'  {nid(a)} -> {nid(b)}{lbl};')
+        lines.append(f"  {nid(a)} -> {nid(b)}{lbl};")
     lines.append("}")
     path = os.path.join(out, "runtime_trace.dot")
     with open(path, "w") as f:
@@ -139,8 +164,12 @@ def emit_runtime(csv_path, out):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=["data", "runtime", "both"], default="both")
-    ap.add_argument("--raw", default="", help="dir to search for t_kernel_trace.csv (runtime)")
-    ap.add_argument("--trace-csv", default="", help="explicit rocprofv3 kernel-trace CSV (runtime)")
+    ap.add_argument(
+        "--raw", default="", help="dir to search for t_kernel_trace.csv (runtime)"
+    )
+    ap.add_argument(
+        "--trace-csv", default="", help="explicit rocprofv3 kernel-trace CSV (runtime)"
+    )
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     dotdir = os.path.join(a.out, "dot")
@@ -149,46 +178,62 @@ def main():
     have_data = have_runtime = False
     wrote = []
     if a.mode in ("data", "both"):
-        wrote.append(emit_data(dotdir)); have_data = True
+        wrote.append(emit_data(dotdir))
+        have_data = True
     if a.mode in ("runtime", "both"):
         csv_path = find_trace_csv(a.raw, a.trace_csv)
         if not csv_path:
-            msg = ("no rocprofv3 kernel-trace CSV found (need *kernel_trace.csv from "
-                   "trace/dynamic mode); pass --trace-csv or --raw")
+            msg = (
+                "no rocprofv3 kernel-trace CSV found (need *kernel_trace.csv from "
+                "trace/dynamic mode); pass --trace-csv or --raw"
+            )
             if a.mode == "runtime":
                 print("ERROR:", msg, file=sys.stderr)
                 sys.exit(2)
             print("runtime graph skipped:", msg, file=sys.stderr)
         else:
             path, ndisp = emit_runtime(csv_path, dotdir)
-            wrote.append(f"{path}  (from {ndisp} dispatches in {csv_path})"); have_runtime = True
+            wrote.append(f"{path}  (from {ndisp} dispatches in {csv_path})")
+            have_runtime = True
 
     md = ["# depgraph mode — kernel dependency graphs", "", "## How to read", ""]
     if have_data:
-        md += ["- **`dot/data_dependency.dot`** — the *logical* DAG. Ellipses are "
-               "input/output tensors, boxes are kernels, each edge is labelled with the "
-               "workspace buffer that connects a producer to its consumer (resolved by "
-               "program order, so the reused `pa`/`pb` scratch links each pack to the GEMM "
-               "that consumes it). Read top-to-bottom = the algorithm's data flow; this is "
-               "what *must* be serialized for correctness."]
+        md += [
+            "- **`dot/data_dependency.dot`** — the *logical* DAG. Ellipses are "
+            "input/output tensors, boxes are kernels, each edge is labelled with the "
+            "workspace buffer that connects a producer to its consumer (resolved by "
+            "program order, so the reused `pa`/`pb` scratch links each pack to the GEMM "
+            "that consumes it). Read top-to-bottom = the algorithm's data flow; this is "
+            "what *must* be serialized for correctness."
+        ]
     if have_runtime:
-        md += ["- **`dot/runtime_trace.dot`** — the *as-executed* graph from the kernel "
-               "trace. Boxes are kernels (with call count and total/avg µs); edges are "
-               "consecutive dispatches with `xN` = how often that transition occurred, so "
-               "the repeating pipeline appears as a cycle. Read it to see real ordering and "
-               "which kernel dominates wall time."]
-    md += ["- Preview `.dot` in VS Code's Graphviz extension, or `dot -Tsvg`.",
-           "- Compare the two: edges in the runtime graph that are **not** forced by the "
-           "data DAG are pure serialization overhead — candidates for fusion or overlap.", ""]
+        md += [
+            "- **`dot/runtime_trace.dot`** — the *as-executed* graph from the kernel "
+            "trace. Boxes are kernels (with call count and total/avg µs); edges are "
+            "consecutive dispatches with `xN` = how often that transition occurred, so "
+            "the repeating pipeline appears as a cycle. Read it to see real ordering and "
+            "which kernel dominates wall time."
+        ]
+    md += [
+        "- Preview `.dot` in VS Code's Graphviz extension, or `dot -Tsvg`.",
+        "- Compare the two: edges in the runtime graph that are **not** forced by the "
+        "data DAG are pure serialization overhead — candidates for fusion or overlap.",
+        "",
+    ]
     with open(os.path.join(a.out, "index.md"), "w") as f:
         f.write("\n".join(md) + "\n")
     try:
         here = os.path.dirname(os.path.abspath(__file__))
         parent = os.path.dirname(os.path.abspath(a.out.rstrip("/"))) or "."
-        shutil.copy(os.path.join(here, "profile_readme.md"), os.path.join(parent, "README.md"))
+        shutil.copy(
+            os.path.join(here, "profile_readme.md"), os.path.join(parent, "README.md")
+        )
         # ignore the output dir via .git/info/exclude (not the tracked .gitignore)
-        subprocess.run(["bash", os.path.join(here, "git_exclude_outdir.sh"), parent],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            ["bash", os.path.join(here, "git_exclude_outdir.sh"), parent],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
     except OSError:
         pass
     for w in wrote:
