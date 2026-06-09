@@ -34,10 +34,11 @@ Bash)
     # forms (-rf, -r -f, --recursive --force) are all caught. Then block only when
     # the target is dangerous: a path, a glob, or home/cwd. A bare relative target
     # (rm -rf build) is left alone.
-    if echo "$cmd" | grep -qE '\brm\b[^|;&]*[[:space:]](-[a-zA-Z]*r[a-zA-Z]*|--recursive)\b' \
-        && echo "$cmd" | grep -qE '\brm\b[^|;&]*[[:space:]](-[a-zA-Z]*f[a-zA-Z]*|--force)\b'; then
+    if echo "$cmd" | grep -qE '\brm\b[^|;&]*[[:space:]](-[a-zA-Z]*r[a-zA-Z]*|--recursive)\b' &&
+        echo "$cmd" | grep -qE '\brm\b[^|;&]*[[:space:]](-[a-zA-Z]*f[a-zA-Z]*|--force)\b'; then
         echo "$cmd" | grep -qE '\brm\b[^|;&]*/' && blocked="rm -rf with path"
         echo "$cmd" | grep -qE '\brm\b[^|;&]*\*' && blocked="rm -rf with glob"
+        # shellcheck disable=SC2016  # $HOME is a literal in the regex, not a shell expansion
         echo "$cmd" | grep -qE '\brm\b[^|;&]*[[:space:]](\.|~|\$HOME)([[:space:]]|/|$)' && blocked="rm -rf on home/cwd"
     fi
 

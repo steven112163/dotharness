@@ -17,17 +17,30 @@ Kernel_Name carries template commas, so this uses csv.DictReader (never cut -d,)
 
     trace_timeline.py --run-dir <dir> [--prefix trace] --out <dir>/timeline.html
 """
+
 import argparse
 import csv
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from aggregate import short              # shared short kernel label
+from aggregate import short  # shared short kernel label
 from html_report import page, section, esc, bars
 
-PALETTE = ["#5ad1ff", "#ffb454", "#c08cff", "#5fd0a0", "#ff6b6b", "#4cc2ff",
-           "#f78fb3", "#9ad34b", "#ffd166", "#8ac6ff", "#b388ff", "#ff9f6b"]
+PALETTE = [
+    "#5ad1ff",
+    "#ffb454",
+    "#c08cff",
+    "#5fd0a0",
+    "#ff6b6b",
+    "#4cc2ff",
+    "#f78fb3",
+    "#9ad34b",
+    "#ffd166",
+    "#8ac6ff",
+    "#b388ff",
+    "#ff9f6b",
+]
 GUT = 74  # px reserved at left for the (non-scrolling) sticky lane label
 
 # Host calls worth showing: the runtime loop (launches, sync bubbles, mem ops),
@@ -36,8 +49,8 @@ _HOST_KEEP = ("launch", "memcpy", "memset", "synchron", "event")
 
 
 def _keep_host(fn):
-    l = fn.lower()
-    return any(k in l for k in _HOST_KEEP)
+    name = fn.lower()
+    return any(k in name for k in _HOST_KEEP)
 
 
 def _read(path):
@@ -51,9 +64,16 @@ def load_events(run_dir, prefix):
     kt = _read(os.path.join(run_dir, f"{prefix}_kernel_trace.csv"))
     if not kt:
         return None
-    kern = [(short(r["Kernel_Name"]), r["Kernel_Name"],
-             int(r["Start_Timestamp"]), int(r["End_Timestamp"]))
-            for r in kt if r.get("Start_Timestamp")]
+    kern = [
+        (
+            short(r["Kernel_Name"]),
+            r["Kernel_Name"],
+            int(r["Start_Timestamp"]),
+            int(r["End_Timestamp"]),
+        )
+        for r in kt
+        if r.get("Start_Timestamp")
+    ]
     if not kern:
         return None
     g0 = min(e[2] for e in kern)
@@ -65,38 +85,45 @@ def load_events(run_dir, prefix):
             if not r.get("Start_Timestamp"):
                 continue
             t0, t1 = int(r["Start_Timestamp"]), int(r["End_Timestamp"])
-            if t1 < g0 or t0 > g1:           # keep only what overlaps the kernel window
+            if t1 < g0 or t0 > g1:  # keep only what overlaps the kernel window
                 continue
             out.append((r[name_key], r[name_key], t0, t1))
         return out
 
-    host = [r for r in _read(os.path.join(run_dir, f"{prefix}_hip_api_trace.csv"))
-            if _keep_host(r.get("Function", ""))]
+    host = [
+        r
+        for r in _read(os.path.join(run_dir, f"{prefix}_hip_api_trace.csv"))
+        if _keep_host(r.get("Function", ""))
+    ]
     host = windowed(host, "Function")
     copies = _read(os.path.join(run_dir, f"{prefix}_memory_copy_trace.csv"))
     for r in copies:
-        r["_lbl"] = r.get("Direction", "COPY").replace("MEMORY_COPY_", "").replace("_", "")
+        r["_lbl"] = (
+            r.get("Direction", "COPY").replace("MEMORY_COPY_", "").replace("_", "")
+        )
     copy = windowed(copies, "_lbl") if copies else []
     return {"g0": g0, "g1": g1, "kern": kern, "host": host, "copy": copy}
 
 
 def _host_color(fn):
-    l = fn.lower()
-    if "synchron" in l:
+    name = fn.lower()
+    if "synchron" in name:
         return "#c08cff"
-    if "memcpy" in l or "memset" in l:
+    if "memcpy" in name or "memset" in name:
         return "#ffb454"
-    if "event" in l:
+    if "event" in name:
         return "#5fd0a0"
-    return "#2c6f8c"                          # launches: muted accent
+    return "#2c6f8c"  # launches: muted accent
 
 
 def _ev_div(t0us, durus, color, cap, tip, base):
     left = GUT + t0us * base
     w = max(1.5, durus * base)
-    return (f"<div class='ev' data-t0='{t0us:.4f}' data-du='{durus:.4f}' "
-            f"data-tip='{esc(tip)}' style='left:{left:.2f}px;width:{w:.2f}px;--c:{color}'>"
-            f"<span class='cap'>{esc(cap)}</span></div>")
+    return (
+        f"<div class='ev' data-t0='{t0us:.4f}' data-du='{durus:.4f}' "
+        f"data-tip='{esc(tip)}' style='left:{left:.2f}px;width:{w:.2f}px;--c:{color}'>"
+        f"<span class='cap'>{esc(cap)}</span></div>"
+    )
 
 
 def build_lane(name, events, g0, base, color_of):
@@ -106,8 +133,10 @@ def build_lane(name, events, g0, base, color_of):
         startus = (t0 - g0) / 1e3
         tip = f"{full}\n{name} · start {startus:.3f} µs · dur {durus:.3f} µs"
         rows.append(_ev_div(t0us, durus, color_of(cap, full), cap, tip, base))
-    return (f"<div class='tl-lane'><span class='lane-lbl'>{esc(name)}</span>"
-            f"{''.join(rows)}</div>")
+    return (
+        f"<div class='tl-lane'><span class='lane-lbl'>{esc(name)}</span>"
+        f"{''.join(rows)}</div>"
+    )
 
 
 _JS = """
@@ -208,7 +237,7 @@ def render(data, name, out):
     ends = [data["g1"]] + [e[3] for e in data["host"]] + [e[3] for e in data["copy"]]
     g0, g1 = min(starts), max(ends)
     total_us = (g1 - g0) / 1e3
-    base = 1500.0 / total_us if total_us else 1.0      # px per µs at "fit"
+    base = 1500.0 / total_us if total_us else 1.0  # px per µs at "fit"
 
     # stable color per device-kernel short-name, in first-seen order
     kcolor, order = {}, []
@@ -217,21 +246,32 @@ def render(data, name, out):
             kcolor[cap] = PALETTE[len(order) % len(PALETTE)]
             order.append(cap)
 
-    lanes = [build_lane("HIP API", data["host"], g0, base,
-                        lambda cap, full: _host_color(full))]
+    lanes = [
+        build_lane(
+            "HIP API", data["host"], g0, base, lambda cap, full: _host_color(full)
+        )
+    ]
     if data["copy"]:
-        lanes.append(build_lane("COPY", data["copy"], g0, base,
-                                lambda cap, full: "#ffb454"))
-    lanes.append(build_lane("GPU", data["kern"], g0, base,
-                            lambda cap, full: kcolor.get(cap, "#5ad1ff")))
+        lanes.append(
+            build_lane("COPY", data["copy"], g0, base, lambda cap, full: "#ffb454")
+        )
+    lanes.append(
+        build_lane(
+            "GPU", data["kern"], g0, base, lambda cap, full: kcolor.get(cap, "#5ad1ff")
+        )
+    )
 
-    canvas = (f"<div class='tl'><div class='tlscroll' id='tlscroll'>"
-              f"<div class='tlcanvas' id='tlcanvas' data-gut='{GUT}' "
-              f"data-total='{total_us:.4f}' data-base='{base:.6f}'>"
-              f"<div class='tlaxis' id='tlaxis'></div>{''.join(lanes)}</div></div></div>")
-    ctl = ("<div class='tlctl'><button id='zout'>− zoom</button>"
-           "<button id='zin'>+ zoom</button><button id='zfit'>fit</button>"
-           "<span class='hint'>ctrl+wheel = zoom at cursor · drag = pan · hover = details</span></div>")
+    canvas = (
+        f"<div class='tl'><div class='tlscroll' id='tlscroll'>"
+        f"<div class='tlcanvas' id='tlcanvas' data-gut='{GUT}' "
+        f"data-total='{total_us:.4f}' data-base='{base:.6f}'>"
+        f"<div class='tlaxis' id='tlaxis'></div>{''.join(lanes)}</div></div></div>"
+    )
+    ctl = (
+        "<div class='tlctl'><button id='zout'>− zoom</button>"
+        "<button id='zin'>+ zoom</button><button id='zfit'>fit</button>"
+        "<span class='hint'>ctrl+wheel = zoom at cursor · drag = pan · hover = details</span></div>"
+    )
 
     # per-kernel aggregate (device lane only) for the top-kernels bars
     agg = {}
@@ -244,19 +284,24 @@ def render(data, name, out):
 
     legend = "".join(
         f"<span class='lk'><span class='sw' style='--c:{kcolor[k]}'></span>{esc(k)}</span>"
-        for k in order[:12])
+        for k in order[:12]
+    )
 
-    sub = (f"<p class='sub'>workload <b>{esc(name)}</b> · span <b>{total_us:.1f} µs</b> · "
-           f"<b>{len(data['kern'])}</b> dispatches · <b>{len(data['host'])}</b> host calls · "
-           f"<b>{len(data['copy'])}</b> copies</p>")
-    body = (f"<h1>trace timeline · {esc(name)}</h1>{sub}{_TL_CSS}"
-            + section("Host + device timeline", ctl + canvas)
-            + "<div id='tltip'></div>"
-            + section("Legend (device kernels)", f"<div class='legend'>{legend}</div>")
-            + section("Top kernels by total GPU time", topbars)
-            + "<p class='foot'>built from rocprofv3 --sys-trace CSVs · "
-              "open the .pftrace in ui.perfetto.dev for flows / counters / full zoom</p>"
-            + f"<script>{_JS}</script>")
+    sub = (
+        f"<p class='sub'>workload <b>{esc(name)}</b> · span <b>{total_us:.1f} µs</b> · "
+        f"<b>{len(data['kern'])}</b> dispatches · <b>{len(data['host'])}</b> host calls · "
+        f"<b>{len(data['copy'])}</b> copies</p>"
+    )
+    body = (
+        f"<h1>trace timeline · {esc(name)}</h1>{sub}{_TL_CSS}"
+        + section("Host + device timeline", ctl + canvas)
+        + "<div id='tltip'></div>"
+        + section("Legend (device kernels)", f"<div class='legend'>{legend}</div>")
+        + section("Top kernels by total GPU time", topbars)
+        + "<p class='foot'>built from rocprofv3 --sys-trace CSVs · "
+        "open the .pftrace in ui.perfetto.dev for flows / counters / full zoom</p>"
+        + f"<script>{_JS}</script>"
+    )
     with open(out, "w") as f:
         f.write(page(f"trace timeline · {name}", body))
     return out
@@ -271,8 +316,10 @@ def main():
     a = ap.parse_args()
     data = load_events(a.run_dir, a.prefix)
     if not data:
-        print(f"trace_timeline: no kernel trace under {a.run_dir} (prefix {a.prefix})",
-              file=sys.stderr)
+        print(
+            f"trace_timeline: no kernel trace under {a.run_dir} (prefix {a.prefix})",
+            file=sys.stderr,
+        )
         sys.exit(2)
     out = a.out or os.path.join(a.run_dir, "timeline.html")
     name = a.name or os.path.basename(os.path.normpath(a.run_dir))

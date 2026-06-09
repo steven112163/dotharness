@@ -8,8 +8,6 @@ cwd=$(echo "$input" | jq -r '.workspace.current_dir // .cwd // empty')
 cwd="${cwd:-$(pwd)}"
 
 # Colors (ANSI escape codes)
-txtred='\e[0;31m'
-txtylw='\e[0;33m'
 txtgrn='\e[0;32m'
 txtpur='\e[0;35m'
 txtwht='\e[0;37m'
@@ -25,8 +23,8 @@ git_str=""
 branch_name=$(git -C "$cwd" branch --show-current 2>/dev/null)
 if [ -n "$branch_name" ]; then
     dirty=""
-    if ! git -C "$cwd" diff --no-optional-locks --quiet 2>/dev/null || \
-       ! git -C "$cwd" diff --no-optional-locks --cached --quiet 2>/dev/null; then
+    if ! git -C "$cwd" diff --no-optional-locks --quiet 2>/dev/null ||
+        ! git -C "$cwd" diff --no-optional-locks --cached --quiet 2>/dev/null; then
         dirty="*"
     fi
     git_str=" ${branch_name}${dirty}"
@@ -43,13 +41,13 @@ if [ -n "$model_raw" ]; then
     short="${model_raw#Claude }"
     # Map known names to compact labels
     case "$short" in
-        "Opus 4"*)    short="O${short#Opus }" ;;
-        "Sonnet 4"*)  short="S${short#Sonnet }" ;;
-        "Haiku 4"*)   short="H${short#Haiku }" ;;
-        "Opus 3"*)    short="O${short#Opus }" ;;
-        "Sonnet 3"*)  short="S${short#Sonnet }" ;;
-        "Haiku 3"*)   short="H${short#Haiku }" ;;
-        *)            short=$(echo "$short" | sed 's/[Cc]laude //g') ;;
+    "Opus 4"*) short="O${short#Opus }" ;;
+    "Sonnet 4"*) short="S${short#Sonnet }" ;;
+    "Haiku 4"*) short="H${short#Haiku }" ;;
+    "Opus 3"*) short="O${short#Opus }" ;;
+    "Sonnet 3"*) short="S${short#Sonnet }" ;;
+    "Haiku 3"*) short="H${short#Haiku }" ;;
+    *) short="${short//[Cc]laude /}" ;;
     esac
     model_str=" $short"
 fi
@@ -91,12 +89,12 @@ effort_str=""
 effort_raw=$(echo "$input" | jq -r '.effort.level // empty')
 if [ -n "$effort_raw" ]; then
     case "$effort_raw" in
-        low)    effort_str=" lo" ;;
-        medium) effort_str=" md" ;;
-        high)   effort_str=" hi" ;;
-        xhigh)  effort_str=" xhi" ;;
-        max)    effort_str=" max" ;;
-        *)      effort_str=" ${effort_raw}" ;;
+    low) effort_str=" lo" ;;
+    medium) effort_str=" md" ;;
+    high) effort_str=" hi" ;;
+    xhigh) effort_str=" xhi" ;;
+    max) effort_str=" max" ;;
+    *) effort_str=" ${effort_raw}" ;;
     esac
 fi
 
