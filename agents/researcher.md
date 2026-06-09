@@ -1,5 +1,6 @@
 ---
 name: researcher
+color: cyan
 description: >-
   Delegate web and codebase research here to keep the caller's context small. Use
   when you need to find something on the internet, read documentation, check

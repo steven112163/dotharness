@@ -1,5 +1,6 @@
 ---
 name: profiler
+color: orange
 description: >-
   Delegate performance profiling here: profile a built target, diagnose the
   bottleneck, and return ranked next-optimization directions with the counter

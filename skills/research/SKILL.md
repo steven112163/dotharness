@@ -1,5 +1,6 @@
 ---
 name: research
+argument-hint: "[mode] <question>"
 description: Use when answering research questions, exploring ideas, or investigating technical topics. Triggers include open-ended questions ("how should we approach X"), factual queries ("what is X"), comparative analysis ("compare X vs Y"), or any request for thorough investigation. Usable by both humans and agents. Caller selects mode or the skill auto-detects from intent.
 ---
 

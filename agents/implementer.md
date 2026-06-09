@@ -1,5 +1,6 @@
 ---
 name: implementer
+color: green
 description: >-
   Delegate a focused implementation task here: write or modify code to a clear
   spec and report what changed. Use when you have a well-scoped coding job —

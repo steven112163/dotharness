@@ -1,5 +1,6 @@
 ---
 name: tester
+color: yellow
 description: >-
   Delegate testing here: author and/or run tests for a change and report
   pass/fail with evidence. Use to write a test suite, run an existing one, check

@@ -27,7 +27,10 @@ rules/                           → symlinked to ~/.claude/rules/
 third-party/
   mattpocock-skills/             → git submodule (engineering + productivity skills)
 statusline.sh                    → symlinked to ~/.claude/statusline.sh
-setup.sh                         → creates symlinks, registers hooks, sets output style, installs plugins
+tests/                           → bats tests for hooks (block-dangerous.bats)
+.pre-commit-config.yaml          → lint/format gate (shellcheck, shfmt, ruff, whitespace/json/yaml checks)
+.github/workflows/ci.yml         → CI: pre-commit on all files + bats hook tests
+setup.sh                         → symlinks, hooks, output style, plugins, and pre-commit provisioning
 ```
 
 ## Setup
@@ -37,7 +40,7 @@ git submodule update --init
 ./setup.sh
 ```
 
-Symlinks `skills/`, `hooks/`, `output-styles/`, `rules/`, third-party skills, and `statusline.sh` into `~/.claude/`, and `bin/` scripts into `~/bin/`. Registers hooks and sets the `dotharness` output style in `~/.claude/settings.json` (requires `jq`), creating that file if it does not yet exist (fresh-machine safe). Installs plugins via the Claude CLI. Existing files are backed up to `.bak`. Re-running is idempotent.
+Symlinks `skills/`, `hooks/`, `output-styles/`, `rules/`, third-party skills, and `statusline.sh` into `~/.claude/`, and `bin/` scripts into `~/bin/`. Registers hooks and sets the `dotharness` output style in `~/.claude/settings.json` (requires `jq`), creating that file if it does not yet exist (fresh-machine safe). Installs plugins via the Claude CLI. Provisions a repo-local `.venv` with `pre-commit` and installs the git pre-commit hook. Existing files are backed up to `.bak`. Re-running is idempotent.
 
 ## Rules
 
@@ -68,6 +71,8 @@ Located in `skills/`, symlinked individually to `~/.claude/skills/`.
 - **research** — four-mode research skill (socratic, direct, deep, adversarial) with anti-sycophancy safeguards. Usable by both humans and agents. Integrated into dev-team role prompts.
 - **create-pr** — create a pull request following the CK team's PR template (motivation, technical details, test plan, test result, submission checklist).
 - **ck-profile** — profile a Composable Kernel target two ways: static compile-time resource analysis (VGPR/AGPR/SGPR, occupancy ceiling, spills, scratch, LDS) and dynamic runtime profiling with rocprofv3 (kernel timing, HBM traffic, L2 hit ratio, occupancy, VALU). Per-arch hardware specs (`gpu_specs.py`) drive a device-spec block and an occupancy-util ratio, with a roofline-lite compute/memory/latency bottleneck verdict.
+
+`research` and `ck-profile` carry an `argument-hint` to guide `/`-invocation autocomplete.
 
 ### Third-party (mattpocock/skills, MIT)
 Engineering and productivity skills, linked from the submodule:
@@ -104,6 +109,8 @@ Native subagents in `agents/`, symlinked individually to `~/.claude/agents/`. Ea
 - **tester** — authors and runs tests; reports pass/fail and benchmark-vs-target.
 - **builder** — builds a CK target via `ckBuild`; reports errors and warnings.
 - **profiler** — profiles a built target via the `ck-profile` skill; returns ranked optimization directions.
+
+Each definition also carries a task-list `color`: researcher cyan, implementer green, reviewer purple, tester yellow, builder blue, profiler orange.
 
 Each agent also references external skills where useful — for example `implementer` uses `superpowers:test-driven-development`, `superpowers:systematic-debugging`, and `superpowers:verification-before-completion`; `reviewer` uses the built-in `/review` and `/security-review`; `profiler` pairs `ck-profile` with `superpowers:systematic-debugging`.
 
@@ -149,6 +156,22 @@ bash ~/.claude/hooks/teams-notify.sh "Claude Code" "Test from dotharness"
 ```
 
 The sender always shows as "Workflows" (the Flow bot's fixed name — Microsoft allows no alias); the card's bold title identifies it as Claude.
+
+## Pre-commit and CI
+
+A `pre-commit` gate runs lint and format checks on every commit, and a GitHub Actions workflow enforces the same set on push and pull request.
+
+**Hooks (`.pre-commit-config.yaml`), framework-managed:**
+- `shellcheck` — shell linting (hooks, `bin/`, `statusline.sh`, `setup.sh`, skill scripts)
+- `shfmt` — shell formatting at 4-space indent (`-i 4`), matching `auto-format.sh`
+- `ruff` + `ruff-format` — Python lint and format for the ck-profile scripts
+- `pre-commit-hooks` — trailing whitespace, end-of-file, merge-conflict, large-file, JSON/YAML validity, and shebang/executable consistency
+
+`setup.sh` provisions a repo-local `.venv`, installs `pre-commit` into it, and registers the git hook. Run the gate manually with `.venv/bin/pre-commit run --all-files`.
+
+**Tests (`tests/`).** `block-dangerous.bats` exercises the `block-dangerous.sh` guard with 34 cases: `rm -rf` (path, glob, home, split flags), force-push variants, `reset --hard`, `git clean`, `DROP TABLE`, `.env`/`/etc`/`/tmp` writes, and `killall`, plus the allow cases (bare relative `rm`, the repo's `.claude/tmp`, ordinary source files, `.env.example`). Run with `bats tests/`.
+
+**CI (`.github/workflows/ci.yml`).** Two jobs — `pre-commit` (all hooks on all files) and `bats` (installs `bats`/`jq`, runs the hook tests) — on push and pull request.
 
 ## Output styles
 

@@ -1,5 +1,6 @@
 ---
 name: builder
+color: blue
 description: >-
   Delegate a build here: compile a target and report success, warnings, or the
   exact errors. Use to build a CK target, verify a tree compiles, or get a clean

@@ -1,5 +1,6 @@
 ---
 name: ck-profile
+argument-hint: "<target> [modes]"
 description: >-
   Profile a Composable Kernel (CK) build target two ways: static compile-time
   resource analysis (registers, occupancy ceiling, spills, scratch, LDS) and

@@ -1,5 +1,6 @@
 ---
 name: reviewer
+color: purple
 description: >-
   Delegate a code review here: assess a diff or a set of files for correctness,
   security, concurrency, performance, and readability, and return findings with
