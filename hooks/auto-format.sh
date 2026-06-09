@@ -40,7 +40,7 @@ json)
     ;;
 sh | bash)
     if command -v shfmt &>/dev/null; then
-        shfmt -w "$file" 2>/dev/null || true
+        shfmt -i 4 -w "$file" 2>/dev/null || true
     fi
     ;;
 cmake)

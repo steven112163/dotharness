@@ -1,7 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-readonly REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+readonly REPO_DIR
 readonly CLAUDE_DIR="${HOME:?HOME is not set}/.claude"
 
 link() {
@@ -79,39 +80,39 @@ register_hook() {
         if [ -n "$matcher" ]; then
             jq --arg evt "$event" --arg cmd "$command" --argjson to "$timeout" --arg mat "$matcher" --argjson aw "$aw" \
                 '.hooks = (.hooks // {}) | .hooks[$evt] = ((.hooks[$evt] // []) + [{"matcher": $mat, "hooks": [({"type": "command", "command": $cmd, "timeout": $to} + (if $aw then {"asyncRewake": true} else {} end))]}])' \
-                "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
+                "$SETTINGS" >"${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
         else
             jq --arg evt "$event" --arg cmd "$command" --argjson to "$timeout" --argjson aw "$aw" \
                 '.hooks = (.hooks // {}) | .hooks[$evt] = ((.hooks[$evt] // []) + [{"hooks": [({"type": "command", "command": $cmd, "timeout": $to} + (if $aw then {"asyncRewake": true} else {} end))]}])' \
-                "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
+                "$SETTINGS" >"${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
         fi
     fi
 }
 
 # Ensure settings.json exists so hooks/outputStyle can be set on a fresh machine.
 if command -v jq &>/dev/null && [ ! -f "$SETTINGS" ]; then
-    echo '{}' > "$SETTINGS"
+    echo '{}' >"$SETTINGS"
     echo "  created $SETTINGS"
 fi
 
 if [ -f "$SETTINGS" ] && command -v jq &>/dev/null; then
     register_hook "UserPromptSubmit" "bash ~/.claude/hooks/anti-sycophancy.sh" "anti-sycophancy hook" 5
-    register_hook "PreToolUse"       "bash ~/.claude/hooks/block-dangerous.sh"  "block-dangerous hook" 5 "Bash|Write|Edit"
-    register_hook "PostToolUse"      "bash ~/.claude/hooks/auto-format.sh"      "auto-format hook"     10 "Write|Edit"
-    register_hook "PostToolUse"      "bash ~/.claude/hooks/security-scan.sh"    "security-scan hook"   5  "Write|Edit" 1
-    register_hook "Stop"             "bash ~/.claude/hooks/notify-stop.sh"      "notify-stop hook"     5
-    register_hook "PreCompact"      "bash ~/.claude/hooks/context-save.sh"     "context-save hook"    10
-    register_hook "Notification"    "bash ~/.claude/hooks/notify-prompt.sh"    "notify-prompt hook"   5
-    register_hook "PreToolUse"      "bash ~/.claude/hooks/auto-approve.sh"     "auto-approve hook"    5  "Bash"
-    register_hook "PreToolUse"      "bash ~/.claude/hooks/commit-lint.sh"      "commit-lint hook"     5  "Bash"
-    register_hook "SessionStart"    "bash ~/.claude/hooks/session-start.sh"    "session-start hook"   10
-    register_hook "SessionEnd"      "bash ~/.claude/hooks/session-end.sh"      "session-end hook"     10
+    register_hook "PreToolUse" "bash ~/.claude/hooks/block-dangerous.sh" "block-dangerous hook" 5 "Bash|Write|Edit"
+    register_hook "PostToolUse" "bash ~/.claude/hooks/auto-format.sh" "auto-format hook" 10 "Write|Edit"
+    register_hook "PostToolUse" "bash ~/.claude/hooks/security-scan.sh" "security-scan hook" 5 "Write|Edit" 1
+    register_hook "Stop" "bash ~/.claude/hooks/notify-stop.sh" "notify-stop hook" 5
+    register_hook "PreCompact" "bash ~/.claude/hooks/context-save.sh" "context-save hook" 10
+    register_hook "Notification" "bash ~/.claude/hooks/notify-prompt.sh" "notify-prompt hook" 5
+    register_hook "PreToolUse" "bash ~/.claude/hooks/auto-approve.sh" "auto-approve hook" 5 "Bash"
+    register_hook "PreToolUse" "bash ~/.claude/hooks/commit-lint.sh" "commit-lint hook" 5 "Bash"
+    register_hook "SessionStart" "bash ~/.claude/hooks/session-start.sh" "session-start hook" 10
+    register_hook "SessionEnd" "bash ~/.claude/hooks/session-end.sh" "session-end hook" 10
 
     # Activate the dotharness output style unless the user already set one.
     if jq -e '.outputStyle' "$SETTINGS" >/dev/null 2>&1; then
         echo "  ok  outputStyle"
     else
-        jq '.outputStyle = "dotharness"' "$SETTINGS" > "${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
+        jq '.outputStyle = "dotharness"' "$SETTINGS" >"${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
         echo "  set outputStyle=dotharness"
     fi
 elif [ ! -f "$SETTINGS" ]; then
@@ -134,6 +135,28 @@ link_items "$REPO_DIR/bin" "$BIN_DIR"
 # --- Statusline ---
 echo "Statusline:"
 link "$REPO_DIR/statusline.sh" "$CLAUDE_DIR/statusline.sh"
+
+# --- Pre-commit (repo-local lint/format gate in a venv; tools managed by pre-commit) ---
+echo "Pre-commit:"
+venv_dir="$REPO_DIR/.venv"
+if [ ! -x "$venv_dir/bin/pre-commit" ]; then
+    if command -v python3 &>/dev/null; then
+        echo "  creating .venv and installing pre-commit"
+        python3 -m venv "$venv_dir"
+        "$venv_dir/bin/pip" install --quiet --upgrade pip pre-commit
+    else
+        echo "  skipped (python3 not found)"
+    fi
+fi
+if [ -x "$venv_dir/bin/pre-commit" ]; then
+    if (cd "$REPO_DIR" && "$venv_dir/bin/pre-commit" install >/dev/null); then
+        echo "  installed git hook"
+    else
+        echo "  warn: pre-commit install failed"
+    fi
+else
+    echo "  skipped git hook (pre-commit not available)"
+fi
 
 # --- Plugins (requires claude CLI) ---
 echo "Plugins:"
