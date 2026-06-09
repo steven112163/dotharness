@@ -16,6 +16,11 @@ repos:
       - id: check-yaml
       - id: check-shebang-scripts-are-executable
       - id: check-executables-have-shebangs
+      - id: check-case-conflict
+      - id: detect-private-key
+        exclude: ^hooks/security-scan\.sh$ # matches the PEM key-header literal it greps for, not an actual key
+      - id: mixed-line-ending
+        args: [--fix=lf]
 
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.11.0.1
@@ -33,3 +38,18 @@ repos:
     hooks:
       - id: ruff
       - id: ruff-format
+
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.47.2
+    hooks:
+      - id: typos
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint-docker
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks

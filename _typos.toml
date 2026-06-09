@@ -1,0 +1,7 @@
+# Allowlist domain terms that `typos` misreads. Each maps the word to itself,
+# which disables the correction while leaving genuine typos elsewhere caught.
+[default.extend-words]
+# AMD GPU performance-counter vocabulary (rocprofv3 / rocprof-compute):
+valu = "valu"  # Vector ALU — VALUBusy, SQ_VALU_MFMA_BUSY_CYCLES, VALU%
+hsa = "hsa"    # Heterogeneous System Architecture — HSA API, trace_hsa_api_trace.csv
+startus = "startus"  # local: start time in microseconds (trace_timeline.py)

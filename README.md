@@ -28,8 +28,8 @@ third-party/
   mattpocock-skills/             → git submodule (engineering + productivity skills)
 statusline.sh                    → symlinked to ~/.claude/statusline.sh
 tests/                           → bats tests for hooks (block-dangerous.bats)
-.pre-commit-config.yaml          → lint/format gate (shellcheck, shfmt, ruff, whitespace/json/yaml checks)
-.github/workflows/ci.yml         → CI: pre-commit on all files + bats hook tests
+.pre-commit-config.yaml          → lint/format/secret gate (shellcheck, shfmt, ruff, typos, actionlint, gitleaks, pre-commit-hooks)
+.github/workflows/ci.yml         → CI: pre-commit on all files + bats hook tests + full-history gitleaks
 setup.sh                         → symlinks, hooks, output style, plugins, and pre-commit provisioning
 ```
 
@@ -165,13 +165,16 @@ A `pre-commit` gate runs lint and format checks on every commit, and a GitHub Ac
 - `shellcheck` — shell linting (hooks, `bin/`, `statusline.sh`, `setup.sh`, skill scripts)
 - `shfmt` — shell formatting at 4-space indent (`-i 4`), matching `auto-format.sh`
 - `ruff` + `ruff-format` — Python lint and format for the ck-profile scripts
-- `pre-commit-hooks` — trailing whitespace, end-of-file, merge-conflict, large-file, JSON/YAML validity, and shebang/executable consistency
+- `typos` — spell-checking for code and docs; `_typos.toml` allowlists GPU terms (`VALU`, `HSA`) that are not typos
+- `actionlint` (docker) — GitHub Actions workflow linting, including the embedded `run:` shell via the image's bundled shellcheck
+- `gitleaks` — secret scanning on staged diffs (regex + entropy)
+- `pre-commit-hooks` — trailing whitespace, end-of-file, merge-conflict, large-file, JSON/YAML validity, shebang/executable consistency, case-conflict, mixed-line-ending (LF), and `detect-private-key` (excluding `security-scan.sh`, which greps for the key-header marker)
 
-`setup.sh` provisions a repo-local `.venv`, installs `pre-commit` into it, and registers the git hook. Run the gate manually with `.venv/bin/pre-commit run --all-files`.
+`setup.sh` provisions a repo-local `.venv`, installs `pre-commit` into it, and registers the git hook. Run the gate manually with `.venv/bin/pre-commit run --all-files`. The `actionlint` hook runs in a container, so it needs a running Docker daemon.
 
 **Tests (`tests/`).** `block-dangerous.bats` exercises the `block-dangerous.sh` guard with 34 cases: `rm -rf` (path, glob, home, split flags), force-push variants, `reset --hard`, `git clean`, `DROP TABLE`, `.env`/`/etc`/`/tmp` writes, and `killall`, plus the allow cases (bare relative `rm`, the repo's `.claude/tmp`, ordinary source files, `.env.example`). Run with `bats tests/`.
 
-**CI (`.github/workflows/ci.yml`).** Two jobs — `pre-commit` (all hooks on all files) and `bats` (installs `bats`/`jq`, runs the hook tests) — on push and pull request.
+**CI (`.github/workflows/ci.yml`).** Three jobs on push and pull request: `pre-commit` (all hooks on all files), `bats` (installs `bats`/`jq`, runs the hook tests), and `gitleaks` (full-history secret scan with `fetch-depth: 0`, catching secrets the staged-only pre-commit hook cannot see).
 
 ## Output styles
 
