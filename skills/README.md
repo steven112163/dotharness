@@ -6,10 +6,11 @@ Located in `skills/`, symlinked individually to `~/.claude/skills/`.
 
 - **dev-team** — evidence-driven agent team. The lead (the only spawner) spawns native worker agents (researcher, implementer, reviewer, tester, builder, profiler) and synthesis coordinators (principal-researcher, software-architect, test-architect) as teammates, on demand, and stops them once they deliver. 8-phase candidate workflow: clarify a task contract, draft/plan, fan out 2–3 candidate implementations in worktrees, refine on profiling evidence, QA, verify, and report the best candidate plus alternatives.
 - **research** — four-mode research skill (socratic, direct, deep, adversarial) with anti-sycophancy safeguards. Usable by both humans and agents. Integrated into dev-team role prompts.
+- **survey** — literature survey skill. Discovers papers from arXiv, Semantic Scholar, Crossref (DOI metadata for published IEEE/ACM venues), and OpenReview, or works from a curated set, then synthesizes a full report: summary, PRISMA-style audit trail, thematic synthesis, comparison table, and gaps. A stdlib `paper_search.py` helper grounds every citation in retrieved metadata; `REFERENCE.md` documents the raw source APIs.
 - **create-pr** — create a pull request following the CK team's PR template (motivation, technical details, test plan, test result, submission checklist).
 - **ck-profile** — profile a Composable Kernel target two ways: static compile-time resource analysis (VGPR/AGPR/SGPR, occupancy ceiling, spills, scratch, LDS) and dynamic runtime profiling with rocprofv3 (kernel timing, HBM traffic, L2 hit ratio, occupancy, VALU). Per-arch hardware specs (`gpu_specs.py`) drive a device-spec block and an occupancy-util ratio, with a roofline-lite compute/memory/latency bottleneck verdict.
 
-`research` and `ck-profile` carry an `argument-hint` to guide `/`-invocation autocomplete.
+`research`, `survey`, and `ck-profile` carry an `argument-hint` to guide `/`-invocation autocomplete.
 
 ## Third-party (mattpocock/skills, MIT)
 
