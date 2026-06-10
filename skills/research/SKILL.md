@@ -24,7 +24,9 @@ Explore a problem space through guided questioning before researching.
 3. Present findings with citations. Ask a follow-up question to go deeper if appropriate.
 4. Iterate until the requester is satisfied.
 
-**One question at a time.** Do not batch multiple clarifying questions into a single message. Each round is one question, one answer. This forces you to listen to the response before deciding what to ask next.
+**Delivery depends on the requester.** When a human invokes the skill, ask each clarifying question through the AskUserQuestion interactive prompt, with concrete selectable options so the requester can pick rather than free-type. When an agent invokes the skill (agent-to-agent), ask in prose inside the reply message — agents cannot answer an interactive prompt. Detect the requester from context: a teammate or delegated subagent message is agent-to-agent; a direct user turn is human.
+
+**One question at a time.** Do not batch multiple clarifying questions into a single message or a single prompt. Each round is one question, one answer. This forces you to listen to the response before deciding what to ask next.
 
 ### Direct
 
@@ -128,6 +130,7 @@ When this skill is used between agents (e.g., implementer asking professor):
 - **Be terse.** Optimize for information density and low round-trip count.
 - **Direct mode is the default** for agent-to-agent unless the sending agent explicitly requests socratic or deep.
 - **Clarifying questions are expensive** between agents (each is a message round-trip). Only ask when the answer literally cannot be determined without more information.
+- **Ask in prose, never via an interactive prompt.** The AskUserQuestion popup is for humans only; a calling agent cannot respond to it. Put any clarifying question in the reply text.
 - **All four safeguards still apply.** Evidence requirements and rigor do not relax just because the requester is an agent.
 
 ## Quick Reference
@@ -145,6 +148,8 @@ When this skill is used between agents (e.g., implementer asking professor):
 ## Common Mistakes
 
 **Batching clarifying questions.** In socratic mode, ask one question per message. Do not list 5 questions at once. Listen to the answer before deciding the next question.
+
+**Wrong clarification modality.** For a human requester, socratic questions go through the AskUserQuestion prompt with selectable options, not prose. For an agent requester, they go in prose — an agent cannot answer a popup.
 
 **Skipping citations.** Every factual claim needs a source. "I believe X" without a citation violates the evidence requirement. Either find a source or label it "unverified."
 
