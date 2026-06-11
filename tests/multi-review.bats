@@ -39,3 +39,10 @@ teardown() {
     grep -qi 'GPU performance' "$ref"
     grep -qi 'Code quality' "$ref"
 }
+
+@test "SKILL.md declares required frontmatter" {
+    skill="${BATS_TEST_DIRNAME}/../skills/multi-review/SKILL.md"
+    grep -q '^name: multi-review$' "$skill"
+    grep -q '^argument-hint:' "$skill"
+    grep -q '^description:' "$skill"
+}
