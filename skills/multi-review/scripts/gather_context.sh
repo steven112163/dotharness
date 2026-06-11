@@ -9,11 +9,12 @@ set -euo pipefail
 
 PR_NUMBER="${1:-}"
 REVIEW_DIR="${REVIEW_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/multi-review-XXXXXX")}"
+mkdir -p "$REVIEW_DIR"
 
 split_chunks() {
     local diff="$1"
     [ -s "$diff" ] || return 0
-    (cd "$REVIEW_DIR" && csplit -sz -f chunk- -- "$diff" '/^diff --git/' '{*}')
+    csplit -sz -f "$REVIEW_DIR/chunk-" -- "$diff" '/^diff --git/' '{*}'
     : >"$REVIEW_DIR/chunks.tsv"
     local c path
     for c in "$REVIEW_DIR"/chunk-*; do

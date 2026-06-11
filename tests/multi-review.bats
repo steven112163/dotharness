@@ -33,6 +33,15 @@ teardown() {
     grep -q $'a.cpp\t' "$REVIEW_DIR/chunks.tsv"
 }
 
+@test "local mode works with a relative REVIEW_DIR" {
+    REVIEW_DIR="rel-out"
+    export REVIEW_DIR
+    run bash "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [ -s "$REPO/rel-out/diff.txt" ]
+    grep -q $'a.cpp\t' "$REPO/rel-out/chunks.tsv"
+}
+
 @test "REFERENCE.md covers the three lenses" {
     ref="${BATS_TEST_DIRNAME}/../skills/multi-review/REFERENCE.md"
     grep -qi 'Correctness & numerics' "$ref"
