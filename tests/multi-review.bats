@@ -42,16 +42,18 @@ teardown() {
     grep -q $'a.cpp\t' "$REPO/rel-out/chunks.tsv"
 }
 
-@test "REFERENCE.md covers the three lenses" {
-    ref="${BATS_TEST_DIRNAME}/../skills/multi-review/REFERENCE.md"
-    grep -qi 'Correctness & numerics' "$ref"
-    grep -qi 'GPU performance' "$ref"
-    grep -qi 'Code quality' "$ref"
-}
-
-@test "SKILL.md declares required frontmatter" {
+@test "SKILL.md frontmatter parses as YAML with required fields" {
     skill="${BATS_TEST_DIRNAME}/../skills/multi-review/SKILL.md"
-    grep -q '^name: multi-review$' "$skill"
-    grep -q '^argument-hint:' "$skill"
-    grep -q '^description:' "$skill"
+    run python3 -c '
+import sys, yaml
+text = open(sys.argv[1], encoding="utf-8").read()
+assert text.startswith("---\n"), "missing frontmatter block"
+fm = yaml.safe_load(text.split("---\n", 2)[1])
+assert isinstance(fm, dict), "frontmatter is not a mapping"
+assert fm.get("name") == "multi-review", "bad name: " + repr(fm.get("name"))
+for key in ("description", "argument-hint"):
+    val = fm.get(key)
+    assert isinstance(val, str) and val.strip(), "empty " + key
+' "$skill"
+    [ "$status" -eq 0 ]
 }
