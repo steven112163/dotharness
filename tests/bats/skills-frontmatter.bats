@@ -5,7 +5,7 @@
 # present, must be a non-empty string.
 
 @test "all skills have valid SKILL.md frontmatter" {
-    skills_dir="${BATS_TEST_DIRNAME}/../skills"
+    skills_dir="${BATS_TEST_DIRNAME}/../../skills"
     run python3 -c '
 import sys, os, glob, yaml
 root = sys.argv[1]

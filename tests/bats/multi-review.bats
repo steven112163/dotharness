@@ -2,7 +2,7 @@
 # Tests for skills/multi-review/scripts/gather_context.sh (local mode) and skill files.
 
 setup() {
-    SCRIPT="${BATS_TEST_DIRNAME}/../skills/multi-review/scripts/gather_context.sh"
+    SCRIPT="${BATS_TEST_DIRNAME}/../../skills/multi-review/scripts/gather_context.sh"
     REPO="$(mktemp -d "${BATS_TMPDIR}/mr-repo-XXXXXX")"
     cd "$REPO" || return 1
     git init -q -b main

@@ -3,7 +3,7 @@
 # The hook reads a tool-call JSON on stdin and exits 2 to block, 0 to allow.
 
 setup() {
-    HOOK="${BATS_TEST_DIRNAME}/../hooks/block-dangerous.sh"
+    HOOK="${BATS_TEST_DIRNAME}/../../hooks/block-dangerous.sh"
 }
 
 # check <tool> <value>: feed the hook a tool-call payload and return its exit code.

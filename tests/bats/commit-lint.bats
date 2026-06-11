@@ -4,7 +4,7 @@
 # commit message, 0 to allow or skip (non-commit, amend-reuse, no message).
 
 setup() {
-    HOOK="${BATS_TEST_DIRNAME}/../hooks/commit-lint.sh"
+    HOOK="${BATS_TEST_DIRNAME}/../../hooks/commit-lint.sh"
 }
 
 # commit <command>: feed the hook a Bash tool-call with the given command.

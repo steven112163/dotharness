@@ -1,7 +1,7 @@
 # Tests
 
-Two suites live here: bats for the shell hooks and skill scripts, pytest for the
-ck-profile Python helpers.
+Two suites live here: bats for the shell hooks and skill scripts (under
+`tests/bats/`), pytest for the ck-profile Python helpers (under `tests/python/`).
 
 ## bats (shell)
 
@@ -19,7 +19,7 @@ ck-profile Python helpers.
 - `multi-review.bats` — the `gather_context.sh` context builder (local-mode diff
   capture, chunk split, relative `REVIEW_DIR`).
 
-Run with `bats tests/`. CI runs the same suite (the `bats` job installs
+Run with `bats tests/bats/`. CI runs the same suite (the `bats` job installs
 `bats`/`jq`/`python3-yaml` on the runner).
 
 ## pytest (Python)
@@ -29,4 +29,5 @@ the pure helpers in `skills/ck-profile/scripts/` (hardware-spec lookups, build-l
 parsing and VGPR/spill math, bottleneck classification and stats). `conftest.py`
 puts the script directory on `sys.path` so they import by name.
 
-Run with `pytest` (config in `pyproject.toml`). CI runs it in the `pytest` job.
+Run with `pytest` (config in `pyproject.toml` points at `tests/python`). CI runs
+it in the `pytest` job.
