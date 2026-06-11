@@ -24,10 +24,12 @@ BUILD_DIR=${BUILD_DIR:-build}
 
 usage() {
     cat >&2 <<EOF
-Usage: $(basename "$0") [--scratch] [--minimal] [target...] [-- <extra cmake args>]
+Usage: $(basename "$0") [--scratch] [--minimal] [gfx...] [target...] [-- <extra cmake args>]
 
   --scratch     wipe $BUILD_DIR/ and configure from zero (default: incremental)
   --minimal     pass --minimal to cmake-ck-dev.sh (fewer instances, faster build)
+  gfx...        GPU arch (e.g. gfx942); same as ARCH=. Needs --scratch to take
+                effect on an already-configured tree. Default: auto-detect.
   target...     ninja targets to build (default: all)
   -- <args>     extra args forwarded to cmake-ck-dev.sh on (re)configure
                 (each must be space-free; they are re-split inside the container)
@@ -56,6 +58,7 @@ while [ $# -gt 0 ]; do
         echo "Unknown option: $1" >&2
         usage
         ;;
+    gfx*) ARCH="$1" ;;
     *) TARGETS+=("$1") ;;
     esac
     shift
