@@ -32,3 +32,10 @@ teardown() {
     [ -f "$REVIEW_DIR/chunks.tsv" ]
     grep -q $'a.cpp\t' "$REVIEW_DIR/chunks.tsv"
 }
+
+@test "REFERENCE.md covers the three lenses" {
+    ref="${BATS_TEST_DIRNAME}/../skills/multi-review/REFERENCE.md"
+    grep -qi 'Correctness & numerics' "$ref"
+    grep -qi 'GPU performance' "$ref"
+    grep -qi 'Code quality' "$ref"
+}
