@@ -8,20 +8,22 @@ Personal monorepo for Claude Code skills, rules, and configuration.
 skills/                → own skills, symlinked to ~/.claude/skills/        (skills/README.md)
   dev-team/            → agent team orchestration (lead spawns native agents as teammates)
   research/            → multi-mode research with anti-sycophancy safeguards
+  survey/              → literature survey with grounded citations
   create-pr/           → PR creation with CK team template
   ck-profile/          → static + runtime GPU profiling of a CK target
+  multi-review/        → multi-angle code review, consolidated and validated
 agents/                → native subagents (worker roles)                   (agents/README.md)
 hooks/                 → lifecycle hook scripts                            (hooks/README.md)
 rules/                 → user-level rules loaded by Claude Code            (rules/README.md)
 output-styles/         → output styles                                     (output-styles/README.md)
 bin/                   → helper scripts, symlinked to ~/bin/ (on PATH)     (bin/README.md)
-tests/                 → bats tests for hooks                              (tests/README.md)
+tests/                 → bats + pytest suites (tests/bats, tests/python)   (tests/README.md)
 third-party/
   mattpocock-skills/   → git submodule (engineering + productivity skills)
 statusline.sh          → compact status line, symlinked to ~/.claude/
 setup.sh               → symlinks, hooks, output style, plugins, pre-commit provisioning
 .pre-commit-config.yaml → lint/format/secret gate
-.github/workflows/ci.yml → CI: pre-commit + bats + full-history gitleaks
+.github/workflows/ci.yml → CI: pre-commit + bats + pytest + full-history gitleaks
 ```
 
 ## Setup
@@ -45,7 +47,7 @@ Each component is documented next to its code:
 - [Hooks](hooks/README.md) — lifecycle hooks and Teams notification setup
 - [Output styles](output-styles/README.md) — the `dotharness` voice
 - [Binaries](bin/README.md) — `bin/` helper scripts on `PATH`
-- [Tests](tests/README.md) — the bats suite for `block-dangerous.sh`
+- [Tests](tests/README.md) — the bats hook/script suites and the pytest suite for the ck-profile helpers
 
 ## Pre-commit and CI
 
@@ -62,7 +64,7 @@ A `pre-commit` gate runs lint, format, and secret checks on every commit, and a 
 
 `setup.sh` provisions a repo-local `.venv`, installs `pre-commit` into it, and registers the git hook. Run the gate manually with `.venv/bin/pre-commit run --all-files`. The `actionlint` hook runs in a container, so it needs a running Docker daemon.
 
-**CI (`.github/workflows/ci.yml`).** Three jobs on push and pull request: `pre-commit` (all hooks on all files), `bats` (installs `bats`/`jq`, runs the [hook tests](tests/README.md)), and `gitleaks` (full-history secret scan with `fetch-depth: 0`, catching secrets the staged-only pre-commit hook cannot see).
+**CI (`.github/workflows/ci.yml`).** Four jobs on push and pull request: `pre-commit` (all hooks on all files), `bats` (installs `bats`/`jq`/`python3-yaml`, runs the shell [tests](tests/README.md) in `tests/bats/`), `pytest` (runs the Python [tests](tests/README.md) in `tests/python/`), and `gitleaks` (full-history secret scan with `fetch-depth: 0`, catching secrets the staged-only pre-commit hook cannot see).
 
 ## Statusline
 
