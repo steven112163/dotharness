@@ -18,10 +18,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install bats and jq
-        run: sudo apt-get update && sudo apt-get install -y bats jq
+      - name: Install bats, jq, and PyYAML
+        run: sudo apt-get update && sudo apt-get install -y bats jq python3-yaml
       - name: Run hook tests
         run: bats tests/
+
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Install pytest
+        run: python -m pip install --upgrade pip pytest
+      - name: Run Python tests
+        run: pytest
 
   gitleaks:
     runs-on: ubuntu-latest
