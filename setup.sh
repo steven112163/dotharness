@@ -143,6 +143,15 @@ link_items "$REPO_DIR/bin" "$BIN_DIR"
 # --- Statusline ---
 echo "Statusline:"
 link "$REPO_DIR/statusline.sh" "$CLAUDE_DIR/statusline.sh"
+if [ -f "$SETTINGS" ] && command -v jq &>/dev/null; then
+    if jq -e '.statusLine.command == "bash ~/.claude/statusline.sh"' "$SETTINGS" >/dev/null 2>&1; then
+        echo "  ok  statusLine"
+    else
+        jq '.statusLine = {"type": "command", "command": "bash ~/.claude/statusline.sh"}' \
+            "$SETTINGS" >"${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
+        echo "  set statusLine"
+    fi
+fi
 
 # --- Pre-commit (repo-local lint/format gate in a venv; tools managed by pre-commit) ---
 echo "Pre-commit:"
