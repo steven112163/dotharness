@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+# Shared helpers for ckBuild and ckRun. SOURCED, not executed: defines functions
+# and cluster-wide defaults only, with no top-level side effects so callers keep
+# control of `set` options and exit behavior.
+
+# Idempotent: sourcing twice (e.g. via nested scripts) must not redefine or error.
+[ -n "${_CKCOMMON_SOURCED:-}" ] && return 0
+_CKCOMMON_SOURCED=1
+
+# Cluster-wide defaults. Callers may override any via env before sourcing.
+IMAGE=${IMAGE:-rocm/composable_kernel:ck_ub24.04_rocm7.1.1_develop}
+CONSTRAINT=${CONSTRAINT:-MARKHAM}
+CPUS=${CPUS:-128}
+SRUN_TIME=${SRUN_TIME:-04:00:00}
+SRUN_EXTRA=${SRUN_EXTRA:-}
+MAX_NODE_RETRIES=${MAX_NODE_RETRIES:-5}
+# Exit code the remote program uses to signal "shared repo not visible on this
+# node" (EX_TEMPFAIL); _srun_dispatch excludes the node and retries on this code.
+REPO_MISSING_RC=75
+# Where the image tarball lives. Shared home, so every node can docker-load it.
+IMAGE_DIR=${IMAGE_DIR:-$HOME/images}
+# ccache dir. The image defaults to /root/.cache/ccache, unwritable to the
+# --user uid; point it at writable shared home (also persists across srun nodes).
+CCACHE_DIR=${CCACHE_DIR:-$HOME/.cache/ckBuild-ccache}
+# Where generated passwd/group files live (regenerated per run, per uid).
+ACCT_DIR=${ACCT_DIR:-$HOME/.cache/ckCommon}
+
+# Map a gfx arch to a Slurm GRES request. The :1 count is deliberate: ckRun is
+# single-GPU; a multi-GPU sweep overrides GRES wholesale. Extend as new parts appear.
+_gres_for_arch() {
+    case "$1" in
+    gfx942) echo "gpu:gfx942-mi300x:1" ;;
+    gfx950) echo "gpu:gfx950-mi350x:1" ;;
+    gfx90a) echo "gpu:gfx90a-mi210x:1" ;;
+    *) echo "" ;;
+    esac
+}
+
+# Turn an image ref into a filename-safe tarball basename. The single source of
+# truth shared by save (login) and load (node) so the paths always agree.
+_sanitized_image_tag() {
+    echo "${1:-$IMAGE}" | tr '/:' '__'
+}
+
+# On the controlling host: save the image to $IMAGE_DIR/<tag>.tar if absent.
+# Idempotent; the daemon already has the image (we built/pulled it on login).
+_ensure_image_tar() {
+    local image="${1:-$IMAGE}" tar
+    tar="$IMAGE_DIR/$(_sanitized_image_tag "$image").tar"
+    if [ -f "$tar" ]; then
+        return 0
+    fi
+    echo "Saving image to $tar (one-time, ~tens of GB) ..."
+    mkdir -p "$IMAGE_DIR"
+    # Save to a temp file and mv into place only on success, so an interrupted
+    # save never leaves a partial .tar that a later run trusts and docker-loads.
+    local tmp
+    tmp=$(mktemp "$tar.XXXXXX") || return 1
+    if ! docker save "$image" -o "$tmp"; then
+        echo "ERROR: docker save '$image' failed; is it on this daemon?" >&2
+        rm -f "$tmp"
+        return 1
+    fi
+    mv -f "$tmp" "$tar"
+}
+
+# Build the STATIC docker run flags into the global array DOCKER_FLAGS. These are
+# identical on every node (shared home, shared identity), so the srun path can
+# serialize them with printf %q and replay them node-side. Per-host flags (the
+# account-file binds and GPU group-adds) are added separately by _ACCT_SETUP_SH,
+# which must run where docker runs. $1: 1 to expose the GPU, 0 for CPU-only.
+# $2: the in-container working directory.
+_docker_static_flags() {
+    local gpu="$1" workdir="$2"
+    # Create the ccache dir on the host so the bind-mount target exists and is
+    # owned by the user (docker would otherwise create it root-owned).
+    mkdir -p "$CCACHE_DIR"
+    # --user keeps repo artifacts owned by the caller, not root.
+    # --cpus caps the container so `nproc` inside reflects the reservation, not
+    # the whole host (the build's -j math relies on this).
+    DOCKER_FLAGS=(
+        --rm
+        --user "$(id -u):$(id -g)"
+        # Same repo path inside and out: CK bakes absolute paths and the repo
+        # lives at an identical path on every node (shared home).
+        -v "$REPO:$REPO" -w "$workdir"
+        -e "HOME=$HOME" -e IN_CONTAINER=1
+        # ccache dir lives outside $REPO: bind-mount it and point ccache at it,
+        # overriding the image's unwritable /root/.cache/ccache default.
+        -v "$CCACHE_DIR:$CCACHE_DIR" -e "CCACHE_DIR=$CCACHE_DIR"
+        --security-opt seccomp=unconfined
+        --cpus "$CPUS"
+    )
+    if [ "$gpu" -eq 1 ]; then
+        # Device/cap set verified working via dockerRun: bind-mount the device
+        # dirs (the proven ROCm pattern). The previous duplicate --device flags
+        # were redundant under these binds and are dropped.
+        DOCKER_FLAGS+=(--privileged --cap-add=SYS_PTRACE -v /dev/dri:/dev/dri -v /dev/kfd:/dev/kfd)
+    fi
+}
+
+# Single source of truth for per-host container setup, run wherever docker runs
+# (inline for local mode, node-side for srun) so the two paths cannot diverge.
+# It builds merged passwd/group files for the caller — the image's accounts plus
+# this user's getent entry — so LDAP/SSSD uids resolve to a name inside the
+# container (the flat /etc/passwd lacks them). render/video group-adds are
+# resolved here too, with node-local gids, only when the GPU is exposed. Inputs:
+# $IMAGE, $ACCT_DIR, $_ACCT_GPU. Output: the flag string $_ACCT_FLAGS.
+read -r -d '' _ACCT_SETUP_SH <<'SH' || true
+_u=$(id -u); _g=$(id -g)
+mkdir -p "$ACCT_DIR"
+_pw="$ACCT_DIR/passwd-$_u"; _gr="$ACCT_DIR/group-$_u"
+# Write to a temp file and mv into place so a killed `docker run` cat never
+# leaves a partial account file that a later run would trust.
+_t=$(mktemp "$_pw.XXXXXX") && docker run --rm "$IMAGE" cat /etc/passwd >"$_t" && mv -f "$_t" "$_pw"
+_t=$(mktemp "$_gr.XXXXXX") && docker run --rm "$IMAGE" cat /etc/group >"$_t" && mv -f "$_t" "$_gr"
+cut -d: -f3 "$_pw" | grep -qx "$_u" || getent passwd "$_u" >>"$_pw"
+cut -d: -f3 "$_gr" | grep -qx "$_g" || getent group "$_g" >>"$_gr"
+_ACCT_FLAGS="-v $_pw:/etc/passwd:ro -v $_gr:/etc/group:ro"
+if [ "${_ACCT_GPU:-0}" -eq 1 ]; then
+    for _grp in render video; do
+        _gid=$(getent group "$_grp" | cut -d: -f3) || _gid=""
+        [ -n "$_gid" ] && _ACCT_FLAGS="$_ACCT_FLAGS --group-add $_gid"
+    done
+fi
+SH
+
+# Emit a node-side snippet that loads the image if absent, sets up the account
+# files, then runs REMOTE_PROG inside a --rm container. $1: gpu bit, $2: workdir,
+# $3: the inner program. Host vars expand here; the inner program is passed
+# through literally to the node.
+_run_in_container() {
+    local gpu="$1" workdir="$2" remote_prog="$3" tar static
+    tar="$IMAGE_DIR/$(_sanitized_image_tag "$IMAGE").tar"
+    _docker_static_flags "$gpu" "$workdir"
+    static=$(printf '%q ' "${DOCKER_FLAGS[@]}")
+    # The inner program runs as the container's argv, single-quoted; escape any
+    # single quotes within it so the node-side bash -c receives it intact. The
+    # '\'' idiom closes the quote, emits an escaped literal quote, then reopens.
+    local escaped=${remote_prog//\'/\'\\\'\'}
+    cat <<EOF
+docker image inspect "$IMAGE" >/dev/null 2>&1 || docker load -i "$tar"
+IMAGE="$IMAGE"; ACCT_DIR="$ACCT_DIR"; _ACCT_GPU=$gpu
+$_ACCT_SETUP_SH
+docker run $static \$_ACCT_FLAGS "$IMAGE" bash -c '$escaped'
+EOF
+}
+
+# Run a program in a --rm container on THIS host (no srun). $1: gpu bit, $2:
+# workdir, $3: the inner program. For the shared-server case: the image is
+# auto-pulled by docker run if absent (no tarball). Returns the program's rc.
+_docker_run_local() {
+    local gpu="$1" workdir="$2" remote_prog="$3" _ACCT_GPU="$1" _ACCT_FLAGS=""
+    _docker_static_flags "$gpu" "$workdir"
+    eval "$_ACCT_SETUP_SH"
+    # _ACCT_FLAGS holds account-file paths under $ACCT_DIR (no spaces); the
+    # word-split is intentional.
+    # shellcheck disable=SC2086
+    docker run "${DOCKER_FLAGS[@]}" $_ACCT_FLAGS "$IMAGE" bash -c "$remote_prog"
+}
+
+# Dispatch a program via srun with node-exclude retry. Reads GPU/GRES/CONSTRAINT/
+# CPUS/SRUN_TIME/SRUN_EXTRA/MAX_NODE_RETRIES/REPO_MISSING_RC. Returns the program's
+# rc. On REPO_MISSING_RC it excludes the offending node and retries (some MARKHAM
+# nodes have a local /home without the shared repo).
+_srun_dispatch() {
+    local remote_prog="$1"
+    local GRES_FLAG=""
+    if [ "$GPU" -eq 1 ]; then
+        [ -z "$GRES" ] && {
+            echo "ERROR: GPU=1 but no GRES mapping for arch '$ARCH'; set GRES=gpu:...:1." >&2
+            return 1
+        }
+        GRES_FLAG="--gres=$GRES"
+    fi
+    local CON_FLAG=""
+    [ -n "$CONSTRAINT" ] && CON_FLAG="--constraint=$CONSTRAINT"
+    local EXCLUDE="" rc=0
+    local local_log
+    local_log=$(mktemp) || {
+        echo "ERROR: mktemp failed; cannot capture srun output." >&2
+        return 1
+    }
+    local _
+    for _ in $(seq "$MAX_NODE_RETRIES"); do
+        local EX_FLAG=""
+        [ -n "$EXCLUDE" ] && EX_FLAG="--exclude=$EXCLUDE"
+        echo "Dispatching via srun (${GRES_FLAG:-no-gpu} ${CON_FLAG:-no-constraint} ${EX_FLAG:+$EX_FLAG }--cpus-per-task=$CPUS --time=$SRUN_TIME) ..."
+        # shellcheck disable=SC2086
+        srun $GRES_FLAG $CON_FLAG $EX_FLAG --cpus-per-task="$CPUS" --time="$SRUN_TIME" $SRUN_EXTRA bash -c "$remote_prog" 2>&1 | tee "$local_log"
+        rc=${PIPESTATUS[0]}
+        [ "$rc" -ne "$REPO_MISSING_RC" ] && break
+        local bad
+        bad=$(grep -oE 'repo not visible on [^ ]+' "$local_log" | awk '{print $5}' | head -1)
+        [ -z "$bad" ] && break
+        EXCLUDE="${EXCLUDE:+$EXCLUDE,}$bad"
+        echo "  node $bad lacks the repo; retrying excluding: $EXCLUDE" >&2
+    done
+    rm -f "$local_log"
+    return "$rc"
+}

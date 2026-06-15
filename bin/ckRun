@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run an arbitrary command on a GPU inside the CK docker image, in a --rm
+# container. Companion to ckBuild: ckBuild produces binaries, ckRun executes them
+# (or anything else) on a GPU with the device exposed.
+#
+# Backend auto-detected (override with MODE=direct|docker|srun), same as ckBuild:
+#   - srun   : login node -> srun a GPU node, run in the image via docker run --rm.
+#   - docker : shared GPU server with docker -> --rm container here (GPU exposed).
+#   - direct : inside the dev container, or bare local ROCm -> run inline.
+#
+# The container mounts the repo at its real path and runs as the calling user, so
+# the command sees the build tree and any output it writes is owned by you.
+#
+#   ckRun [--arch gfx...] [--cd <dir>] <cmd...>
+#
+# Everything after the options is the command, run verbatim inside the container.
+# Examples:
+#   ckRun --arch gfx942 build/bin/ckProfiler gemm ...
+#   ckRun --arch gfx942 rocminfo
+#   ckRun --arch gfx942 bash -c 'ls build/bin | head'
+
+# shellcheck source=bin/ckCommon disable=SC1091
+source "$(dirname "$(readlink -f "$0")")/ckCommon"
+
+REPO=${REPO:-$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")}
+ARCH=${ARCH:-}
+WORKDIR=${WORKDIR:-}
+# ckRun executes binaries on a GPU, so it defaults to exposing the device; allow
+# GPU=0 for the occasional CPU-only command, mirroring ckBuild's knob.
+GPU=${GPU:-1}
+GRES=${GRES:-}
+MODE=${MODE:-}
+
+usage() {
+    cat >&2 <<EOF
+Usage: $(basename "$0") [--arch gfx...] [--cd <dir>] <cmd...>
+
+  --arch gfx... GPU arch (e.g. gfx942); same as ARCH=. Required in srun mode
+                (login node has no GPU to probe); ignored in direct mode.
+  --cd <dir>    working directory inside the container (default: repo root)
+  <cmd...>      command to run in the container (everything after the options)
+
+Env overrides: IMAGE=$IMAGE  REPO=$REPO  ARCH=<gfx...>  WORKDIR=<dir>
+               GRES=<gpu:...:1>  CONSTRAINT=$CONSTRAINT
+               CPUS=$CPUS  SRUN_TIME=$SRUN_TIME  SRUN_EXTRA=<srun args>
+               IMAGE_DIR=$IMAGE_DIR
+EOF
+    exit 1
+}
+
+# Parse leading options, then treat the rest as the command. Stop at the first
+# non-option (or an explicit --) so command flags are not mistaken for ours.
+while [ $# -gt 0 ]; do
+    case "$1" in
+    -h | --help) usage ;;
+    --arch)
+        [ $# -ge 2 ] || {
+            echo "ERROR: --arch needs a value" >&2
+            usage
+        }
+        ARCH="$2"
+        shift 2
+        ;;
+    --cd)
+        [ $# -ge 2 ] || {
+            echo "ERROR: --cd needs a value" >&2
+            usage
+        }
+        WORKDIR="$2"
+        shift 2
+        ;;
+    --)
+        shift
+        break
+        ;;
+    *) break ;;
+    esac
+done
+
+[ $# -ge 1 ] || {
+    echo "ERROR: no command given" >&2
+    usage
+}
+CMD=("$@")
+
+# Pick the backend, mirroring ckBuild: srun (login node) -> dispatch a job. Else
+# already inside the dev container -> run inline. Else a docker host (shared GPU
+# server) -> --rm container here. Else bare local ROCm -> inline. srun first so a
+# login node dispatches; /.dockerenv before docker so we don't nest a container.
+if [ -z "$MODE" ]; then
+    if command -v srun >/dev/null 2>&1; then
+        MODE=srun
+    elif [ -f /.dockerenv ]; then
+        MODE=direct
+    elif command -v docker >/dev/null 2>&1; then
+        MODE=docker
+    elif [ -x /opt/rocm/llvm/bin/clang++ ]; then
+        MODE=direct
+    else
+        echo "ERROR: no run backend found (no Slurm, no docker," >&2
+        echo "  no local /opt/rocm). Set MODE=direct|docker|srun explicitly." >&2
+        exit 1
+    fi
+fi
+echo "Backend: $MODE"
+
+# srun dispatches from the login node (no GPU to probe), so the arch must be given
+# to map the GRES. direct/docker already sit on a GPU host; arch is not needed.
+if [ "$MODE" = srun ] && [ "$GPU" -eq 1 ]; then
+    if [ -z "$ARCH" ]; then
+        echo "ERROR: srun runs dispatch from the login node (no GPU to probe);" >&2
+        echo "  pass the arch, e.g. 'ckRun --arch gfx942 ...' or ARCH=gfx942." >&2
+        exit 1
+    fi
+    [ -z "$GRES" ] && GRES=$(_gres_for_arch "$ARCH")
+fi
+
+WORKDIR=${WORKDIR:-$REPO}
+
+# Serialize the user command so spaces, globs, and quoting survive node-side
+# re-parsing. printf %q over the argv yields a string that re-expands to the
+# exact same words under bash -c.
+CMD_STR=$(printf '%q ' "${CMD[@]}")
+
+REMOTE_PROG=$(
+    cat <<EOF
+set -o pipefail
+if [ ! -e "$REPO/script/cmake-ck-dev.sh" ]; then
+    echo "ERROR: repo not visible on \$(hostname -s) ($REPO missing)." >&2
+    echo "  Landed on a node without your shared home; srun mode auto-retries." >&2
+    exit $REPO_MISSING_RC
+fi
+cd "$WORKDIR"
+$CMD_STR
+EOF
+)
+
+case "$MODE" in
+direct)
+    # Already inside the dev container on a GPU host: run inline, no docker wrap.
+    bash -c "$REMOTE_PROG"
+    ;;
+docker)
+    # --rm container on this host; GPU exposed by default (running binaries needs
+    # the device), CPU-only when GPU=0.
+    _docker_run_local "$GPU" "$WORKDIR" "$REMOTE_PROG"
+    ;;
+srun)
+    _ensure_image_tar "$IMAGE" || exit 1
+    _srun_dispatch "$(_run_in_container "$GPU" "$WORKDIR" "$REMOTE_PROG")"
+    ;;
+*)
+    echo "ERROR: unknown MODE '$MODE' (want direct|docker|srun)." >&2
+    exit 1
+    ;;
+esac

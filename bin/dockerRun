@@ -18,17 +18,31 @@ if docker ps -a --format '{{.Names}}' | grep -qx "$name"; then
     exit 0
 fi
 
+# LDAP/SSSD users aren't in the flat /etc/passwd, so the --user uid would be
+# nameless inside the container (no home/shell), and attach spawns a shell that
+# skips ~/.bashrc. Generate merged account files (image entries + our getent
+# entry) via the shared helper in ckCommon, so this and the ckBuild/ckRun path
+# cannot diverge. The helper sets _ACCT_FLAGS (the passwd/group bind-mounts plus,
+# when _ACCT_GPU=1, the render/video group-adds).
+# IMAGE feeds _ACCT_SETUP_SH (consumed via the eval below), not unused.
+# shellcheck disable=SC2034
+IMAGE="$image"
+# shellcheck source=bin/ckCommon disable=SC1091
+source "$(dirname "$(readlink -f "$0")")/ckCommon"
+_ACCT_GPU=1 _ACCT_FLAGS=""
+eval "$_ACCT_SETUP_SH"
+
+# _ACCT_FLAGS holds account-file paths under $ACCT_DIR (no spaces); the word-split
+# is intentional.
+# shellcheck disable=SC2086
 docker run -d -it \
     --security-opt seccomp=unconfined --privileged \
     --network=host \
     --cap-add=SYS_PTRACE \
     --name "$name" \
     --user "$(id -u):$(id -g)" \
-    --group-add "$(getent group render | cut -d: -f3)" \
-    --group-add "$(getent group video | cut -d: -f3)" \
+    $_ACCT_FLAGS \
     -v "$HOME:$HOME" \
-    -v /etc/passwd:/etc/passwd:ro \
-    -v /etc/group:/etc/group:ro \
     -v /dev/dri:/dev/dri \
     -v /dev/kfd:/dev/kfd \
     -w "$HOME" \

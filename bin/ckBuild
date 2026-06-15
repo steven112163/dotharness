@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build a Composable Kernel (CK) tree, auto-detecting how to reach a build node.
+# Build a Composable Kernel (CK) tree inside the CK docker image, auto-detecting
+# how to reach a build node.
 #
 # Two build shapes, one command:
 #   - incremental (default): reuse the existing build/ tree, just rebuild. With
@@ -11,43 +12,36 @@ set -euo pipefail
 #     changing the GPU arch, toolchain, or cmake options, where an incremental
 #     reconfigure is unsafe.
 #
-# Backend is auto-detected (override with MODE=direct|srun|docker):
-#   - direct : already on a build node. Chosen inside a container (/.dockerenv)
-#              or inside a Slurm allocation ($SLURM_JOB_ID set), or as the final
-#              fallback when /opt/rocm is present locally. Runs commands inline.
-#   - srun   : a Slurm login node (srun present). Dispatches the whole
-#              configure+build as ONE srun allocation, so the queue is hit once.
-#              Requests a GPU node (GPU=1) for a uniform ROCm toolchain; pass an
-#              explicit arch. GPU=0 builds on a CPU node (cross-compile) instead.
-#   - docker : a plain docker host (no Slurm). Dispatches into the dev container
-#              via `docker exec`, creating it on demand. The other-server flow.
+# The build runs in a --rm container off the CK image, so the toolchain comes
+# from the image (self-consistent gcc/amdclang++/ccache) rather than the host.
+# That removes host-toolchain skew. CK cross-compiles, so the build needs no GPU.
+#
+# Backend is auto-detected (override with MODE=direct|docker|srun):
+#   - srun   : a Slurm login node (srun present). Dispatches the build as ONE
+#              srun allocation on a CPU node, running it inside the image via
+#              docker run --rm (image distributed as a save/load tarball).
+#   - docker : a shared server with docker but no srun. Runs the build in a
+#              --rm container on this host (image auto-pulled if absent).
+#   - direct : already inside the dev container (/.dockerenv), or a bare box with
+#              local /opt/rocm. Runs inline (the surrounding env IS the toolchain).
+#
+# A login-node container without srun cannot be told apart from a shared-server
+# container; both auto-detect to direct. Force MODE=srun there to require srun.
 #
 # The repo path is assumed identical on the build node (shared filesystem on the
 # cluster, bind mount in the container). Override anything via env vars.
 
-CONTAINER=${CONTAINER:-styuan_dev}
-IMAGE=${IMAGE:-rocm/composable_kernel:ck_ub24.04_rocm7.1.1_develop}
+# shellcheck source=bin/ckCommon disable=SC1091
+source "$(dirname "$(readlink -f "$0")")/ckCommon"
+
 REPO=${REPO:-$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")}
 ARCH=${ARCH:-}
 BUILD_DIR=${BUILD_DIR:-build}
-# TheRock pip ROCm venv toolchain on shared home; auto-created. Empty = /opt/rocm.
-VENV=${VENV:-$HOME/rocm-venv}
-ROCM_PKG=${ROCM_PKG:-rocm[libraries,devel]==7.13.0}
-ROCM_INDEX=${ROCM_INDEX:-https://repo.amd.com/rocm/whl/gfx94X-dcgpu/}
-# ccache has no pip wheel; fetch the upstream static binary into the venv bin.
-CCACHE_VERSION=${CCACHE_VERSION:-4.10.2}
-# GPU=1: build on a GPU node (--gres). GPU=0: CPU-only node (no --gres).
-GPU=${GPU:-1}
+# GPU=0: build on a CPU node (default; container supplies the toolchain, CK
+# cross-compiles). GPU=1: build on a GPU node (--gres).
+GPU=${GPU:-0}
 GRES=${GRES:-}
-CONSTRAINT=${CONSTRAINT:-MARKHAM}
-CPUS=${CPUS:-128}
-SRUN_TIME=${SRUN_TIME:-04:00:00}
-SRUN_EXTRA=${SRUN_EXTRA:-}
 MODE=${MODE:-}
-MAX_NODE_RETRIES=${MAX_NODE_RETRIES:-5}
-# Exit code the remote program uses to signal "shared repo not visible on this
-# node" (EX_TEMPFAIL); srun mode excludes the node and retries on this code.
-REPO_MISSING_RC=75
 
 # Guard early: a non-numeric GPU (e.g. GPU=true) would make `[ "$GPU" -eq 1 ]`
 # error to stderr yet fall through as if GPU=0, silently dropping --gres.
@@ -72,14 +66,13 @@ Usage: $(basename "$0") [--scratch] [--minimal] [gfx...] [target...] [-- <extra 
   -- <args>     extra args forwarded to cmake-ck-dev.sh on (re)configure
                 (each must be space-free; they are re-split on the build node)
 
-Backend auto-detection (override with MODE): direct | srun | docker
-Env overrides: CONTAINER=$CONTAINER  IMAGE=<image>  REPO=$REPO
+Backend auto-detection (override with MODE): direct | docker | srun
+Env overrides: IMAGE=$IMAGE  REPO=$REPO
                ARCH=<gfx...>  BUILD_DIR=$BUILD_DIR  MODE=<backend>
-               VENV=$VENV (ROCm toolchain; auto-created, set empty for /opt/rocm)
-               GPU=$GPU (1 = GPU node, default; 0 = CPU-only node, no --gres)
+               GPU=$GPU (0 = CPU build node, default; 1 = GPU node, --gres)
                GRES=<gpu:...:1>  CONSTRAINT=$CONSTRAINT (Slurm site; clear to allow any)
                CPUS=$CPUS (srun --cpus-per-task; build uses all of them)
-               SRUN_TIME=$SRUN_TIME  SRUN_EXTRA=<srun args>
+               SRUN_TIME=$SRUN_TIME  SRUN_EXTRA=<srun args>  IMAGE_DIR=$IMAGE_DIR
 EOF
     exit 1
 }
@@ -108,6 +101,19 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+# TARGETS/EXTRA_CMAKE are re-split by word on the build node, so a whitespace-
+# bearing element would silently mangle rather than pass through. Reject it with a
+# clear error instead of producing a corrupt command line.
+for _a in ${TARGETS[@]+"${TARGETS[@]}"} ${EXTRA_CMAKE[@]+"${EXTRA_CMAKE[@]}"}; do
+    case "$_a" in
+    *[[:space:]]*)
+        echo "ERROR: argument '$_a' contains whitespace; targets and extra cmake" >&2
+        echo "  args are re-split on the build node and must be space-free." >&2
+        exit 1
+        ;;
+    esac
+done
+
 # Resolve REPO to the CK project root even if cwd drifted into a subdir: walk up
 # looking for script/cmake-ck-dev.sh. Fail fast rather than configure in the
 # wrong place.
@@ -132,37 +138,30 @@ if [ ! -e "$REPO/CMakeLists.txt" ] || [ ! -e "$REPO/script/cmake-ck-dev.sh" ]; t
     exit 1
 fi
 
-# Pick the backend. Precedence: inside a container or a Slurm allocation -> run
-# inline; else a login node with srun -> dispatch via srun; else a docker host
-# -> dispatch via docker; else a bare box with local ROCm -> run inline.
+# Pick the backend. srun (login node) -> dispatch a job. Else already inside the
+# dev container -> run inline (inline == in the container). Else a docker host
+# (shared GPU server) -> --rm container here. Else bare local ROCm -> inline.
+# srun is checked first so a login node dispatches rather than building locally;
+# the /.dockerenv check precedes docker so we don't nest a container.
 if [ -z "$MODE" ]; then
-    if [ -f /.dockerenv ] || [ -n "${SLURM_JOB_ID:-}" ]; then
-        MODE=direct
-    elif command -v srun >/dev/null 2>&1; then
+    if command -v srun >/dev/null 2>&1; then
         MODE=srun
+    elif [ -f /.dockerenv ]; then
+        MODE=direct
     elif command -v docker >/dev/null 2>&1; then
         MODE=docker
     elif [ -x /opt/rocm/llvm/bin/clang++ ]; then
         MODE=direct
     else
-        echo "ERROR: no build backend found (no container, no Slurm, no docker," >&2
-        echo "  no local /opt/rocm). Set MODE=direct|srun|docker explicitly." >&2
+        echo "ERROR: no build backend found (no Slurm, no docker," >&2
+        echo "  no local /opt/rocm). Set MODE=direct|docker|srun explicitly." >&2
         exit 1
     fi
 fi
 echo "Backend: $MODE"
 
-# Map a gfx arch to a Slurm GRES request. Extend as new parts appear.
-_gres_for_arch() {
-    case "$1" in
-    gfx942) echo "gpu:gfx942-mi300x:1" ;;
-    gfx950) echo "gpu:gfx950-mi350x:1" ;;
-    gfx90a) echo "gpu:gfx90a-mi210x:1" ;;
-    *) echo "" ;;
-    esac
-}
-
-# srun builds on CPU nodes (no GPU to probe) require an explicit arch; direct/docker probe.
+# srun builds on CPU nodes (no GPU to probe) require an explicit arch; direct and
+# docker run on a GPU host, so rocminfo can probe it there.
 if [ -z "$ARCH" ]; then
     case "$MODE" in
     srun)
@@ -170,8 +169,9 @@ if [ -z "$ARCH" ]; then
         echo "  target arch, e.g. 'ckBuild gfx942' or ARCH=gfx942." >&2
         exit 1
         ;;
-    direct) ARCH=$(rocminfo 2>/dev/null | grep -m1 -oE 'gfx[0-9a-z]+' || true) ;;
-    docker) ARCH=$(docker exec "$CONTAINER" bash -c "rocminfo 2>/dev/null | grep -m1 -oE 'gfx[0-9a-z]+'" 2>/dev/null || true) ;;
+    # direct/docker assume a local GPU host: probe the host's rocminfo. If the
+    # docker host has no local ROCm, pass the arch explicitly.
+    direct | docker) ARCH=$(rocminfo 2>/dev/null | grep -m1 -oE 'gfx[0-9a-z]+' || true) ;;
     esac
     [ -z "$ARCH" ] && {
         echo "ERROR: could not detect GPU arch; pass gfx... or set ARCH=." >&2
@@ -179,31 +179,6 @@ if [ -z "$ARCH" ]; then
     }
 fi
 [ "$GPU" -eq 1 ] && [ -z "$GRES" ] && GRES=$(_gres_for_arch "$ARCH")
-
-# Bootstrap the venv if missing (on the controlling host: has pip + network).
-# The "ready" marker is bin/activate, but `python3 -m venv` creates that before
-# the pip installs run; a failed install would leave a partial venv that the
-# guard then treats as ready. Wipe the half-built venv on any bootstrap failure.
-if [ -n "$VENV" ] && [ ! -f "$VENV/bin/activate" ]; then
-    echo "Creating ROCm venv at $VENV (one-time, ~16GB) ..."
-    trap 'echo "ERROR: venv bootstrap failed; removing partial $VENV" >&2; rm -rf "$VENV"' ERR
-    python3 -m venv "$VENV"
-    # shellcheck disable=SC1091
-    source "$VENV/bin/activate"
-    pip install --quiet --upgrade pip
-    pip install --quiet cmake ninja
-    pip install --index-url "$ROCM_INDEX" --extra-index-url https://pypi.org/simple "$ROCM_PKG"
-    # Drop a static ccache into the venv bin so the launcher guard always finds it.
-    cc_tar="ccache-${CCACHE_VERSION}-linux-x86_64"
-    if curl -fsSL "https://github.com/ccache/ccache/releases/download/v${CCACHE_VERSION}/${cc_tar}.tar.xz" |
-        tar -xJ -C "$VENV/bin" --strip-components=1 "${cc_tar}/ccache" 2>/dev/null; then
-        echo "Installed ccache ${CCACHE_VERSION} into $VENV/bin"
-    else
-        echo "WARNING: could not fetch ccache; builds will run without a compiler cache." >&2
-    fi
-    deactivate
-    trap - ERR
-fi
 
 BUILD_ABS="$REPO/$BUILD_DIR"
 
@@ -220,14 +195,12 @@ if [ "$SCRATCH" -eq 1 ] || [ ! -f "$BUILD_ABS/build.ninja" ]; then
 else
     NEED_CONFIGURE=0
     echo "Incremental build: reusing $BUILD_ABS"
-    if ! grep -q 'COMPILER_LAUNCHER' "$BUILD_ABS/CMakeCache.txt" 2>/dev/null; then
-        echo "  hint: this tree has no compiler-cache launcher; run --scratch once to attach ccache/sccache." >&2
-    fi
 fi
 
-# Program run on the build node. Host vars ($REPO, $VENV, $BUILD_ABS, $ARCH,
-# $MINIMAL, $MODE, $NEED_CONFIGURE, the arrays) expand now, when the heredoc is
-# built; \$VARS stay literal and are evaluated on the build node.
+# Program run on the build node (inside the container under srun, inline under
+# direct). Host vars ($REPO, $BUILD_ABS, $ARCH, $MINIMAL, $MODE, $NEED_CONFIGURE,
+# the arrays) expand now, when the heredoc is built; \$VARS stay literal and are
+# evaluated on the build node.
 REMOTE_PROG=$(
     cat <<EOF
 set -o pipefail
@@ -235,18 +208,6 @@ if [ ! -e "$REPO/script/cmake-ck-dev.sh" ]; then
     echo "ERROR: repo not visible on \$(hostname -s) ($REPO missing)." >&2
     echo "  Landed on a node without your shared home; srun mode auto-retries." >&2
     exit $REPO_MISSING_RC
-fi
-# Use the venv toolchain if present on this node, else system ROCm.
-USE_VENV=0
-if [ -n "$VENV" ] && [ -f "$VENV/bin/activate" ]; then
-    # shellcheck disable=SC1091
-    source "$VENV/bin/activate"
-    ROCM_ROOT=\$(rocm-sdk path --root)
-    VCXX="\$ROCM_ROOT/lib/llvm/bin/amdclang++"
-    USE_VENV=1
-    echo "Toolchain: venv ($VENV)"
-else
-    echo "Toolchain: system /opt/rocm"
 fi
 cd "$BUILD_ABS"
 if [ "$NEED_CONFIGURE" -eq 1 ]; then
@@ -256,35 +217,17 @@ if [ "$NEED_CONFIGURE" -eq 1 ]; then
     elif command -v sccache >/dev/null 2>&1; then
         CACHE_FLAGS="-DCMAKE_HIP_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_C_COMPILER_LAUNCHER=sccache"
     fi
-    # GCC 14's libstdc++ <format> header (bits/unicode.h) has an invalid "++this;"
-    # that amdclang++ rejects. Pin clang to the newest GCC below 14 on this node.
-    GCC_FLAG=""
-    for v in 13 12 11; do
-        if [ -d "/usr/lib/gcc/x86_64-linux-gnu/\$v" ]; then
-            GCC_FLAG="--gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/\$v"
-            echo "Pinning clang to GCC \$v (avoids GCC 14 unicode.h bug)"
-            break
-        fi
-    done
-    # Venv flags override the preset's /opt/rocm compiler (trailing -D wins).
-    VENV_FLAGS=""
-    if [ "\$USE_VENV" -eq 1 ]; then
-        # Pin clang-tidy to the venv; else find_program grabs /opt/rocm's, which
-        # is ABI-incompatible and crashes with "free(): invalid pointer".
-        VENV_FLAGS="-DCMAKE_HIP_ARCHITECTURES=$ARCH -DCMAKE_PREFIX_PATH=\$ROCM_ROOT -DCMAKE_CXX_COMPILER=\$VCXX -DCMAKE_HIP_COMPILER=\$VCXX -DCMAKE_HIP_COMPILER_ROCM_ROOT=\$ROCM_ROOT -DCLANG_TIDY_EXE=\$ROCM_ROOT/lib/llvm/bin/clang-tidy -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
-    fi
-    # Pass via COMPILER_ARG1 so the preset's CMAKE_CXX_FLAGS stays intact.
-    GCC_CMAKE=""
-    [ -n "\$GCC_FLAG" ] && GCC_CMAKE="-DCMAKE_CXX_COMPILER_ARG1=\$GCC_FLAG -DCMAKE_HIP_COMPILER_ARG1=\$GCC_FLAG"
     echo "Configuring ($ARCH) in $BUILD_ABS ..."
     # Fatal: pipefail alone would let a failed configure fall through to ninja.
-    ../script/cmake-ck-dev.sh $MINIMAL .. $ARCH -G Ninja \$CACHE_FLAGS \$VENV_FLAGS \$GCC_CMAKE ${EXTRA_CMAKE[*]:-} || exit 1
+    ../script/cmake-ck-dev.sh $MINIMAL .. $ARCH -G Ninja \$CACHE_FLAGS ${EXTRA_CMAKE[*]:-} || exit 1
 fi
-# srun owns the allocation: use all cores. Other modes share the box, so use
-# half the cores capped at 128 to stay responsive and keep CK's memory-hungry
-# template compiles from OOMing on very large hosts.
+# srun owns the allocation: use the reserved core budget, clamped to what the
+# container actually sees (it is --cpus-capped, so nproc reflects the reservation,
+# but clamp anyway in case the cap is absent). direct shares the box, so use half
+# the cores capped at 128 to stay responsive and keep CK's memory-hungry template
+# compiles from OOMing on very large hosts.
 if [ "$MODE" = srun ]; then
-    JOBS=\$(nproc)
+    JOBS=\${SLURM_CPUS_PER_TASK:-$CPUS}; _n=\$(nproc); [ \$JOBS -gt \$_n ] && JOBS=\$_n
 else
     JOBS=\$(( \$(nproc) / 2 )); [ \$JOBS -gt 128 ] && JOBS=128
 fi
@@ -299,56 +242,24 @@ run_build() {
     direct)
         bash -c "$REMOTE_PROG"
         ;;
-    srun)
-        GRES_FLAG=""
-        if [ "$GPU" -eq 1 ]; then
-            [ -z "$GRES" ] && {
-                echo "ERROR: GPU=1 but no GRES mapping for arch '$ARCH'; set GRES=gpu:...:1." >&2
-                exit 1
-            }
-            GRES_FLAG="--gres=$GRES"
-        fi
-        CON_FLAG=""
-        [ -n "$CONSTRAINT" ] && CON_FLAG="--constraint=$CONSTRAINT"
-        # Some MARKHAM nodes have a local /home without the repo (guard exits 75);
-        # retry, excluding each bad node, until one mounts the shared home.
-        EXCLUDE=""
-        local local_log
-        local_log=$(mktemp) || {
-            echo "ERROR: mktemp failed; cannot capture srun output." >&2
-            return 1
-        }
-        local rc=0
-        for _ in $(seq "$MAX_NODE_RETRIES"); do
-            EX_FLAG=""
-            [ -n "$EXCLUDE" ] && EX_FLAG="--exclude=$EXCLUDE"
-            echo "Dispatching via srun (${GRES_FLAG:-no-gpu} ${CON_FLAG:-no-constraint} ${EX_FLAG:+$EX_FLAG }--cpus-per-task=$CPUS --time=$SRUN_TIME) ..."
-            # shellcheck disable=SC2086
-            srun $GRES_FLAG $CON_FLAG $EX_FLAG --cpus-per-task="$CPUS" --time="$SRUN_TIME" $SRUN_EXTRA bash -c "$REMOTE_PROG" 2>&1 | tee "$local_log"
-            rc=${PIPESTATUS[0]}
-            [ "$rc" -ne "$REPO_MISSING_RC" ] && break
-            bad=$(grep -oE 'repo not visible on [^ ]+' "$local_log" | awk '{print $5}' | head -1)
-            [ -z "$bad" ] && break
-            EXCLUDE="${EXCLUDE:+$EXCLUDE,}$bad"
-            echo "  node $bad lacks the repo; retrying excluding: $EXCLUDE" >&2
-        done
-        rm -f "$local_log"
-        return "$rc"
-        ;;
     docker)
-        if ! docker ps --filter "name=^${CONTAINER}$" --format '{{.Names}}' | grep -q .; then
-            echo "Container '$CONTAINER' not running; creating via ~/bin/dockerRun ..."
-            "$HOME/bin/dockerRun" "$IMAGE" "$CONTAINER"
-        fi
-        docker exec -w "$BUILD_ABS" "$CONTAINER" bash -c "$REMOTE_PROG"
+        # --rm container on this host; no GPU device needed (CPU cross-compile).
+        _docker_run_local 0 "$BUILD_ABS" "$REMOTE_PROG"
+        ;;
+    srun)
+        _ensure_image_tar "$IMAGE" || return 1
+        _srun_dispatch "$(_run_in_container 0 "$BUILD_ABS" "$REMOTE_PROG")"
         ;;
     *)
-        echo "ERROR: unknown MODE '$MODE' (want direct|srun|docker)." >&2
+        echo "ERROR: unknown MODE '$MODE' (want direct|docker|srun)." >&2
         exit 1
         ;;
     esac
 }
 
+# NFS caveat: artifacts written by the container on a compute node take a few
+# seconds to appear on the login node (attribute caching). Trust run_build's exit
+# code; do not stat/read build/ outputs immediately to "verify" success.
 if run_build; then
     echo "Build successful (log: $BUILD_ABS/build.log)"
 else
