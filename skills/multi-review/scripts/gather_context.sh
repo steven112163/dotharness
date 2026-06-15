@@ -10,7 +10,18 @@
 set -euo pipefail
 
 PR_NUMBER="${1:-}"
-REVIEW_DIR="${REVIEW_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/multi-review-XXXXXX")}"
+# Default the scratch dir under the repo's .claude/tmp (gitignored). Inside a repo
+# this keeps scratch out of /tmp; outside a repo fall back to $TMPDIR rather than
+# writing .claude/tmp into an arbitrary cwd.
+if [ -z "${REVIEW_DIR:-}" ]; then
+    if repo_root=$(git rev-parse --show-toplevel 2>/dev/null); then
+        tmp_root="$repo_root/.claude/tmp"
+        mkdir -p "$tmp_root"
+        REVIEW_DIR=$(mktemp -d "$tmp_root/multi-review-XXXXXX")
+    else
+        REVIEW_DIR=$(mktemp -d "${TMPDIR:-/tmp}/multi-review-XXXXXX")
+    fi
+fi
 mkdir -p "$REVIEW_DIR"
 
 split_chunks() {
