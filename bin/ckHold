@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Hold one persistent GPU allocation so repeated ckRun calls land instantly via
+# `srun --jobid --overlap` instead of queuing a fresh allocation each time.
+#
+# GPU nodes are scarce: the first grab waits in the queue once, then ckRun reuses
+# the held node for the rest of the walltime. When the hold expires, grab again.
+#
+#   ckHold [start] [--arch gfx...]   start a holder if none is running (default)
+#   ckHold status                    show the holder's job id, node, time left
+#   ckHold stop                      cancel the holder
+#
+# The holder is a batch job named "$HOLD_NAME" running `sleep infinity`. It omits
+# --time so the scheduler picks the walltime; the site may cap it (e.g. 4h) and
+# allocate the GPU node whole regardless of --cpus-per-task. Set SRUN_TIME to
+# request a specific walltime. Override anything via env.
+
+# shellcheck source=bin/ckCommon disable=SC1091
+source "$(dirname "$(readlink -f "$0")")/ckCommon"
+
+ARCH=${ARCH:-}
+GRES=${GRES:-}
+# The holder serves ckRun, which is GPU-bound; a few CPUs suffice. Override CPUS
+# for CPU-heavy overlapping work.
+CPUS=${CPUS:-16}
+# No default --time: inherit the partition default. Set SRUN_TIME to override.
+HOLD_TIME=${SRUN_TIME:-}
+
+usage() {
+    cat >&2 <<EOF
+Usage: $(basename "$0") [start|status|stop] [--arch gfx...]
+
+  start (default)  Start a GPU holder if none is running, then wait for it to be
+                   allocated. Reuse it from ckRun (auto-detected by job name).
+  status           Show the holder job id, node, and remaining time.
+  stop             Cancel the holder.
+
+Env overrides: HOLD_NAME=$HOLD_NAME  ARCH=<gfx...>  GRES=<gpu:...:1>
+               CONSTRAINT=$CONSTRAINT (clear to allow any)  CPUS=$CPUS
+               SRUN_TIME=<walltime> (default: partition default, ~12h)
+EOF
+    exit 1
+}
+
+ACTION=start
+while [ $# -gt 0 ]; do
+    case "$1" in
+    start | status | stop) ACTION="$1" ;;
+    --arch)
+        [ $# -ge 2 ] || {
+            echo "ERROR: --arch needs a value" >&2
+            usage
+        }
+        ARCH="$2"
+        shift
+        ;;
+    -h | --help) usage ;;
+    *)
+        echo "Unknown argument: $1" >&2
+        usage
+        ;;
+    esac
+    shift
+done
+
+# Echo the running holder's job id (empty if none). A pending holder does not
+# count: it cannot be overlapped onto until allocated.
+holder_running() {
+    squeue -h -u "$USER" -n "$HOLD_NAME" -t RUNNING -o '%i' 2>/dev/null | head -1
+}
+# Echo any holder's job id regardless of state (running or pending).
+holder_any() {
+    squeue -h -u "$USER" -n "$HOLD_NAME" -o '%i' 2>/dev/null | head -1
+}
+
+case "$ACTION" in
+status)
+    line=$(squeue -h -u "$USER" -n "$HOLD_NAME" -o '%i %T %N %L' 2>/dev/null | head -1)
+    if [ -z "$line" ]; then
+        echo "No GPU holder running (name: $HOLD_NAME)."
+        exit 1
+    fi
+    echo "Holder $HOLD_NAME: $line  (jobid state node time-left)"
+    ;;
+stop)
+    jid=$(holder_any)
+    if [ -z "$jid" ]; then
+        echo "No GPU holder to stop (name: $HOLD_NAME)."
+        exit 0
+    fi
+    scancel "$jid" && echo "Cancelled holder $HOLD_NAME (job $jid)."
+    ;;
+start)
+    jid=$(holder_any)
+    if [ -n "$jid" ]; then
+        echo "Holder $HOLD_NAME already exists (job $jid). Use 'ckHold status'."
+    else
+        [ -z "$GRES" ] && [ -n "$ARCH" ] && GRES=$(_gres_for_arch "$ARCH")
+        [ -z "$GRES" ] && {
+            echo "ERROR: no GRES; pass --arch gfx... or set GRES=gpu:...:1." >&2
+            exit 1
+        }
+        con_flag=""
+        [ -n "$CONSTRAINT" ] && con_flag="--constraint=$CONSTRAINT"
+        time_flag=""
+        [ -n "$HOLD_TIME" ] && time_flag="--time=$HOLD_TIME"
+        # shellcheck disable=SC2086
+        jid=$(sbatch --parsable --job-name="$HOLD_NAME" --gres="$GRES" $con_flag \
+            --cpus-per-task="$CPUS" $time_flag --wrap 'sleep infinity')
+        echo "Submitted holder $HOLD_NAME (job $jid); waiting for allocation ..."
+    fi
+    # Wait until the holder is RUNNING so a following ckRun overlaps immediately.
+    until [ -n "$(holder_running)" ]; do sleep 5; done
+    line=$(squeue -h -u "$USER" -n "$HOLD_NAME" -o '%i %N %L' 2>/dev/null | head -1)
+    echo "Holder ready: $line  (jobid node time-left). ckRun now overlaps into it."
+    ;;
+esac

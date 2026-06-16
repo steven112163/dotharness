@@ -24,6 +24,9 @@ IMAGE_DIR=${IMAGE_DIR:-$HOME/images}
 CCACHE_DIR=${CCACHE_DIR:-$HOME/.cache/ckBuild-ccache}
 # Where generated passwd/group files live (regenerated per run, per uid).
 ACCT_DIR=${ACCT_DIR:-$HOME/.cache/ckCommon}
+# Slurm job name of the persistent GPU holder (ckHold). When one is running,
+# ckRun dispatches into it via `srun --jobid --overlap` (instant, no queue wait).
+HOLD_NAME=${HOLD_NAME:-ckhold-$USER}
 
 # Map a gfx arch to a Slurm GRES request. The :1 count is deliberate: ckRun is
 # single-GPU; a multi-GPU sweep overrides GRES wholesale. Extend as new parts appear.
@@ -155,6 +158,25 @@ _docker_run_local() {
     # _ACCT_FLAGS holds no-space paths under $ACCT_DIR; the word-split is intended.
     # shellcheck disable=SC2086
     docker run "${DOCKER_FLAGS[@]}" --cpus "$CPUS" $_ACCT_FLAGS "$IMAGE" bash -c "$remote_prog"
+}
+
+# Echo the job id of the running GPU holder (ckHold), or nothing. Only a RUNNING
+# job qualifies; a pending holder cannot be overlapped onto yet.
+_hold_jobid() {
+    squeue -h -u "$USER" -n "$HOLD_NAME" -t RUNNING -o '%i' 2>/dev/null | head -1
+}
+
+# Dispatch into the running GPU holder via `srun --jobid --overlap` (instant, no
+# queue wait, fixed node). Returns the program's rc, or 1 if no live holder.
+# Reads HOLD_NAME/CPUS/SRUN_EXTRA. The holder owns the GRES, so the overlap step
+# requests none.
+_srun_overlap_dispatch() {
+    local remote_prog="$1" jid
+    jid=$(_hold_jobid)
+    [ -z "$jid" ] && return 1
+    echo "Dispatching into GPU holder job $jid (srun --overlap) ..."
+    # shellcheck disable=SC2086
+    srun --jobid="$jid" --overlap --cpus-per-task="$CPUS" $SRUN_EXTRA bash -c "$remote_prog"
 }
 
 # Dispatch a program via srun with node-exclude retry. Reads GPU/GRES/CONSTRAINT/

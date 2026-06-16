@@ -149,7 +149,16 @@ docker)
     ;;
 srun)
     _ensure_image_tar "$IMAGE" || exit 1
-    _srun_dispatch "$(_run_in_container "$GPU" "$WORKDIR" "$REMOTE_PROG")"
+    snippet=$(_run_in_container "$GPU" "$WORKDIR" "$REMOTE_PROG")
+    # Prefer a running GPU holder (ckHold): overlap into it for an instant run,
+    # no queue wait. Fall back to a fresh srun allocation when none is held.
+    # Check holder presence explicitly so a non-zero program exit under overlap
+    # is not mistaken for "no holder" and re-run on a fresh allocation.
+    if [ -n "$(_hold_jobid)" ]; then
+        _srun_overlap_dispatch "$snippet"
+    else
+        _srun_dispatch "$snippet"
+    fi
     ;;
 *)
     echo "ERROR: unknown MODE '$MODE' (want direct|docker|srun)." >&2
