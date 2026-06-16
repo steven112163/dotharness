@@ -76,8 +76,6 @@ _docker_static_flags() {
     # owned by the user (docker would otherwise create it root-owned).
     mkdir -p "$CCACHE_DIR"
     # --user keeps repo artifacts owned by the caller, not root.
-    # --cpus caps the container so `nproc` inside reflects the reservation, not
-    # the whole host (the build's -j math relies on this).
     DOCKER_FLAGS=(
         --rm
         --user "$(id -u):$(id -g)"
@@ -89,7 +87,6 @@ _docker_static_flags() {
         # overriding the image's unwritable /root/.cache/ccache default.
         -v "$CCACHE_DIR:$CCACHE_DIR" -e "CCACHE_DIR=$CCACHE_DIR"
         --security-opt seccomp=unconfined
-        --cpus "$CPUS"
     )
     if [ "$gpu" -eq 1 ]; then
         # Device/cap set verified working via dockerRun: bind-mount the device
@@ -153,10 +150,11 @@ _docker_run_local() {
     local gpu="$1" workdir="$2" remote_prog="$3" _ACCT_GPU="$1" _ACCT_FLAGS=""
     _docker_static_flags "$gpu" "$workdir"
     eval "$_ACCT_SETUP_SH"
-    # _ACCT_FLAGS holds account-file paths under $ACCT_DIR (no spaces); the
-    # word-split is intentional.
+    # --cpus is local only: under srun the cgroupv2 cgroup is threaded and docker
+    # --cpus fails to start the container; the srun JOBS clamp handles -j there.
+    # _ACCT_FLAGS holds no-space paths under $ACCT_DIR; the word-split is intended.
     # shellcheck disable=SC2086
-    docker run "${DOCKER_FLAGS[@]}" $_ACCT_FLAGS "$IMAGE" bash -c "$remote_prog"
+    docker run "${DOCKER_FLAGS[@]}" --cpus "$CPUS" $_ACCT_FLAGS "$IMAGE" bash -c "$remote_prog"
 }
 
 # Dispatch a program via srun with node-exclude retry. Reads GPU/GRES/CONSTRAINT/
