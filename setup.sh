@@ -37,6 +37,26 @@ link_items() {
     done
 }
 
+# Remove dangling symlinks that point back into this repo. Links that still
+# resolve, or links pointing outside REPO_DIR, are left untouched, so unrelated
+# files in shared dirs like ~/bin are never deleted.
+prune() {
+    local dst_dir="$1"
+    [ -d "$dst_dir" ] || return 0
+    for item in "$dst_dir"/*; do
+        [ -L "$item" ] || continue
+        [ -e "$item" ] && continue
+        local target
+        target=$(readlink "$item")
+        case "$target" in
+        "$REPO_DIR"/*)
+            echo "  rm  $item (dangling -> $target)"
+            rm "$item"
+            ;;
+        esac
+    done
+}
+
 echo "Linking dotharness -> $CLAUDE_DIR"
 
 # --- Rules: per-file so the folder README is not linked as a rule ---
@@ -47,6 +67,7 @@ if [ -L "$CLAUDE_DIR/rules" ]; then
 fi
 mkdir -p "$CLAUDE_DIR/rules"
 link_items "$REPO_DIR/rules" "$CLAUDE_DIR/rules"
+prune "$CLAUDE_DIR/rules"
 
 # --- Skills: merge own + third-party into commands/ ---
 echo "Skills:"
@@ -63,16 +84,19 @@ for category_dir in "$REPO_DIR"/third-party/*/skills/{engineering,productivity}/
         link "$skill_dir" "$CLAUDE_DIR/skills/$(basename "$skill_dir")"
     done
 done
+prune "$CLAUDE_DIR/skills"
 
 # --- Agents (native subagents, reusable as delegated subagents or team teammates) ---
 echo "Agents:"
 mkdir -p "$CLAUDE_DIR/agents"
 link_items "$REPO_DIR/agents" "$CLAUDE_DIR/agents"
+prune "$CLAUDE_DIR/agents"
 
 # --- Hooks ---
 echo "Hooks:"
 mkdir -p "$CLAUDE_DIR/hooks"
 link_items "$REPO_DIR/hooks" "$CLAUDE_DIR/hooks"
+prune "$CLAUDE_DIR/hooks"
 
 # Register hooks in global settings.json
 readonly SETTINGS="$CLAUDE_DIR/settings.json"
@@ -133,12 +157,14 @@ fi
 echo "Output styles:"
 mkdir -p "$CLAUDE_DIR/output-styles"
 link_items "$REPO_DIR/output-styles" "$CLAUDE_DIR/output-styles"
+prune "$CLAUDE_DIR/output-styles"
 
 # --- Binaries (linked into ~/bin, which is on PATH) ---
 echo "Binaries:"
 readonly BIN_DIR="${HOME}/bin"
 mkdir -p "$BIN_DIR"
 link_items "$REPO_DIR/bin" "$BIN_DIR"
+prune "$BIN_DIR"
 
 # --- Statusline ---
 echo "Statusline:"
