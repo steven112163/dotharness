@@ -15,6 +15,11 @@ if [ -z "$cmd" ]; then
     exit 0
 fi
 
+# Auto-approve only a single, simple invocation. A command that chains or
+# substitutes (; && || | & redirection $(...) backticks) can hide a destructive
+# tail behind a read-only prefix, so defer those to the normal permission prompt.
+echo "$cmd" | grep -qE '[;&|<>`]|\$\(' && exit 0
+
 approve() {
     jq -nc --arg reason "Auto-approved: $1" \
         '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "allow", permissionDecisionReason: $reason}}'
