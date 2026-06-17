@@ -1,7 +1,7 @@
 ---
 name: multi-review
 argument-hint: "[PR_NUMBER]"
-description: Use when reviewing code changes before merge — runs a four-reviewer multi-angle pass (one broad reviewer plus correctness/numerics, GPU performance, and code-quality lenses), consolidates and validates findings against source, and reports a merged severity-ranked review. Triggers include "multi review", "review my changes", "review PR <n>", "deep review". Does not post to GitHub.
+description: Use when reviewing a diff or pull request before merge and a single review pass is not enough. Triggers include "multi review", "multi-angle review", "review my changes", "review my diff", "review PR <n>", "deep review", or wanting a thorough independent review of local uncommitted/branch changes or a GitHub PR. Reports findings in the conversation; does not post to GitHub.
 ---
 
 # Multi Review

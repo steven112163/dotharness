@@ -1,6 +1,6 @@
 ---
 name: create-pr
-description: Create a pull request following the CK team's PR template (Motivation, Technical Details, Test Plan, Test Result, Submission Checklist). Use when user says "create PR", "open PR", "submit PR", or wants to push changes for review.
+description: Use when creating or opening a pull request, or pushing branch work for review, in a Composable Kernel (CK) repository. Triggers include "create PR", "open PR", "submit PR", "make a PR", "raise a PR", or wanting to turn a branch into a reviewable pull request following the CK team's conventions.
 ---
 
 # Create PR

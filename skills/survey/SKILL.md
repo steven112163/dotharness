@@ -1,7 +1,7 @@
 ---
 name: survey
 argument-hint: "[discover|curated] <topic | paper ids>"
-description: Use when surveying academic literature — producing a literature review, related-work synthesis, or comparison of papers on a topic. Triggers include "survey the literature on X", "review papers about Y", "compare these papers", "what's the state of the art in Z". Discovers papers from arXiv/Semantic Scholar/Crossref/OpenReview or works from a supplied set, then synthesizes a grounded full report.
+description: Use when surveying academic literature — producing a literature review, related-work synthesis, state-of-the-art overview, or comparison of papers on a topic. Triggers include "survey the literature on X", "review papers about Y", "compare these papers", "what's the state of the art in Z", "related work for <topic>". Handles both topic-driven discovery and a supplied set of papers.
 ---
 
 # Survey
