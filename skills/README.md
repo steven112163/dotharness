@@ -30,6 +30,7 @@ Engineering and productivity skills, linked from the submodule:
 - **caveman** — ultra-compressed communication, ~75% token reduction
 - **handoff** — compact conversation into a handoff doc
 - **write-a-skill** — create new skills with proper structure
+- **setup-matt-pocock-skills** — one-time prerequisite that records this repo's issue tracker, triage labels, and domain-doc layout for the skills above (manual only; not model-invoked)
 
 ## Plugins
 
