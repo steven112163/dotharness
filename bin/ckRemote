@@ -6,6 +6,17 @@ set -euo pipefail
 # server and runs ckBuild/ckRun/ckHold there over SSH. Nothing here needs a GPU
 # or docker locally.
 #
+# Working dir is mirrored: a command runs on the remote in the same subdirectory
+# you are in locally (relative to the repo root). Develop in a monorepo subproject
+# like projects/composablekernel and `ckRemote ckBuild ...` builds there, so
+# ckBuild/ckRun resolve the correct CK project root. The whole repo is still
+# synced (so nested .gitignore and shared paths are intact); only the run dir
+# follows your cwd.
+#
+# Prerequisite: the ck* binaries (ckBuild/ckRun/ckHold) must be installed on the
+# remote (this repo's setup.sh links them into ~/bin); ckRemote puts ~/bin on PATH
+# for the remote command but does not install them.
+#
 # Servers are tried in PRIORITY ORDER (the order of CK_SERVERS, highest first).
 # A server is used only if it is reachable, can execute (docker for a `normal`
 # host, srun for a `slurm` host), and offers the requested GPU arch. Otherwise
@@ -63,6 +74,18 @@ CK_LOCAL_REPO=${CK_LOCAL_REPO:-$(git rev-parse --show-toplevel 2>/dev/null || tr
 # .gitignore, so it must be listed here to protect remote profiling output.
 CK_RSYNC_EXCLUDES=${CK_RSYNC_EXCLUDES:-ck_profile_out .venv .pytest_cache .ruff_cache .cache}
 CK_SSH_OPTS=${CK_SSH_OPTS:-}
+
+# Mirror the local working directory on the remote: a command run from a subdir of
+# the repo (e.g. projects/composablekernel in a monorepo) executes in that same
+# subdir remotely, so ckBuild/ckRun resolve the right project root. CK_REL is $PWD
+# relative to CK_LOCAL_REPO ("" at the repo root, or when cwd is outside the repo).
+CK_REL=""
+if [ -n "$CK_LOCAL_REPO" ] && _root=$(cd "$CK_LOCAL_REPO" 2>/dev/null && pwd -P); then
+    _here=$(pwd -P)
+    if [ "$_here" != "$_root" ] && [ "${_here#"$_root"/}" != "$_here" ]; then
+        CK_REL=${_here#"$_root"/}
+    fi
+fi
 
 # Resolved once a server is chosen.
 SERVER=""
@@ -221,15 +244,22 @@ sync_source() {
         "${excludes[@]}" "$CK_LOCAL_REPO/" "$CK_REMOTE:$CK_REMOTE_REPO/"
 }
 
-# Run argv remotely inside the checkout, with this repo's bin/ on PATH (a
-# non-login ssh shell may not source the profile that adds ~/bin). -t allocates a
-# tty so Ctrl-C reaches srun and output streams live.
+# The remote directory a command runs in: the synced repo, plus the local
+# cwd-relative subdir (CK_REL) so work mirrors where you are locally.
+_remote_workdir() {
+    if [ -n "$CK_REL" ]; then echo "$CK_REMOTE_REPO/$CK_REL"; else echo "$CK_REMOTE_REPO"; fi
+}
+
+# Run argv remotely inside the mirrored working dir, with this repo's bin/ on PATH
+# (a non-login ssh shell may not source the profile that adds ~/bin; ck* must be
+# installed on the remote). -t allocates a tty so Ctrl-C reaches srun and output
+# streams live.
 remote_exec() {
     local cmd
     cmd=$(printf '%q ' "$@")
     # shellcheck disable=SC2086
     ssh $CK_SSH_OPTS -t "$CK_REMOTE" \
-        "export PATH=\"\$HOME/bin:\$PATH\"; cd $(printf '%q' "$CK_REMOTE_REPO") || exit 1; $cmd"
+        "export PATH=\"\$HOME/bin:\$PATH\"; cd $(printf '%q' "$(_remote_workdir)") || exit 1; $cmd"
 }
 
 FORCED=""
@@ -275,14 +305,14 @@ fi
 select_server "$ARCH"
 
 case "$1" in
-select) ;; # selection already printed
+select) echo "Would run in: $CK_REMOTE:$(_remote_workdir)" ;;
 push)
     [ $# -eq 1 ] || die "push takes no arguments."
     sync_source
     ;;
 shell)
     # shellcheck disable=SC2086
-    ssh $CK_SSH_OPTS -t "$CK_REMOTE" "cd $(printf '%q' "$CK_REMOTE_REPO") 2>/dev/null; exec \$SHELL -l"
+    ssh $CK_SSH_OPTS -t "$CK_REMOTE" "cd $(printf '%q' "$(_remote_workdir)") 2>/dev/null; exec \$SHELL -l"
     ;;
 *)
     [ "$DO_SYNC" -eq 1 ] && sync_source
