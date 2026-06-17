@@ -53,14 +53,16 @@ if [ -z "$subject" ] && echo "$cmd" | grep -qE '<<.*EOF'; then
     subject=$(echo "$cmd" | sed -n "/<<.*EOF/,/EOF/p" | grep -vE '(EOF|<<)' | grep -v '^\s*$' | head -1 || true)
 fi
 
-# Try -m "..." (double-quoted)
+# Try -m "..." (double-quoted). Tolerate a combined flag (-am) and a missing
+# space (-m"x"): match a dash, any short-flag letters, the m, optional space,
+# then the opening quote; \K drops everything before the message.
 if [ -z "$subject" ]; then
-    subject=$(echo "$cmd" | grep -oP '(?<=-m\s")([^"]*)' | head -1 || true)
+    subject=$(echo "$cmd" | grep -oP '(?<=-)[a-zA-Z]*m\s*"\K[^"]*' | head -1 || true)
 fi
 
-# Try -m '...' (single-quoted)
+# Try -m '...' (single-quoted), same tolerance.
 if [ -z "$subject" ]; then
-    subject=$(echo "$cmd" | grep -oP "(?<=-m\\s')([^']*)" | head -1 || true)
+    subject=$(echo "$cmd" | grep -oP "(?<=-)[a-zA-Z]*m\\s*'\\K[^']*" | head -1 || true)
 fi
 
 # No message found — nothing to validate
