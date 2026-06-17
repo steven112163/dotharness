@@ -27,9 +27,10 @@ set -euo pipefail
 #   ckRemote targets                       list configured servers
 #   ckRemote --arch gfx942 select          show which server would be picked
 #
-# build/ and .git are never synced: artifacts stay on the remote where ckBuild
-# wrote them, and the local .git is irrelevant remotely. rsync keeps mtimes, so
-# incremental builds are preserved.
+# Files git ignores are never synced: rsync honors the repo's .gitignore (nested
+# rules included), so build/ and other artifacts stay on the remote where ckBuild
+# wrote them. .git is excluded too. rsync keeps mtimes, so incremental builds are
+# preserved.
 #
 # Config: env, or a sourced file at $CK_REMOTE_CONF / ~/.config/ckremote. Define
 # an ordered server list plus one entry per server in four associative arrays:
@@ -42,7 +43,8 @@ set -euo pipefail
 #   CK_TYPE[slurm]="slurm";           CK_GPUS[slurm]="all"   # "all" = any arch
 #
 # Other knobs: CK_LOCAL_REPO (default: git toplevel of cwd),
-# CK_RSYNC_EXCLUDES (space-separated, default below),
+# CK_RSYNC_EXCLUDES (extra excludes beyond .gitignore, space-separated; default
+#   below covers git-untracked tooling/output dirs),
 # CK_SSH_OPTS (extra ssh options, e.g. a ProxyJump).
 
 CONF=${CK_REMOTE_CONF:-$HOME/.config/ckremote}
@@ -55,7 +57,11 @@ declare -A CK_SSH CK_REPO CK_TYPE CK_GPUS
 [ -n "${CK_SERVERS+x}" ] || CK_SERVERS=()
 
 CK_LOCAL_REPO=${CK_LOCAL_REPO:-$(git rev-parse --show-toplevel 2>/dev/null || true)}
-CK_RSYNC_EXCLUDES=${CK_RSYNC_EXCLUDES:-build .git .venv __pycache__ .pytest_cache .ruff_cache .cache}
+# Extra excludes beyond the repo's .gitignore (which rsync honors directly): local
+# tooling/output dirs git does not track, so they neither copy nor get --delete'd
+# on the remote. ck_profile_out is git-excluded via .git/info/exclude, not
+# .gitignore, so it must be listed here to protect remote profiling output.
+CK_RSYNC_EXCLUDES=${CK_RSYNC_EXCLUDES:-ck_profile_out .venv .pytest_cache .ruff_cache .cache}
 CK_SSH_OPTS=${CK_SSH_OPTS:-}
 
 # Resolved once a server is chosen.
@@ -202,9 +208,16 @@ sync_source() {
     # shellcheck disable=SC2086,SC2029
     ssh $CK_SSH_OPTS "$CK_REMOTE" "mkdir -p $(printf '%q' "$CK_REMOTE_REPO")"
     echo "Syncing $CK_LOCAL_REPO/ -> $CK_REMOTE:$CK_REMOTE_REPO/ ..."
-    # --delete keeps the remote a mirror of local source; excluded paths (build/,
-    # .git) are neither copied nor deleted, so remote artifacts survive.
+    # Honor the repo's .gitignore (per-directory, nested rules included) so anything
+    # git ignores — build/, _build/, __pycache__, CMakeUserPresets.json, ... — is
+    # never copied. .git is excluded explicitly (it is not listed in .gitignore),
+    # and CK_RSYNC_EXCLUDES adds git-untracked dirs that must not clobber the remote
+    # (e.g. ck_profile_out, which lives in .git/info/exclude, not .gitignore).
+    # --delete keeps the remote a mirror of local source; excluded paths are neither
+    # copied nor deleted, so remote build artifacts and profiling output survive.
+    # shellcheck disable=SC2086
     rsync -az --delete --info=stats1 ${CK_SSH_OPTS:+-e "ssh $CK_SSH_OPTS"} \
+        --filter=':- .gitignore' --exclude=.git \
         "${excludes[@]}" "$CK_LOCAL_REPO/" "$CK_REMOTE:$CK_REMOTE_REPO/"
 }
 
