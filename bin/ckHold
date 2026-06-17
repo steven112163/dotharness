@@ -27,6 +27,9 @@ CPUS=${CPUS:-16}
 # No default --time: inherit the partition default. Set SRUN_TIME to override.
 HOLD_TIME=${SRUN_TIME:-}
 
+# HOLD_NAME is defined in the sourced ckCommon; pre-commit runs shellcheck
+# without -x and misreads the reference here as a typo of HOLD_TIME (SC2153).
+# shellcheck disable=SC2153
 usage() {
     cat >&2 <<EOF
 Usage: $(basename "$0") [start|status|stop] [--arch gfx...]
