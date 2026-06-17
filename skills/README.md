@@ -27,17 +27,18 @@ Engineering and productivity skills, linked from the submodule:
 - **improve-codebase-architecture** — find deepening opportunities in a codebase
 - **zoom-out** — higher-level perspective on unfamiliar code
 - **prototype** — build throwaway prototypes to flesh out a design
-- **caveman** — ultra-compressed communication, ~75% token reduction
 - **handoff** — compact conversation into a handoff doc
 - **write-a-skill** — create new skills with proper structure
 - **setup-matt-pocock-skills** — one-time prerequisite that records this repo's issue tracker, triage labels, and domain-doc layout for the skills above (manual only; not model-invoked)
 
 ## Plugins
 
-Installed by `setup.sh` via the Claude CLI. The `claude-plugins-official` marketplace is registered by default; `setup.sh` adds the `anthropic-agent-skills` marketplace (`anthropics/skills`) before installing from it.
+Installed by `setup.sh` via the Claude CLI. The `claude-plugins-official` marketplace is registered by default; `setup.sh` adds the `anthropic-agent-skills` (`anthropics/skills`), `caveman` (`JuliusBrussee/caveman`), and `ponytail` (`DietrichGebert/ponytail`) marketplaces before installing from them.
 
 - **superpowers** (`claude-plugins-official`) — disciplined workflows (brainstorming, TDD, debugging).
 - **example-skills** (`anthropic-agent-skills`) — bundle of 12 Anthropic example skills. Used here for **skill-creator** (author/eval/optimize skills), **frontend-design** and **theme-factory** (styling the ck-profile HTML reports), **webapp-testing** (Playwright — screenshot-verify the reports), and **mcp-builder**. The rest of the bundle stays inert unless its trigger fires.
 - **claude-api** (`anthropic-agent-skills`) — Claude API / Anthropic SDK reference for building LLM-powered tooling.
+- **caveman** (`caveman`) — always-on ultra-compressed output (~75% fewer prose tokens), activated every session by its `SessionStart`/`UserPromptSubmit` hooks (needs `node` on `PATH`). Replaces the on-demand mattpocock caveman skill, which `setup.sh` therefore stops linking.
+- **ponytail** (`ponytail`) — always-on "lazy senior dev" mode that steers generated code toward YAGNI and minimal solutions (`PONYTAIL_DEFAULT_MODE` sets the level, default `full`). Reinforces `coding-standards.md`.
 
 Plugin granularity is per-plugin: `example-skills` is all-or-nothing, so the wanted skills arrive bundled with others. Skills are description-triggered and lazy, so unused ones cost nothing at runtime.

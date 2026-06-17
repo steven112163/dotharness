@@ -81,9 +81,22 @@ for category_dir in "$REPO_DIR"/third-party/*/skills/{engineering,productivity}/
     [ -d "$category_dir" ] || continue
     for skill_dir in "$category_dir"*/; do
         [ -f "$skill_dir/SKILL.md" ] || continue
-        link "$skill_dir" "$CLAUDE_DIR/skills/$(basename "$skill_dir")"
+        name=$(basename "$skill_dir")
+        # caveman is provided always-on by the JuliusBrussee/caveman plugin
+        # (installed below); skip the on-demand mattpocock copy to avoid a duplicate.
+        [ "$name" = caveman ] && continue
+        link "$skill_dir" "$CLAUDE_DIR/skills/$name"
     done
 done
+# Drop a caveman link from an earlier run, now that the plugin owns it.
+if [ -L "$CLAUDE_DIR/skills/caveman" ]; then
+    case "$(readlink "$CLAUDE_DIR/skills/caveman")" in
+    "$REPO_DIR"/third-party/*)
+        echo "  rm  $CLAUDE_DIR/skills/caveman (superseded by caveman plugin)"
+        rm "$CLAUDE_DIR/skills/caveman"
+        ;;
+    esac
+fi
 prune "$CLAUDE_DIR/skills"
 
 # --- Agents (native subagents, reusable as delegated subagents or team teammates) ---
@@ -203,18 +216,31 @@ fi
 
 # --- Plugins (requires claude CLI) ---
 echo "Plugins:"
-if command -v claude &>/dev/null; then
-    # claude-plugins-official is registered by default; add the Anthropic skills marketplace.
-    if grep -q '"anthropic-agent-skills"' "$CLAUDE_DIR/plugins/known_marketplaces.json" 2>/dev/null; then
-        echo "  ok  marketplace anthropic-agent-skills"
+# Register a marketplace by name from a GitHub <owner/repo>, idempotently.
+add_marketplace() {
+    local name="$1" repo="$2"
+    if grep -q "\"$name\"" "$CLAUDE_DIR/plugins/known_marketplaces.json" 2>/dev/null; then
+        echo "  ok  marketplace $name"
     else
-        echo "  adding marketplace anthropic-agent-skills (anthropics/skills)"
-        claude plugin marketplace add anthropics/skills
+        echo "  adding marketplace $name ($repo)"
+        claude plugin marketplace add "$repo"
     fi
+}
+if command -v claude &>/dev/null; then
+    # claude-plugins-official is registered by default; add the rest.
+    add_marketplace anthropic-agent-skills anthropics/skills
+    # caveman and ponytail are always-on token-reduction plugins: caveman compresses
+    # output prose via SessionStart/UserPromptSubmit hooks (needs node on PATH),
+    # ponytail steers generated code toward YAGNI/minimal each session.
+    add_marketplace caveman JuliusBrussee/caveman
+    add_marketplace ponytail DietrichGebert/ponytail
+    command -v node &>/dev/null || echo "  warn: node not on PATH; caveman hooks will not run until it is"
     for plugin in \
         "superpowers@claude-plugins-official" \
         "example-skills@anthropic-agent-skills" \
-        "claude-api@anthropic-agent-skills"; do
+        "claude-api@anthropic-agent-skills" \
+        "caveman@caveman" \
+        "ponytail@ponytail"; do
         if grep -q "$plugin" "$CLAUDE_DIR/plugins/installed_plugins.json" 2>/dev/null; then
             echo "  ok  $plugin"
         else
