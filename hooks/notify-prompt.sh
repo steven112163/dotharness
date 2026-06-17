@@ -10,12 +10,6 @@ dir=$(echo "$input" | jq -r '.cwd // ""' 2>/dev/null || true)
 dir=${dir##*/}
 [ -n "$dir" ] && body="$body  ($dir)"
 
-# Diagnostic: record every time this hook fires (notification_type + title).
-ntype=$(echo "$input" | jq -r '.notification_type // "?"' 2>/dev/null || echo "?")
-mkdir -p ~/.claude/.dotharness 2>/dev/null || true
-printf '%s  type=%-16s title=%s\n' "$(date -Is)" "$ntype" "$title" \
-    >>~/.claude/.dotharness/notify.log 2>/dev/null || true
-
 # Teams first: it is the remote alert that matters when away and finishes in
 # under a second. The desktop pop-up is time-bounded because on a host with no
 # notification daemon, notify-send blocks ~50s on D-Bus — which would trip the
