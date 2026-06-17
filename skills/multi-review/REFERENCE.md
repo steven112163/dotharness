@@ -34,6 +34,10 @@ Each lens reviewer applies one checklist below, drawing on the project's full
 - Functions under 100 lines, files under 1000 lines, nesting under 3 levels,
   6 parameters max.
 - No dead code, no commented-out code, no magic numbers or strings.
+- No over-engineering (YAGNI): speculative abstractions, single-implementation
+  interfaces, factories with one product, wrappers that only delegate, reinvented
+  stdlib, dead config/flags. Flag code that should not exist, not just code written
+  badly. `ponytail:ponytail-review` is a focused pass for this lens.
 - All device functions annotated `__host__`/`__device__`/`__host__ __device__`.
 - RAII for HIP streams, events, device memory.
 - No `using namespace` in headers; namespace nesting at most 3 levels.

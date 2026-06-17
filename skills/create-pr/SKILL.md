@@ -25,7 +25,10 @@ Ask the user (skip fields they've already provided):
 
 Ask if the user wants to run tests now or paste existing output. If running:
 
-- Delegate test runs to a sub-agent inside the container (`docker exec styuan_dev ...`).
+- Delegate test runs to a sub-agent. Run CK GPU tests with `ckRun`
+  (`REPO=$(git rev-parse --show-toplevel) ckRun --arch <gfx> <cmd>`), which
+  dispatches to a GPU (srun/docker/direct auto-detected); for many runs start a
+  holder once with `ckHold --arch <gfx>` so each `ckRun` overlaps it instantly.
 - Capture exact stdout for the PR body.
 
 ### 4. Format PR body

@@ -255,7 +255,13 @@ contract is what makes promotion decisions evidence-based later.
    `.git/info/exclude` if not already ignored. (`.git/info/exclude` is in the shared
    git dir, so it covers every worktree, and it is not a tracked file — nothing in
    the repo's git tree changes.) Create `.claude/.dev-team/<task_name>/`.
-5. **Spawn no teammates yet.** Unlike a fixed org chart, the lead spawns workers and
+5. **Hold a GPU if runs go through Slurm.** When profiling and benchmarks dispatch
+   via Slurm (`ckRun`/`ck-profile` detect `srun`), start one persistent holder now —
+   `ckHold --arch <gfx>` — so every Phase 3 profile and Phase 4 benchmark overlaps
+   into the held node instantly instead of re-queuing an allocation per run across N
+   candidates × refine iterations. Stop it in Phase 6 with `ckHold stop`. Skip on a
+   direct/docker host.
+6. **Spawn no teammates yet.** Unlike a fixed org chart, the lead spawns workers and
    groups on demand in later phases and stops them once they deliver. There is no
    standing team to staff at startup.
 
@@ -406,6 +412,8 @@ The lead decides whether this phase runs — skip it for straightforward tasks.
 | Aggregate group input | Coordinator | Report dissent, not just the synthesized verdict |
 | Get research | Any agent → Lead | Lead spawns a research group (principal-researcher + researchers); they deliver to the requester, then the lead stops them |
 | Fan out candidates | Lead | 2–3 distinct directions, one worktree/branch each off the baseline (2 max without ccache/sccache) |
+| Build / run a candidate | builder / tester | `ckBuild` to build, `ckRun --arch <gfx>` to run or benchmark on a GPU (never hand-roll cmake/ninja) |
+| Hold a GPU for fast runs | Lead | `ckHold --arch <gfx>` at startup when runs go through Slurm; `ckHold stop` in Phase 6 |
 | Request code review | Lead | On a passing build, spawn software-architect + reviewers; they deliver the review to the implementer; lead stops them |
 | Report build error | builder → implementer | Direct, no intermediary |
 | Profile a candidate | Lead → profiler | Profiler runs ck-profile (one candidate at a time), delivers verdict + ranked directions to the implementer |
@@ -503,6 +511,11 @@ independent on-disk checkout sharing the same `.git` object store.
   are queued** (CPU saturation; one GPU profiling run at a time). Disk for N CK build
   trees and cold-build time bound how wide the fan-out can go — 2–3 with ccache/sccache,
   2 without.
+- **Run on GPU with `ckRun`; hold one with `ckHold`.** `ckRun`
+  (`REPO=<worktree> ckRun --arch <gfx> <cmd>`) dispatches a built binary to a GPU
+  (srun/docker/direct auto-detected). When runs go through Slurm, `ckHold` grabs one
+  GPU node up front so every candidate's profile and benchmark overlaps into it
+  instantly rather than re-queuing per run.
 - **`ck_profile_out/` stays out of git** automatically: `ck-profile` adds it to the
   shared `.git/info/exclude`, which covers every worktree.
 - **Integration:** the promoted candidate's branch merges back onto the PR branch

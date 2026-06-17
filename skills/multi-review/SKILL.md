@@ -79,7 +79,8 @@ description/requirements — never this session's history.
    Generalist full-pass; returns Critical/Important/Minor.
 2. **Correctness & numerics** — `reviewer` agent, focus per `REFERENCE.md` Lens 1.
 3. **GPU performance** — `reviewer` agent, focus per `REFERENCE.md` Lens 2.
-4. **Code quality** — `reviewer` agent, focus per `REFERENCE.md` Lens 3.
+4. **Code quality** — `reviewer` agent, focus per `REFERENCE.md` Lens 3 (includes an
+   over-engineering/YAGNI pass; may run `ponytail:ponytail-review`).
 
 Each lens reviewer reviews only the diff and returns severity-prefixed findings
 (`blocker:`/`suggestion:`/`question:`/`nit:`/`educational:`), each tied to
