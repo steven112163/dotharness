@@ -1,0 +1,278 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Drive a remote CK build/run from a local dev checkout. You edit and commit
+# locally (stable, no lost progress); ckRemote rsyncs the SOURCE to the chosen
+# server and runs ckBuild/ckRun/ckHold there over SSH. Nothing here needs a GPU
+# or docker locally.
+#
+# Servers are tried in PRIORITY ORDER (the order of CK_SERVERS, highest first).
+# A server is used only if it is reachable, can execute (docker for a `normal`
+# host, srun for a `slurm` host), and offers the requested GPU arch. Otherwise
+# the next server is tried. Pass the arch via --arch, or let it be detected from
+# the command (a gfx* token, or the value after --arch/-a).
+#
+# Build and run for one task must land on the SAME server: each server has its
+# own filesystem, so artifacts ckBuild writes on server A are not visible on
+# server B. Keep the arch fixed across a build/run pair and the same server is
+# chosen as long as it stays reachable. Force one server with -t <name>.
+#
+#   ckRemote ckBuild gfx942 [target...]    pick a server with gfx942, sync, build
+#   ckRemote ckHold --arch gfx942          hold a GPU on the chosen server
+#   ckRemote ckRun --arch gfx942 <cmd>     run on the chosen server's GPU
+#   ckRemote -t shared ckRun ...           force the 'shared' server
+#   ckRemote --no-sync ckRun ...           run without re-syncing source
+#   ckRemote --arch gfx942 push            sync source to the chosen server
+#   ckRemote --arch gfx942 shell           interactive shell in the checkout
+#   ckRemote targets                       list configured servers
+#   ckRemote --arch gfx942 select          show which server would be picked
+#
+# build/ and .git are never synced: artifacts stay on the remote where ckBuild
+# wrote them, and the local .git is irrelevant remotely. rsync keeps mtimes, so
+# incremental builds are preserved.
+#
+# Config: env, or a sourced file at $CK_REMOTE_CONF / ~/.config/ckremote. Define
+# an ordered server list plus one entry per server in four associative arrays:
+#
+#   CK_SERVERS=(shared slurm)            # priority order, highest first
+#   declare -A CK_SSH CK_REPO CK_TYPE CK_GPUS
+#   CK_SSH[shared]="user@sharedbox";  CK_REPO[shared]="/scratch/you/composable_kernel"
+#   CK_TYPE[shared]="normal";         CK_GPUS[shared]="gfx942"
+#   CK_SSH[slurm]="user@login";       CK_REPO[slurm]="/home/you/ck/composable_kernel"
+#   CK_TYPE[slurm]="slurm";           CK_GPUS[slurm]="all"   # "all" = any arch
+#
+# Other knobs: CK_LOCAL_REPO (default: git toplevel of cwd),
+# CK_RSYNC_EXCLUDES (space-separated, default below),
+# CK_SSH_OPTS (extra ssh options, e.g. a ProxyJump).
+
+CONF=${CK_REMOTE_CONF:-$HOME/.config/ckremote}
+# shellcheck disable=SC1090
+[ -f "$CONF" ] && source "$CONF"
+
+# Ensure the config arrays exist even if the file omitted them, so references are
+# safe under `set -u`. `declare -A` on an already-defined array preserves it.
+declare -A CK_SSH CK_REPO CK_TYPE CK_GPUS
+[ -n "${CK_SERVERS+x}" ] || CK_SERVERS=()
+
+CK_LOCAL_REPO=${CK_LOCAL_REPO:-$(git rev-parse --show-toplevel 2>/dev/null || true)}
+CK_RSYNC_EXCLUDES=${CK_RSYNC_EXCLUDES:-build .git .venv __pycache__ .pytest_cache .ruff_cache .cache}
+CK_SSH_OPTS=${CK_SSH_OPTS:-}
+
+# Resolved once a server is chosen.
+SERVER=""
+CK_REMOTE=""
+CK_REMOTE_REPO=""
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: ckRemote [-t <server>] [--arch <gfx>] [--no-sync]
+                <push|shell|targets|select|ckBuild|ckRun|ckHold|cmd...>
+
+  -t, --server <name>  force a configured server (skip priority selection)
+  -a, --arch <gfx>     GPU arch to select a server by (else detected from cmd)
+  --no-sync            skip the source rsync (e.g. run an already-built binary)
+  push                 rsync source to the chosen server, nothing else
+  shell                interactive shell in the remote checkout
+  targets              list configured servers and their gpus
+  select               print which server would be chosen, then exit
+  <cmd...>             run on the chosen server inside the checkout
+
+Servers are tried in CK_SERVERS order; the first reachable one that can execute
+and offers --arch wins. Config: $CK_REMOTE_CONF or ~/.config/ckremote.
+EOF
+    exit 1
+}
+
+die() {
+    echo "ERROR: $*" >&2
+    exit 1
+}
+
+# Backend binary that proves a server type can execute a build/run.
+_backend_bin() {
+    case "$1" in
+    normal) echo docker ;;
+    slurm) echo srun ;;
+    *) echo "" ;;
+    esac
+}
+
+# True if space-separated list $2 contains word $1.
+_has_word() {
+    local w
+    for w in $2; do [ "$w" = "$1" ] && return 0; done
+    return 1
+}
+
+# True if a server's gpu list $2 offers arch $1. The literal "all" matches any
+# arch (use it for a server, like the Slurm login node, that can request any GPU).
+_has_gpu() {
+    _has_word all "$2" && return 0
+    _has_word "$1" "$2"
+}
+
+# Detect the requested arch from the inner command: a gfx* token, or the value
+# following --arch / -a. First match wins. Echoes empty if none.
+_detect_arch() {
+    local prev="" tok
+    for tok in "$@"; do
+        if [ "$prev" = "--arch" ] || [ "$prev" = "-a" ]; then
+            echo "$tok"
+            return
+        fi
+        case "$tok" in
+        gfx*)
+            echo "$tok"
+            return
+            ;;
+        esac
+        prev="$tok"
+    done
+    echo ""
+}
+
+# One ssh probe: rc 0 = reachable and backend present; 255 = unreachable;
+# other = reachable but backend missing.
+_probe() {
+    local sshtgt="$1" bin="$2"
+    # shellcheck disable=SC2086
+    ssh $CK_SSH_OPTS -o BatchMode=yes -o ConnectTimeout=5 "$sshtgt" \
+        "command -v $bin >/dev/null 2>&1"
+}
+
+_apply_server() {
+    SERVER="$1"
+    CK_REMOTE="${CK_SSH[$1]:-}"
+    CK_REMOTE_REPO="${CK_REPO[$1]:-}"
+    [ -n "$CK_REMOTE" ] || die "server '$1': CK_SSH[$1] not set in $CONF."
+    [ -n "$CK_REMOTE_REPO" ] || die "server '$1': CK_REPO[$1] not set in $CONF."
+}
+
+# Choose a server for arch $1 (may be empty). Sets SERVER/CK_REMOTE/CK_REMOTE_REPO.
+select_server() {
+    local arch="$1"
+    [ "${#CK_SERVERS[@]}" -gt 0 ] || die "no servers configured (set CK_SERVERS in $CONF)."
+
+    # Forced server: validate name, apply, no probing or fallback.
+    if [ -n "$FORCED" ]; then
+        _has_word "$FORCED" "${CK_SERVERS[*]}" || die "unknown server '$FORCED' (have: ${CK_SERVERS[*]})."
+        _apply_server "$FORCED"
+        echo "Forced server '$SERVER' ($CK_REMOTE)."
+        return
+    fi
+
+    local s bin rc
+    for s in "${CK_SERVERS[@]}"; do
+        if [ -n "$arch" ] && ! _has_gpu "$arch" "${CK_GPUS[$s]:-}"; then
+            echo "  skip $s: no $arch (has: ${CK_GPUS[$s]:-none})" >&2
+            continue
+        fi
+        bin=$(_backend_bin "${CK_TYPE[$s]:-}")
+        [ -n "$bin" ] || die "server '$s': bad CK_TYPE '${CK_TYPE[$s]:-}' (want normal|slurm)."
+        rc=0
+        _probe "${CK_SSH[$s]:-}" "$bin" || rc=$?
+        case "$rc" in
+        0) ;;
+        255)
+            echo "  skip $s: unreachable (${CK_SSH[$s]:-no-ssh})" >&2
+            continue
+            ;;
+        *)
+            echo "  skip $s: cannot execute (no $bin for type ${CK_TYPE[$s]})" >&2
+            continue
+            ;;
+        esac
+        _apply_server "$s"
+        echo "Selected server '$SERVER' (${CK_TYPE[$s]}, $CK_REMOTE)${arch:+ for $arch}."
+        return
+    done
+    die "no server is reachable, executable${arch:+, and has $arch}. Tried: ${CK_SERVERS[*]}."
+}
+
+require_local() {
+    [ -n "$CK_LOCAL_REPO" ] || die "CK_LOCAL_REPO unset and cwd is not a git repo; cd into the CK checkout or set CK_LOCAL_REPO."
+    [ -d "$CK_LOCAL_REPO" ] || die "CK_LOCAL_REPO ($CK_LOCAL_REPO) is not a directory."
+}
+
+sync_source() {
+    require_local
+    local excludes=() e
+    for e in $CK_RSYNC_EXCLUDES; do excludes+=(--exclude "$e"); done
+    # The %q quoting is computed locally and sent literally, which is intended.
+    # shellcheck disable=SC2086,SC2029
+    ssh $CK_SSH_OPTS "$CK_REMOTE" "mkdir -p $(printf '%q' "$CK_REMOTE_REPO")"
+    echo "Syncing $CK_LOCAL_REPO/ -> $CK_REMOTE:$CK_REMOTE_REPO/ ..."
+    # --delete keeps the remote a mirror of local source; excluded paths (build/,
+    # .git) are neither copied nor deleted, so remote artifacts survive.
+    rsync -az --delete --info=stats1 ${CK_SSH_OPTS:+-e "ssh $CK_SSH_OPTS"} \
+        "${excludes[@]}" "$CK_LOCAL_REPO/" "$CK_REMOTE:$CK_REMOTE_REPO/"
+}
+
+# Run argv remotely inside the checkout, with this repo's bin/ on PATH (a
+# non-login ssh shell may not source the profile that adds ~/bin). -t allocates a
+# tty so Ctrl-C reaches srun and output streams live.
+remote_exec() {
+    local cmd
+    cmd=$(printf '%q ' "$@")
+    # shellcheck disable=SC2086
+    ssh $CK_SSH_OPTS -t "$CK_REMOTE" \
+        "export PATH=\"\$HOME/bin:\$PATH\"; cd $(printf '%q' "$CK_REMOTE_REPO") || exit 1; $cmd"
+}
+
+FORCED=""
+ARCH=""
+DO_SYNC=1
+while [ $# -gt 0 ]; do
+    case "$1" in
+    -h | --help) usage ;;
+    -t | --server)
+        [ $# -ge 2 ] || die "$1 needs a server name."
+        FORCED="$2"
+        shift 2
+        ;;
+    -a | --arch)
+        [ $# -ge 2 ] || die "$1 needs a gfx arch."
+        ARCH="$2"
+        shift 2
+        ;;
+    --no-sync)
+        DO_SYNC=0
+        shift
+        ;;
+    *) break ;;
+    esac
+done
+[ $# -ge 1 ] || usage
+
+# `targets` needs no server selection.
+if [ "$1" = targets ]; then
+    [ "${#CK_SERVERS[@]}" -gt 0 ] || {
+        echo "No servers configured in $CONF."
+        exit 0
+    }
+    for s in "${CK_SERVERS[@]}"; do
+        printf '%-12s type=%-7s gpus=%-24s %s\n' \
+            "$s" "${CK_TYPE[$s]:-?}" "${CK_GPUS[$s]:-none}" "${CK_SSH[$s]:-no-ssh}"
+    done
+    exit 0
+fi
+
+# Selection arch: explicit --arch wins, else detect from the command words.
+[ -n "$ARCH" ] || ARCH=$(_detect_arch "$@")
+select_server "$ARCH"
+
+case "$1" in
+select) ;; # selection already printed
+push)
+    [ $# -eq 1 ] || die "push takes no arguments."
+    sync_source
+    ;;
+shell)
+    # shellcheck disable=SC2086
+    ssh $CK_SSH_OPTS -t "$CK_REMOTE" "cd $(printf '%q' "$CK_REMOTE_REPO") 2>/dev/null; exec \$SHELL -l"
+    ;;
+*)
+    [ "$DO_SYNC" -eq 1 ] && sync_source
+    remote_exec "$@"
+    ;;
+esac
