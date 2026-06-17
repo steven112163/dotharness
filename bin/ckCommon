@@ -28,6 +28,27 @@ ACCT_DIR=${ACCT_DIR:-$HOME/.cache/ckCommon}
 # ckRun dispatches into it via `srun --jobid --overlap` (instant, no queue wait).
 HOLD_NAME=${HOLD_NAME:-ckhold-$USER}
 
+# Echo the auto-detected backend (direct|docker|srun) for the current host, or
+# return 1 with a message if none. srun first so a login node dispatches rather
+# than building locally; /.dockerenv before docker so an in-container run is not
+# re-wrapped. $1: noun for the error message ("build" or "run"). Called in $(...),
+# so it must return (not exit) on failure; the caller turns that into an exit.
+_detect_backend() {
+    if command -v srun >/dev/null 2>&1; then
+        echo srun
+    elif [ -f /.dockerenv ]; then
+        echo direct
+    elif command -v docker >/dev/null 2>&1; then
+        echo docker
+    elif [ -x /opt/rocm/llvm/bin/clang++ ]; then
+        echo direct
+    else
+        echo "ERROR: no $1 backend found (no Slurm, no docker, no local" >&2
+        echo "  /opt/rocm). Set MODE=direct|docker|srun explicitly." >&2
+        return 1
+    fi
+}
+
 # Map a gfx arch to a Slurm GRES request. The :1 count is deliberate: ckRun is
 # single-GPU; a multi-GPU sweep overrides GRES wholesale. Extend as new parts appear.
 _gres_for_arch() {

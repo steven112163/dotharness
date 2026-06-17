@@ -138,26 +138,8 @@ if [ ! -e "$REPO/CMakeLists.txt" ] || [ ! -e "$REPO/script/cmake-ck-dev.sh" ]; t
     exit 1
 fi
 
-# Pick the backend. srun (login node) -> dispatch a job. Else already inside the
-# dev container -> run inline (inline == in the container). Else a docker host
-# (shared GPU server) -> --rm container here. Else bare local ROCm -> inline.
-# srun is checked first so a login node dispatches rather than building locally;
-# the /.dockerenv check precedes docker so we don't nest a container.
-if [ -z "$MODE" ]; then
-    if command -v srun >/dev/null 2>&1; then
-        MODE=srun
-    elif [ -f /.dockerenv ]; then
-        MODE=direct
-    elif command -v docker >/dev/null 2>&1; then
-        MODE=docker
-    elif [ -x /opt/rocm/llvm/bin/clang++ ]; then
-        MODE=direct
-    else
-        echo "ERROR: no build backend found (no Slurm, no docker," >&2
-        echo "  no local /opt/rocm). Set MODE=direct|docker|srun explicitly." >&2
-        exit 1
-    fi
-fi
+# Pick the backend (see _detect_backend in ckCommon for the precedence rule).
+[ -n "$MODE" ] || MODE=$(_detect_backend build) || exit 1
 echo "Backend: $MODE"
 
 # srun builds on CPU nodes (no GPU to probe) require an explicit arch; direct and

@@ -64,11 +64,8 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-# Echo the running holder's job id (empty if none). A pending holder does not
-# count: it cannot be overlapped onto until allocated.
-holder_running() {
-    squeue -h -u "$USER" -n "$HOLD_NAME" -t RUNNING -o '%i' 2>/dev/null | head -1
-}
+# _hold_jobid (from ckCommon) echoes the RUNNING holder's job id, or empty. A
+# pending holder does not count: it cannot be overlapped onto until allocated.
 # Echo any holder's job id regardless of state (running or pending).
 holder_any() {
     squeue -h -u "$USER" -n "$HOLD_NAME" -o '%i' 2>/dev/null | head -1
@@ -111,7 +108,7 @@ start)
         echo "Submitted holder $HOLD_NAME (job $jid); waiting for allocation ..."
     fi
     # Wait until the holder is RUNNING so a following ckRun overlaps immediately.
-    until [ -n "$(holder_running)" ]; do sleep 5; done
+    until [ -n "$(_hold_jobid)" ]; do sleep 5; done
     line=$(squeue -h -u "$USER" -n "$HOLD_NAME" -o '%i %N %L' 2>/dev/null | head -1)
     echo "Holder ready: $line  (jobid node time-left). ckRun now overlaps into it."
     ;;
