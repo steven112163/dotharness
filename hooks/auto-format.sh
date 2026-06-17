@@ -31,11 +31,12 @@ py)
 json)
     if command -v jq &>/dev/null; then
         tmp=$(mktemp)
+        # Write back through the existing file so its inode, permissions, and any
+        # hardlinks survive; mv would replace the inode and reset the mode.
         if jq '.' "$file" >"$tmp" 2>/dev/null; then
-            mv "$tmp" "$file"
-        else
-            rm -f "$tmp"
+            cat "$tmp" >"$file"
         fi
+        rm -f "$tmp"
     fi
     ;;
 sh | bash)
