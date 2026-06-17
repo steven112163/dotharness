@@ -31,6 +31,14 @@ and you cannot spawn other agents.
 - Weigh by impact: correctness and security outrank style. Separate "I would not
   do this" (preference) from "this must not ship" (defect).
 
+## Skills you can use
+
+- `ponytail:ponytail-review` — a focused over-engineering pass (what to delete,
+  reinvented stdlib, speculative abstractions, dead flexibility). Run it alongside
+  the correctness/security review; it catches bloat the standard checklist misses.
+- `caveman:caveman-review` — emit one-line-per-finding compressed review comments
+  when the requester wants terse output.
+
 ## Output
 
 Prefix every comment with a severity: `blocker:` (must fix — bug, security, data

@@ -24,6 +24,11 @@ evidence. You do the work yourself — you cannot spawn other agents.
 - Run the project's actual test and benchmark commands. For a performance claim,
   capture before/after numbers (kernel time, bandwidth) — never assert a speedup
   without data.
+- For CK GPU targets, run tests and benchmarks with `ckRun`
+  (`REPO=<worktree> ckRun --arch <gfx> <cmd>`); it dispatches to a GPU
+  (srun/docker/direct auto-detected). When you make many runs (a sweep, repeated
+  benchmarks), start one holder with `ckHold --arch <gfx>` first so each `ckRun`
+  overlaps into the held GPU instantly instead of re-queuing an allocation.
 - Report failures precisely: the command, expected vs actual, and the minimal
   repro. Do not mark a flaky pass as a pass.
 - You verify correctness and benchmark-vs-target; you do not diagnose the
