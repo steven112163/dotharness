@@ -197,15 +197,20 @@ echo "Pre-commit:"
 venv_dir="$REPO_DIR/.venv"
 if [ ! -x "$venv_dir/bin/pre-commit" ]; then
     if command -v python3 &>/dev/null; then
-        echo "  creating .venv and installing pre-commit"
+        echo "  creating .venv and installing pre-commit, anthropic"
         python3 -m venv "$venv_dir"
-        "$venv_dir/bin/pip" install --quiet --upgrade pip pre-commit
+        "$venv_dir/bin/pip" install --quiet --upgrade pip pre-commit anthropic
     else
         echo "  skipped (python3 not found)"
     fi
+elif ! "$venv_dir/bin/python3" -c "import anthropic" 2>/dev/null; then
+    echo "  installing anthropic into existing .venv"
+    "$venv_dir/bin/pip" install --quiet anthropic
 fi
 if [ -x "$venv_dir/bin/pre-commit" ]; then
-    if (cd "$REPO_DIR" && "$venv_dir/bin/pre-commit" install >/dev/null); then
+    if grep -q 'pre-commit.com' "$REPO_DIR/.git/hooks/pre-commit" 2>/dev/null; then
+        echo "  ok  git hook (already installed)"
+    elif (cd "$REPO_DIR" && "$venv_dir/bin/pre-commit" install >/dev/null); then
         echo "  installed git hook"
     else
         echo "  warn: pre-commit install failed"

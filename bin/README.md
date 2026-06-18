@@ -13,3 +13,5 @@ Helper scripts in `bin/`, symlinked individually into `~/bin/` (already on `PATH
 ## Other
 
 - **dockerRun** — create a named dev container from an image, or print the attach command if it already exists. Used by the `ck-profile` skill to spin up its profiling container.
+- **llm** — query an external LLM gateway (bash wrapper; invokes `llm.py` via the repo `.venv`). Requires `ANTHROPIC_BASE_URL`, `LLM_GATEWAY_KEY`, and `LLM_GATEWAY_KEY_HEADER`. Default model `gpt-5.5`. Driven by the `llm` skill.
+- **llm.py** — Python implementation for `llm`; not invoked directly.

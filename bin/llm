@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+REAL="$(realpath "$0")"
+REPO="$(cd "$(dirname "$REAL")/.." && pwd)"
+exec "$REPO/.venv/bin/python3" "$(dirname "$REAL")/llm.py" "$@"
