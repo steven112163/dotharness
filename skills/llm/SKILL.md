@@ -25,8 +25,21 @@ Options:
 - `-m MODEL` — model name (default: `gpt-5.5`)
 - `-s "SYSTEM"` — system prompt
 - `-t N` — max output tokens (default: 32768)
-- `--temperature F` — sampling temperature
+- `--temperature F` — sampling temperature (suppressed when `--thinking` is set)
+- `--thinking` — enable reasoning before final response; intermediate thought is hidden
+- `--effort low|medium|high|xhigh` — reasoning effort when `--thinking` is set (default: `high`)
 - `--stream` — stream output progressively
+
+**Reasoning effort per model family:**
+
+| Family | Parameter | Notes |
+|---|---|---|
+| `Claude-*-4.6` and older | `budget_tokens` | low=1024 medium=4096 high=16000 xhigh=32768; clamped if near `--max-tokens` |
+| `Claude-*-4.7+` | `output_config.effort` | adaptive mode via gateway |
+| `o1/o3/o4-*` | `reasoning_effort` | always on; xhigh→high |
+| `gpt-5.*` | `reasoning_effort` | opt-in reasoning; all levels supported |
+| `DeepSeek-*` | `reasoning_effort` | low/medium/high→high, xhigh→max |
+| `gemini-*` | `thinkingBudget` | low=512 medium=4096 high=16384 xhigh=32768 |
 
 ## Available models
 
@@ -35,8 +48,7 @@ Options:
 | `gpt-5.5` | 1M |
 | `gpt-4o` | 128k |
 | `o3` | 200k |
-| `gemini-2.5-pro` | 1M |
-| `gemini-3-pro-preview` | 2M |
+| `gemini-3.5-flash` | 1M |
 | `DeepSeek-V4-Flash` | 1M |
 | `Llama-4-Scout-17B` | 10M |
 
