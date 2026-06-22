@@ -35,7 +35,7 @@ Ask if the user wants to run tests now or paste existing output. If running:
 
 Use this template (CK team convention, see PR #6378, #7850):
 
-```
+```text
 ## Motivation
 
 [Why this change exists, link related PRs/issues]

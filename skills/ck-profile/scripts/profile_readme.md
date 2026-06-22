@@ -26,4 +26,4 @@ holding everything else (raw data / large artifacts). Start at each folder's
 
 `.html` reports (including the trace `timeline.html`) are self-contained and open
 offline in Live Preview; `.dot` files open in VS Code's Graphviz extension; the
-`.pftrace` opens at https://ui.perfetto.dev for perfetto-only deep dives.
+`.pftrace` opens at <https://ui.perfetto.dev> for perfetto-only deep dives.

@@ -23,6 +23,7 @@ report presents the promoted candidate *and* the alternatives, with QA and profi
 evidence for each.
 
 **Core principles:**
+
 - **The lead owns lifecycle; teammates own the message bus.** Only the lead can
   spawn or stop a teammate (a teammate has no Agent tool and cannot spawn anything).
   Results flow peer-to-peer — teammates hand their output directly to whoever needs
@@ -50,7 +51,7 @@ The lead is the only agent that spawns or stops teammates. The grouping below is
 logical (who synthesizes whose output), **not** a spawn hierarchy — every teammate,
 worker and coordinator alike, is spawned directly by the lead.
 
-```
+```text
 Lead (you, the main session) — sole spawner/stopper; spawns on demand, stops on delivery
 
 Worker teammates — native agent definitions in ~/.claude/agents/
@@ -144,7 +145,7 @@ These are strict. Violating them defeats the purpose of the team.
 
 All files an agent writes (checkpoints, handoffs, reports, reviews) go under a single per-task directory:
 
-```
+```text
 .claude/.dev-team/<task_name>/<role>-<kind>.md
 ```
 
@@ -270,6 +271,7 @@ worktree — each candidate gets its own (see "Candidate worktrees & build cache
 
 **Spawn on demand, stop on delivery.** This is the rule that keeps the team
 controllable:
+
 - A **research** need (Phase 2 drafting, or any later point) → the lead spawns a
   research group (principal-researcher + the researchers it needs), which delivers
   the conclusion to the requester and is then stopped.
@@ -379,6 +381,7 @@ regressions; a profiling number can be a fluke. Trust but verify.
 ### Phase 6: Report best + alternatives
 
 Compile and present to the user, built from `candidates.md`:
+
 - **Promoted candidate:** design and key decisions; build status; QA results
   (correctness + benchmark vs target); the profiler verdict and the **remaining
   ranked optimization directions**; verification results.
@@ -529,6 +532,7 @@ Long-running agents will exhaust their context window. Three mechanisms prevent 
 ### 60% Checkpoint (scratchpad)
 
 When context usage reaches ~60% remaining, the agent writes a checkpoint without requesting replacement:
+
 1. Read `templates/context-checkpoint.md` for the template.
 2. Copy the template into `.claude/.dev-team/<task_name>/<role>-checkpoint.md`. Fill in the common sections and your role-specific section. Set **Type** to `checkpoint`.
 3. Continue working. Do not message the lead.
@@ -544,6 +548,7 @@ This prevents blowing past the handoff threshold in a single operation. A large 
 ### 40% Handoff (ask-first)
 
 When context usage reaches ~40% remaining, the agent stops current work and initiates a full handoff:
+
 1. Read `templates/context-checkpoint.md` for the template.
 2. Copy the template into `.claude/.dev-team/<task_name>/<role>-handoff.md`. Fill in all sections, including **Work remaining** and **Blockers**. Set **Type** to `handoff`. Reference the earlier checkpoint file if one exists.
 3. Message the **lead** with the file path and ask for a replacement. (The lead spawned every teammate and is the only agent that can spawn the replacement — so every handoff goes to the lead, whether you are a worker or a coordinator.)

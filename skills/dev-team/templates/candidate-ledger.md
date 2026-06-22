@@ -22,6 +22,7 @@ Baseline: <sha>   Target: <metric + value>
 ```
 
 Columns:
+
 - **id / parent** — lineage; parent empty for an initial fan-out candidate.
 - **approach** — the one-line distinguishing idea.
 - **branch / worktree** — where it lives (for integration and cleanup).

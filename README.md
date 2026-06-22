@@ -4,7 +4,7 @@ Personal monorepo for Claude Code skills, rules, and configuration.
 
 ## Structure
 
-```
+```text
 skills/                → own skills, symlinked to ~/.claude/skills/        (skills/README.md)
   dev-team/            → agent team orchestration (lead spawns native agents as teammates)
   research/            → multi-mode research with anti-sycophancy safeguards
@@ -54,6 +54,7 @@ Each component is documented next to its code:
 A `pre-commit` gate runs lint, format, and secret checks on every commit, and a GitHub Actions workflow enforces the same set on push and pull request.
 
 **Hooks (`.pre-commit-config.yaml`), framework-managed:**
+
 - `shellcheck` — shell linting (hooks, `bin/`, `statusline.sh`, `setup.sh`, skill scripts)
 - `shfmt` — shell formatting at 4-space indent (`-i 4`), matching `auto-format.sh`
 - `ruff` + `ruff-format` — Python lint and format for the ck-profile scripts

@@ -10,7 +10,7 @@
 
 Subject line format (enforced by `commit-lint` hook):
 
-```
+```text
 <type>(<scope>): <subject>
 ```
 
@@ -29,12 +29,13 @@ Scope is optional. Subject uses imperative mood ("add", not "adds" or "added"), 
 | chore | Build, tooling, or dependency changes |
 
 Subject line limits:
+
 - Maximum 72 characters (type + scope + separator + subject combined).
 - Separate subject from body with a blank line.
 
 When a commit covers multiple points, use a body list:
 
-```
+```text
 feat(web): implement email verification workflow
 
 - Add token generation service
@@ -44,7 +45,7 @@ feat(web): implement email verification workflow
 
 Bad examples (rejected by hook):
 
-```
+```text
 Update files                          # missing type
 feat - add login                      # wrong separator
 Feat(web): Add login                  # type must be lowercase

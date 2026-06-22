@@ -105,8 +105,8 @@ build tree is kept in the `ck_profile_out/static/build/` subfolder; so the repor
 are visible on the host; the `.html` is a self-contained chart view —
 occupancy histogram, effective-VGPR bars with the cliff marked, spill rows
 highlighted). Report scope: for a focused ask ("spills",
-"occupancy", "LDS"), filter to the relevant columns; otherwise give the overview
-+ worst offenders. The occupancy cliff to watch is **129 effective VGPRs**
+"occupancy", "LDS"), filter to the relevant columns; otherwise give the overview and
+worst offenders. The occupancy cliff to watch is **129 effective VGPRs**
 (128→4 waves, 129→3 waves). See REFERENCE.md.
 
 ## Dynamic mode
@@ -115,26 +115,32 @@ highlighted). Report scope: for a focused ask ("spills",
    `ckBuild` (the standard CK build command; it auto-detects the container and arch,
    configures with a compiler cache, and builds for the host arch only — delegate it,
    logs are large):
+
    ```bash
    CONTAINER=<container> REPO=$REPO ckBuild --minimal <target>
    ```
+
    `ckBuild` is incremental by default (reuses `build/`); add `--scratch` only after
    an arch/toolchain/cmake-option change. Run from the CK root or pass `REPO`.
 2. **Profile.** The harness writes per-run CSVs under
    `ck_profile_out/dynamic/raw/<variant>/run_NN/` and is robust to PMC counter-capacity
    crashes (kills orphaned app processes; cleans the `.rocprofv3/` scratch dir):
+
    ```bash
    CONTAINER=<container> REPO=$REPO BIN=build/bin/<target> \
      BASE_ARGS='-v=0' SWEEP_FLAG='<flag>' SWEEP_VALS='<v1,v2,...>' NRUNS=<n> \
      bash <skill-dir>/scripts/run_profile.sh
    ```
+
    Omit `SWEEP_FLAG`/`SWEEP_VALS` for a single variant. A long sweep
    (variants × nruns × passes) takes minutes — run in background.
 3. **Aggregate + classify.**
+
    ```bash
    python3 <skill-dir>/scripts/aggregate.py --raw $REPO/ck_profile_out/dynamic/raw \
      --arch $ARCH [--iters N | --marker <kernel-substr>]
    ```
+
    `--iters` (e.g. warmup+repeat) or `--marker` (a kernel firing once per
    pipeline) gives per-iteration numbers; otherwise values are per-run. Writes
    `summary.md` (readable report), `summary_overall.csv`, and
@@ -171,7 +177,7 @@ Each run writes two views of the same trace under
   It is the **useful 80%** (ordering, gaps, overlap, who dominates wall time), not
   a perfetto clone: no flows, counter tracks, SQL, or CPU-scheduling.
 - **`trace_results.pftrace`** — the full perfetto trace for the remaining 20%
-  (flows, counters, CPU sched, nanosecond zoom). Open https://ui.perfetto.dev and
+  (flows, counters, CPU sched, nanosecond zoom). Open <https://ui.perfetto.dev> and
   drag it in (the file is local; only the viewer is web).
 
 The reading guide is in `ck_profile_out/trace/index.md`. PC sampling is beta and
@@ -205,10 +211,10 @@ python3 <skill-dir>/scripts/depgraph.py --mode both \
   --raw $REPO/ck_profile_out --out $REPO/ck_profile_out/depgraph
 ```
 
-* `dot/data_dependency.dot` — the logical producer→consumer DAG over workspace
+- `dot/data_dependency.dot` — the logical producer→consumer DAG over workspace
   buffers, encoded from `ssd_fwd.hpp` launch order (last-writer-wins handles the
   reused `pa`/`pb` scratch). Needs no GPU run.
-* `dot/runtime_trace.dot` — the as-executed dispatch graph from a rocprofv3
+- `dot/runtime_trace.dot` — the as-executed dispatch graph from a rocprofv3
   kernel-trace CSV (`--raw` searches for `*kernel_trace.csv`; or `--trace-csv`).
   Run `trace` or `dynamic` first to produce one. `--mode data` or `runtime`
   selects a single graph. A reading guide is written to

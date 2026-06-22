@@ -22,6 +22,7 @@ echo "message" | bin/llm [options]
 ```
 
 Options:
+
 - `-m MODEL` — model name (default: `gpt-5.5`)
 - `-s "SYSTEM"` — system prompt
 - `-t N` — max output tokens (default: 32768)

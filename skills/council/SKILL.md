@@ -43,10 +43,12 @@ Launch 3 background Bash jobs **simultaneously** — each as its own `run_in_bac
 # Bash call 1
 bin/llm -m gpt-5.5 --thinking --effort high < "$COUNCIL_DIR/question.txt" > "$COUNCIL_DIR/gpt.txt" 2>&1
 ```
+
 ```bash
 # Bash call 2
 bin/llm -m DeepSeek-V4-Flash --thinking --effort high < "$COUNCIL_DIR/question.txt" > "$COUNCIL_DIR/deepseek.txt" 2>&1
 ```
+
 ```bash
 # Bash call 3
 bin/llm -m gemini-3.5-flash --thinking --effort high < "$COUNCIL_DIR/question.txt" > "$COUNCIL_DIR/gemini.txt" 2>&1
@@ -60,7 +62,7 @@ Wait for all three to complete before reading any results.
 
 Spawn one `reviewer` subagent with this prompt (fill in the actual question and COUNCIL_DIR path):
 
-> Read four independent responses to: "<question>"
+> Read four independent responses to: `QUESTION`
 >
 > Files in <COUNCIL_DIR>: claude.txt (Claude), gpt.txt (GPT-5.5), deepseek.txt (DeepSeek-V4-Flash), gemini.txt (Gemini-3.5-Flash).
 >

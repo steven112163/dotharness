@@ -27,6 +27,7 @@ block is 4 wavefronts). Work-items in a workgroup share LDS and can
 `__syncthreads()`; work-items in different workgroups cannot.
 
 Two naming traps:
+
 - **"wave" means "wavefront"**, not a 32-lane NVIDIA warp. A CDNA wavefront is 64
   lanes. The PMC counters (`SQ_WAVES`, `MeanOccupancyPerCU`) and the static
   remark `Occupancy [waves/SIMD]` all count 64-lane wavefronts.
@@ -49,7 +50,7 @@ Counter mode is aggregate (per kernel). For per-instruction stall reasons use
 
 ## counters.txt (one hardware pass per `pmc:` line)
 
-```
+```text
 pmc: TCC_HIT TCC_MISS                  # pass 1 — L2 hit ratio = HIT/(HIT+MISS)
 pmc: FETCH_SIZE                        # pass 2 — KB read from HBM  (own pass: EA counters)
 pmc: WRITE_SIZE                        # pass 3 — KB written to HBM (own pass)
@@ -78,7 +79,7 @@ roofline. Other useful extras: `SPI_RA_WVLIM_STALL_CSN` (occupancy-limited),
 
 Per-run raw data lives under `ck_profile_out/dynamic/raw/<variant>/`:
 
-```
+```text
 run_NN/
   t_kernel_trace.csv     raw per-launch: timestamps, VGPR/SGPR, LDS, scratch, grid/block
   t_kernel_stats.csv     per-kernel aggregate (Calls, TotalDurationNs, Percentage, ...)
@@ -104,11 +105,13 @@ template names (commas inside — parse with a real CSV reader, not `cut -d,`).
 ## Roofline-lite classification (aggregate.py)
 
 Two ratios per variant:
+
 - **compute util** = `max(VALUBusy, SALUBusy)` %.
 - **bandwidth util** = achieved HBM GB/s ÷ peak HBM GB/s, where achieved =
   `(FETCH_SIZE+WRITE_SIZE) bytes ÷ total kernel-active time`.
 
 Verdict thresholds (heuristic, tune in `aggregate.py`):
+
 - compute util ≥ 60% → **compute-bound**
 - else bandwidth util ≥ 60% → **memory-bandwidth-bound**
 - else both < 25% → **latency/occupancy-bound** (check occupancy, register/LDS
@@ -127,6 +130,7 @@ needed. gfx IDs are confirmed against AMD's internal GFX/LLVM-target reference
 sheet.
 
 CDNA (Instinct, HBM) — exact, one product family per gfx ID:
+
 - gfx942 (MI300X/MI325X, HBM3) = 5300
 - gfx950 (MI350X/MI355X, HBM3E) = 8000
 - gfx1250 (MI450/MI455X, HBM4) = 19600, gfx1251 (MI430X, HBM4) = 19600
@@ -134,6 +138,7 @@ CDNA (Instinct, HBM) — exact, one product family per gfx ID:
 RDNA (Radeon, GDDR) — **one gfx ID covers many SKUs with different memory**, so
 the table holds the *flagship* of each family; for an exact card pass
 `--peak-gbs <value>`:
+
 - gfx1201 (RX 9070 XT) = 640, gfx1200 (RX 9060 XT) = 320
 - gfx1100 (RX 7900 XTX) = 960, gfx1101 (RX 7800 XT) = 624, gfx1102 (RX 7600) = 288
 
@@ -162,6 +167,7 @@ the static per-kernel VGPR/LDS, not computed into ratios.
 | gfx1102 | RX 7600 | 32 | 32 | 2 | 32 | 1024 | 0 | 128 KB |
 
 Three caveats baked into these numbers:
+
 - **max waves/CU = 32 is derived, not quoted verbatim.** CDNA = 8 waves/SIMD × 4
   SIMD; RDNA = 16 waves/SIMD × 2 SIMD. Both give 32. The legacy "10 waves/SIMD →
   40/CU" is GCN-era and does not apply to CDNA3/RDNA3+.
@@ -182,6 +188,7 @@ their busy cycles show up in `SQ_VALU_MFMA_BUSY_CYCLES` and drive the compute-mo
 roofline. Naming: `v_mfma_<accum>_<M>x<N>x<K>_<input-type>` (e.g.
 `v_mfma_f32_32x32x8_f16` = fp16 inputs, fp32 accumulate, a 32×32 output tile, K=8
 contraction). Two axes vary independently:
+
 - **M×N** is the accumulator tile a single wavefront produces. 32×32 means fewer,
   larger instructions and more VGPR/AGPR per wavefront; 16×16 means smaller
   fragments and a deeper K per instruction.
@@ -240,6 +247,7 @@ beta and driver-dependent (reports unsupported on the gfx942 container), so trea
 them as best-effort or fall back to `cfg`.
 
 ### Memory-bandwidth-bound (HBM)
+
 - **Signals:** BW-util % ≥ 60; achieved BW near peak (`gpu_specs.py PEAK_MEM_GBS`); `FETCH_SIZE`+`WRITE_SIZE` large per iteration.
 - **Why:** the kernel moves bytes faster than it computes; HBM is the limiter.
 - **First-line fix:** cut bytes — fuse producer/consumer kernels (see depgraph), reuse via LDS, narrow dtype (fp16/bf16/fp8) if accuracy allows.
@@ -248,6 +256,7 @@ them as best-effort or fall back to `cfg`.
 - **Confirm with:** dynamic verdict; `compute` mode roofline (DRAM ceiling).
 
 ### Compute-bound — VALU / SALU
+
 - **Signals:** `VALUBusy` (or `SALUBusy`) ≥ 60%; BW-util low.
 - **Why:** the vector (or scalar) ALU pipe is saturated.
 - **First-line fix:** reduce instruction count — strength-reduce, hoist invariants, vectorize (`global_load_dwordx4`), drop redundant address math (often the SALU source).
@@ -256,6 +265,7 @@ them as best-effort or fall back to `cfg`.
 - **Confirm with:** `compute` mode speed-of-light; `cfg` for the hot straight-line block.
 
 ### Compute-bound — MFMA / matrix
+
 - **Signals:** `SQ_VALU_MFMA_BUSY_CYCLES` large while `VALUBusy` is modest (the dynamic verdict may then read latency-bound because `VALUBusy` undercounts the matrix pipe).
 - **Why:** the matrix engine is the real worker; the roofline-lite verdict can't see it (raw cycles, no per-CU normalization).
 - **First-line fix:** treat as compute-bound; improve MFMA feeding (LDS staging, larger K per instruction) rather than chasing the misleading latency verdict.
@@ -264,6 +274,7 @@ them as best-effort or fall back to `cfg`.
 - **Confirm with:** `compute` mode (MFMA roofline) — the only mode that attributes this properly.
 
 ### Occupancy capped by registers
+
 - **Signals:** static effective VGPR at/over the **129 cliff** (128→4 waves, 129→3); low `MeanOccupancyPerCU` / occ-util %.
 - **Why:** each wave reserves too many VGPRs, so fewer waves stay resident to hide latency.
 - **First-line fix:** `__launch_bounds__(block, min_waves)` to cap the register budget; cut live values.
@@ -272,6 +283,7 @@ them as best-effort or fall back to `cfg`.
 - **Confirm with:** `static` mode (the ceiling) vs dynamic occ-util % (the achieved).
 
 ### Occupancy capped by LDS
+
 - **Signals:** LDS/block (static) high relative to LDS/CU (`gpu_specs.py lds_kb_per_cu`); low occ-util % with VGPR below the cliff.
 - **Why:** the workgroup's LDS allocation limits resident workgroups per CU.
 - **First-line fix:** shrink the LDS tile, or split the LDS-heavy phase.
@@ -280,6 +292,7 @@ them as best-effort or fall back to `cfg`.
 - **Confirm with:** `static` LDS column; dynamic occ-util %.
 
 ### Register spill / scratch
+
 - **Signals:** static `scratch_size` > 0, non-zero spill, or dynamic stack (highlighted rows).
 - **Why:** the compiler ran out of registers and spilled to scratch (global-backed) — per-lane DRAM traffic on every access.
 - **First-line fix:** `__launch_bounds__`; remove the largest live arrays.
@@ -288,6 +301,7 @@ them as best-effort or fall back to `cfg`.
 - **Confirm with:** `static` mode (authoritative); shows even without a GPU run.
 
 ### Latency-bound — dependent loads
+
 - **Signals:** the roofline-lite **below-both** verdict (compute util < 25% **and** BW-util < 25%, per the thresholds above); corroborated by low occ-util % and elevated `MemUnitStalled`; `SQ_WAIT_INST_*` **(add a pmc line)**.
 - **Why:** waves issue a load then stall on the result before the next dependent op, and there aren't enough other waves resident to hide it.
 - **First-line fix:** add ILP — unroll so several loads are in flight before the first is used; raise occupancy (see the two occupancy patterns).
@@ -296,6 +310,7 @@ them as best-effort or fall back to `cfg`.
 - **Confirm with:** `trace` (gaps between small dispatches); `static` (is it the occupancy ceiling?).
 
 ### LDS bank conflicts
+
 - **Signals:** `LDSBankConflict` high relative to LDS access volume.
 - **Why:** LDS has 32 banks; same-bank accesses in a wave serialize.
 - **First-line fix:** pad the leading dimension (`tile[N][N+1]`) to break the stride.
@@ -304,6 +319,7 @@ them as best-effort or fall back to `cfg`.
 - **Confirm with:** dynamic `LDSBankConflict`; `cfg` to locate the `ds_*` ops.
 
 ### Uncoalesced / low-utilization HBM traffic
+
 - **Signals:** achieved BW low while `FETCH_SIZE` is high (bytes moved but throughput poor); per-access coalescing metrics need **(PC sampling)** — rocprofv3 has no direct sectors/request counter like NCU.
 - **Why:** lanes in a wave touch non-contiguous addresses, so hardware fetches sectors only a few lanes use.
 - **First-line fix:** rework the thread↔data map so consecutive lanes read consecutive addresses; vectorize loads.
@@ -312,6 +328,7 @@ them as best-effort or fall back to `cfg`.
 - **Confirm with:** `compute` mode (L1/L2 sector efficiency); `cfg`/source for the offending load.
 
 ### Atomics contention
+
 - **Signals:** high L2 traffic with low compute throughput; atomic-specific counters (`TCC_EA_*` atom/red) need **(add a pmc line)**.
 - **Why:** many threads atomically update few locations and serialize.
 - **First-line fix:** reduce hierarchically — wave-level (`ds_swizzle`/DPP/`__shfl`), then LDS within the workgroup, then one global atomic per workgroup.
@@ -320,6 +337,7 @@ them as best-effort or fall back to `cfg`.
 - **Confirm with:** `compute` mode (L2 atomic rows).
 
 ### Barrier / synchronization overhead
+
 - **Signals:** barrier stalls dominate **(PC sampling)**; otherwise infer from many `s_barrier` in `cfg` plus workgroup imbalance.
 - **Why:** `s_barrier` waits for the slowest wave; any per-wave imbalance amplifies it.
 - **First-line fix:** replace workgroup syncs with wave-scoped primitives (DPP/`ds_permute`/`__shfl`) where only wave-scope is needed; consolidate sync phases.
@@ -328,6 +346,7 @@ them as best-effort or fall back to `cfg`.
 - **Confirm with:** `cfg` (count `s_barrier`); PC sampling if the driver supports it.
 
 ### Pipeline bubbles (no compute/memory overlap)
+
 - **Signals:** `trace` timeline shows a sawtooth (compute and HBM alternate, never overlap); `MemUnitStalled` high while BW also high.
 - **Why:** single-buffered — load tile, compute, load next; nothing overlaps.
 - **First-line fix:** double-buffer two LDS tiles; compute on A while loading B.
@@ -336,6 +355,7 @@ them as best-effort or fall back to `cfg`.
 - **Confirm with:** `trace` (the shape is the evidence).
 
 ### Tail / work imbalance
+
 - **Signals:** `trace` timeline shows a long gradual tail; grid only slightly exceeds a wave; per-input work skew (e.g. variable seq-len driving the inner loop).
 - **Why:** a few workgroups with more work keep running after the rest finish.
 - **First-line fix:** chunk the variable work into fixed-size pieces; or split long items across more workgroups with a small post-reduction.
@@ -344,6 +364,7 @@ them as best-effort or fall back to `cfg`.
 - **Confirm with:** `trace` (tail shape); always inspect the input distribution (max/avg work ratio > 3–5 flags it).
 
 ### Small grid / CU idle
+
 - **Signals:** total grid < CU count (`gpu_specs.py cu`), or waves/CU < 1; the chip is under-filled.
 - **Why:** each workgroup sits on one CU; with fewer workgroups than CUs, some CUs idle the whole kernel.
 - **First-line fix:** expose more parallelism — split-K for reductions/attention, split across heads/channels, grid-stride for cheap units.
@@ -352,6 +373,7 @@ them as best-effort or fall back to `cfg`.
 - **Confirm with:** `static`/`trace` launch geometry; dynamic occ-util %.
 
 ### Unintended FP64
+
 - **Signals:** FP64 pipe active in a kernel meant to be FP32; no default counter — read the disassembly (`cfg`/`llvm-objdump` for `v_*_f64`) or the source.
 - **Why:** C++ literals (`1.0`, `0.5`) are `double`; `float x = a + 1.0*b` promotes the expression to FP64, slower than the intended fp32 path — and dramatically slower on parts with a reduced FP64 rate (consumer RDNA), though even on full-rate CDNA Instinct the promotion wastes the fp32 pipes.
 - **First-line fix:** add the `f` suffix to every literal (`1.0f`); use `__ocml`/`*f` transcendentals.
@@ -360,6 +382,7 @@ them as best-effort or fall back to `cfg`.
 - **Confirm with:** `cfg` (grep for `_f64` instructions).
 
 ### Branch divergence
+
 - **Signals:** `cfg` shows many small basic blocks / branchy structure; lanes in a wave take different paths.
 - **Why:** the wave serializes divergent paths; effective lane utilization drops.
 - **First-line fix:** make all lanes in a wave take the same branch (sort/partition data); predicate cheap `if/else` into `mask*a + (1-mask)*b`.
@@ -368,6 +391,7 @@ them as best-effort or fall back to `cfg`.
 - **Confirm with:** `cfg` (block count/branch density); PC sampling for branch stalls if supported.
 
 ### Front-end / I-cache
+
 - **Signals:** `SQC_ICACHE_BUSY_CYCLES`, `SQ_IFETCH_LEVEL` **(add a pmc line)** elevated with the compute pipes idle.
 - **Why:** instruction fetch can't keep the issue unit fed — usually an oversized unrolled body.
 - **First-line fix:** reduce code size (dial back unrolling, shrink the instruction footprint of the hot loop).
@@ -395,7 +419,7 @@ Compute. So rank by judgement, not a fabricated number:
 
 Each direction cites **specific counter values**, never a vague label. Template:
 
-```
+```text
 Ranked optimization directions — <target> (<arch>), verdict: <verdict>
 
 1. <direction>  [effort: low|med|high]
@@ -423,7 +447,7 @@ in a separate build dir (`ck_profile_out/static/build/`, the project's own
 names with `c++filt`. Raw format (ANSI-colored; each line tagged
 `[-Rpass-analysis=kernel-resource-usage]`):
 
-```
+```text
 remark: Function Name: <mangled>
 remark:     TotalSGPRs: 58
 remark:     VGPRs: 256
@@ -440,6 +464,7 @@ Report CSV columns: `source,kernel,vgprs,agprs,effective_vgprs,total_sgprs,
 scratch_size,occupancy,sgpr_spill,vgpr_spill,lds_size,dynamic_stack`.
 
 Effective VGPRs and the occupancy cliff:
+
 - CDNA3 (gfx94x): `EffVGPRs = max(VGPRs, AGPRs)` (separate register files)
 - CDNA4 (gfx95x): `EffVGPRs = VGPRs + AGPRs` (unified file)
 - Cliff at **129 effective VGPRs**: 128 → 4 waves/SIMD, 129 → 3 waves (one extra
@@ -456,7 +481,7 @@ pressure as the limiter.
 `--sys-trace` records HIP + HSA API, kernel dispatches, and memory ops on one
 time axis with host↔device correlation. Output per run:
 
-```
+```text
 trace/raw/<variant>/run_NN/
   timeline.html                  offline HTML timeline (open in Live Preview)
   trace_results.pftrace          perfetto timeline (drag into ui.perfetto.dev)

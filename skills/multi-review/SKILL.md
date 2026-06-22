@@ -75,9 +75,11 @@ each only the diff and lens-specific instructions — never this session's histo
 
 1. **Broad** — `general-purpose` agent, filled from the superpowers
    `requesting-code-review` template:
+
    ```bash
    ls -d ~/.claude/plugins/cache/claude-plugins-official/superpowers/*/skills/requesting-code-review/code-reviewer.md | sort -V | tail -1
    ```
+
    Returns Critical/Important/Minor. Writes to `review-broad.md`.
 
 2. **Correctness & numerics** — `reviewer` agent, Lens 1 per `REFERENCE.md`.
@@ -181,7 +183,7 @@ Emit two parts and post nothing:
 
 1. Summary table:
 
-   ```
+   ```text
    | # | Severity | File:Line | Issue | Verdict |
    |---|----------|-----------|-------|---------|
    ```

@@ -19,6 +19,7 @@ A four-mode research skill with anti-sycophancy safeguards. Usable by both human
 Explore a problem space through guided questioning before researching.
 
 **Workflow:**
+
 1. Ask clarifying questions **one at a time**, up to 5 rounds. Each question narrows scope, surfaces assumptions, or identifies what the requester actually needs.
 2. After clarification (or if the requester says "just research it"), research using available tools.
 3. Present findings with citations. Ask a follow-up question to go deeper if appropriate.
@@ -33,6 +34,7 @@ Explore a problem space through guided questioning before researching.
 Answer a specific, well-formed question immediately.
 
 **Workflow:**
+
 1. Research using available tools.
 2. Return an answer with citations and confidence level (high / medium / low).
 3. No clarification loop. Exception: if the question is genuinely ambiguous, ask one clarifying question before researching. Only one.
@@ -48,6 +50,7 @@ Thorough multi-source, multi-model investigation with structured synthesis.
 **Step 2 — Per-sub-question multi-model gathering (parallel per sub-question).**
 
 Create a temp dir for this run:
+
 ```bash
 mkdir -p .claude/tmp
 RESEARCH_DIR=$(mktemp -d .claude/tmp/research-XXXXXX)
