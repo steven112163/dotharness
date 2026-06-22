@@ -9,11 +9,12 @@ description: Use when reviewing a diff or pull request before merge and a single
 ## Overview
 
 Run a multi-angle code review and emit a consolidated, validated findings report in
-the conversation. Four reviewers run in parallel — one broad generalist plus three
-specialized lenses — then a spawned consolidator agent merges their findings, a
-validation subagent verifies each against the actual source, and (for a PR) anything
-existing reviewers already raised is stripped. This skill never posts to GitHub; it
-produces a report for the user to act on.
+the conversation. Eight reviewers run in parallel — four Claude subagents (one broad
+generalist plus three specialized lenses) and four external model reviews via
+`bin/llm` — then a spawned consolidator agent merges their findings, a validation
+subagent verifies each against the actual source, and (for a PR) anything existing
+reviewers already raised is stripped. This skill never posts to GitHub; it produces
+a report for the user to act on.
 
 ## Modes
 
@@ -48,7 +49,7 @@ work while the tree is dirty, stash first or pass the PR number.
 If `diff.txt` is empty, stop and tell the user there is nothing to review. If the
 argument is a PR number but `gh` is unauthenticated, report it and offer local mode.
 
-## Step 2: Fan out four reviewers (parallel)
+## Step 2: Fan out reviewers (parallel — Claude lenses + external models)
 
 Compute SHAs for reviewer context. `BASE_SHA` must match the base the diff was
 actually taken against, so it is `HEAD` whenever `diff.txt` is the uncommitted-delta
@@ -65,44 +66,83 @@ else
 fi
 ```
 
-Dispatch all four reviewers in a single message so they run in parallel. Give each
-only crafted context — the diff in `REVIEW_DIR/diff.txt`, the SHAs, and the PR
-description/requirements — never this session's history.
+Dispatch all reviewers in a single message so they run in parallel. Each lens runs
+two reviewers simultaneously: a Claude subagent (deep context, tool access) and an
+external model via `bin/llm` (independent perspective, different training). Give
+each only the diff and lens-specific instructions — never this session's history.
 
-1. **Broad reviewer** — `general-purpose` agent, filled from the superpowers
-   `requesting-code-review` reviewer template. Locate it with:
+### Claude lens subagents (4 agents)
 
+1. **Broad** — `general-purpose` agent, filled from the superpowers
+   `requesting-code-review` template:
    ```bash
    ls -d ~/.claude/plugins/cache/claude-plugins-official/superpowers/*/skills/requesting-code-review/code-reviewer.md | sort -V | tail -1
    ```
+   Returns Critical/Important/Minor. Writes to `review-broad.md`.
 
-   Generalist full-pass; returns Critical/Important/Minor.
-2. **Correctness & numerics** — `reviewer` agent, focus per `REFERENCE.md` Lens 1.
-3. **GPU performance** — `reviewer` agent, focus per `REFERENCE.md` Lens 2.
-4. **Code quality** — `reviewer` agent, focus per `REFERENCE.md` Lens 3 (includes an
-   over-engineering/YAGNI pass; may run `ponytail:ponytail-review`).
+2. **Correctness & numerics** — `reviewer` agent, Lens 1 per `REFERENCE.md`.
+   Writes to `review-correctness.md`.
 
-Each lens reviewer reviews only the diff and returns severity-prefixed findings
-(`blocker:`/`suggestion:`/`question:`/`nit:`/`educational:`), each tied to
-`file:line` with a concrete fix.
+3. **GPU performance** — `reviewer` agent, Lens 2 per `REFERENCE.md`.
+   Writes to `review-gpu.md`.
 
-Tell each reviewer to write its full findings to its own file under `REVIEW_DIR`
-(`review-broad.md`, `review-correctness.md`, `review-gpu.md`, `review-quality.md`)
-and to return only that path plus a one-line summary. The consolidator in Step 3
-reads these files, so the four full reviews stay out of this session's context.
+4. **Code quality** — `reviewer` agent, Lens 3 per `REFERENCE.md` (includes YAGNI pass).
+   Writes to `review-quality.md`.
 
-If a reviewer returns nothing, note it and continue with the others.
+### External model reviews (4 parallel Bash calls)
+
+Run simultaneously with the Claude agents. Dispatch each as its own **background
+Bash tool call** (`run_in_background: true`) in the same message as the Claude
+subagents. Four separate Bash calls, one per reviewer:
+
+```bash
+# Bash call 1 — broad generalist (GPT-5.5)
+bin/llm -m gpt-5.5 --thinking --effort high \
+  -s "You are a senior code reviewer. Review this diff for correctness, security, performance, and readability. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>." \
+  < "$REVIEW_DIR/diff.txt" > "$REVIEW_DIR/review-broad-ext.md" 2>&1
+```
+
+```bash
+# Bash call 2 — correctness (DeepSeek)
+bin/llm -m DeepSeek-V4-Flash --thinking --effort high \
+  -s "You are a code correctness reviewer. Focus on: logic errors, unchecked returns, null/dangling pointers, off-by-one, integer overflow, error paths, security at boundaries. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>." \
+  < "$REVIEW_DIR/diff.txt" > "$REVIEW_DIR/review-correctness-ext.md" 2>&1
+```
+
+```bash
+# Bash call 3 — GPU performance (Gemini)
+bin/llm -m gemini-3.5-flash --thinking --effort high \
+  -s "You are a GPU performance reviewer. Focus on: memory coalescing, LDS bank conflicts, occupancy, wavefront divergence, kernel launch bounds, unnecessary host-device transfers, missed parallelism. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>." \
+  < "$REVIEW_DIR/diff.txt" > "$REVIEW_DIR/review-gpu-ext.md" 2>&1
+```
+
+```bash
+# Bash call 4 — readability/simplicity (GPT-5.5, different lens from call 1)
+# Same model as call 1 but focused on code quality rather than correctness/security.
+bin/llm -m gpt-5.5 --thinking --effort high \
+  -s "You are a code quality reviewer focused on readability and simplicity. Flag: dead code, magic numbers, premature abstractions, naming issues, functions over 100 lines, nesting over 3 levels, YAGNI violations. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>." \
+  < "$REVIEW_DIR/diff.txt" > "$REVIEW_DIR/review-quality-ext.md" 2>&1
+```
+
+Wait for all background Bash calls to complete before proceeding to Step 3.
+
+All eight outputs feed the consolidator. If an external call fails (env vars not
+set, gateway down), note it and continue with the Claude-only findings.
 
 ## Step 3: Consolidate
 
-Do not merge the four reviews yourself. Spawn one `reviewer` agent as the
-**consolidator**: it forms its own opinion, then synthesizes all four reviews into
-one. Give it the four review file paths, `REVIEW_DIR/diff.txt`, and
-`rules/code-review.md` as the standard. Instruct it to:
+Do not merge the reviews yourself. Spawn one `reviewer` agent as the
+**consolidator**: it forms its own opinion, then synthesizes all eight reviews
+(four Claude lenses + four external model reviews) into one. Give it all eight
+review file paths, `REVIEW_DIR/diff.txt`, and `rules/code-review.md` as the
+standard. Instruct it to:
 
-- Read all four review files and the diff, and apply `rules/code-review.md`.
+- Read all eight review files and the diff, and apply `rules/code-review.md`.
 - Merge findings into one list. Collapse duplicates (same `file:line` and same
-  underlying issue) into a single entry, keeping the sharpest fix.
+  underlying issue) into a single entry, keeping the sharpest fix. When a Claude
+  subagent and an external model flag the same issue, merge into one entry and note
+  both sources. When only an external model flags something, verify it is real before
+  keeping it — external models lack tool access and may misread context.
 - Weight by impact: correctness and security outweigh style nits; performance
   carries high weight when the change has explicit performance targets. Each lens
   finding keeps its own prefix unless this weighting clearly warrants a change; map
@@ -148,3 +188,5 @@ Emit two parts and post nothing:
 
 2. Per-finding drafts — the cited code line in a fenced block, then the comment with
    its fix. Use normal fenced code blocks, never GitHub `suggestion` blocks.
+
+After delivering the report, clean up: `rm -rf "$REVIEW_DIR"`.

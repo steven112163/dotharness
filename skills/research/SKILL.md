@@ -39,20 +39,52 @@ Answer a specific, well-formed question immediately.
 
 ### Deep
 
-Thorough multi-source investigation with structured synthesis.
+Thorough multi-source, multi-model investigation with structured synthesis.
 
 **Workflow:**
-1. Decompose the topic into sub-questions.
-2. Research each sub-question across multiple sources.
-3. Cross-reference findings: identify agreements, contradictions, and gaps.
-4. Synthesize a structured report:
-   - **Summary:** 2-3 sentences.
-   - **Findings:** Per sub-question, with citations.
-   - **Confidence:** High / medium / low per claim. High = verified in primary sources. Medium = follows from known principles but not directly verified. Low = inference or extrapolation.
-   - **Open questions:** Gaps in available information.
-   - **Recommendations:** If applicable.
 
-**You must use this structure.** Do not produce an unstructured analysis. The requester (human or agent) needs to scan and extract specific findings.
+**Step 1 — Decompose.** Break the topic into 3–6 concrete sub-questions that together cover the space.
+
+**Step 2 — Per-sub-question multi-model gathering (parallel per sub-question).**
+
+Create a temp dir for this run:
+```bash
+mkdir -p .claude/tmp
+RESEARCH_DIR=$(mktemp -d .claude/tmp/research-XXXXXX)
+```
+
+For each sub-question N, run simultaneously: web/database search plus three background `bin/llm` Bash calls. Write the sub-question to a temp file first (avoids shell injection):
+
+```bash
+printf '%s' "sub-question N" > "$RESEARCH_DIR/sq_N.txt"
+bin/llm -m gpt-5.5           --thinking --effort high < "$RESEARCH_DIR/sq_N.txt" > "$RESEARCH_DIR/sq_N_gpt.txt" 2>&1
+bin/llm -m DeepSeek-V4-Flash --thinking --effort high < "$RESEARCH_DIR/sq_N.txt" > "$RESEARCH_DIR/sq_N_deepseek.txt" 2>&1
+bin/llm -m gemini-3.5-flash  --thinking --effort high < "$RESEARCH_DIR/sq_N.txt" > "$RESEARCH_DIR/sq_N_gemini.txt" 2>&1
+```
+
+Merge web findings + model responses per sub-question. Note agreements and conflicts. Label model-only claims as "Unverified" unless corroborated by a primary source.
+
+**Step 3 — Council synthesis pass.**
+After all sub-questions are resolved, write draft findings to a file and pipe them to external models for a cross-check pass (piping avoids shell argument length limits):
+
+```bash
+cat "$RESEARCH_DIR/draft_findings.txt" | bin/llm -m gpt-5.5           --thinking --effort high -s "What's missing or wrong with these findings?" > "$RESEARCH_DIR/challenge_gpt.txt" 2>&1
+cat "$RESEARCH_DIR/draft_findings.txt" | bin/llm -m DeepSeek-V4-Flash --thinking --effort high -s "What's missing or wrong with these findings?" > "$RESEARCH_DIR/challenge_deepseek.txt" 2>&1
+cat "$RESEARCH_DIR/draft_findings.txt" | bin/llm -m gemini-3.5-flash  --thinking --effort high -s "What's missing or wrong with these findings?" > "$RESEARCH_DIR/challenge_gemini.txt" 2>&1
+```
+
+Incorporate valid challenges. Discard objections that lack reasoning. This is the anti-sycophancy checkpoint: external model agreement does not promote a claim; only primary-source corroboration does.
+
+**Step 4 — Structured report:**
+- **Summary:** 2–3 sentences.
+- **Findings:** Per sub-question, with citations. Label model-only claims "Unverified."
+- **Confidence:** High / medium / low per claim. High = verified in primary sources. Medium = follows from known principles, not directly verified. Low = model-only or extrapolation.
+- **Open questions:** Gaps no source or model resolved.
+- **Recommendations:** If applicable.
+
+**You must use this structure.** Do not produce unstructured analysis.
+
+After delivering the report, clean up: `rm -rf "$RESEARCH_DIR"`.
 
 ### Adversarial
 
