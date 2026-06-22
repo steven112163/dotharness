@@ -198,6 +198,7 @@ select_server() {
         fi
         bin=$(_backend_bin "${CK_TYPE[$s]:-}")
         [ -n "$bin" ] || die "server '$s': bad CK_TYPE '${CK_TYPE[$s]:-}' (want normal|slurm)."
+        echo "  probe $s (${CK_SSH[$s]:-no-ssh})..." >&2
         rc=0
         _probe "${CK_SSH[$s]:-}" "$bin" || rc=$?
         case "$rc" in
@@ -239,7 +240,8 @@ sync_source() {
     # --delete keeps the remote a mirror of local source; excluded paths are neither
     # copied nor deleted, so remote build artifacts and profiling output survive.
     # shellcheck disable=SC2086
-    rsync -az --delete --info=stats1 ${CK_SSH_OPTS:+-e "ssh $CK_SSH_OPTS"} \
+    rsync -avz --delete --info=progress2,stats2 \
+        --stats ${CK_SSH_OPTS:+-e "ssh $CK_SSH_OPTS"} \
         --filter=':- .gitignore' --exclude=.git \
         "${excludes[@]}" "$CK_LOCAL_REPO/" "$CK_REMOTE:$CK_REMOTE_REPO/"
 }
@@ -257,6 +259,7 @@ _remote_workdir() {
 remote_exec() {
     local cmd
     cmd=$(printf '%q ' "$@")
+    echo "→ $SERVER:$(_remote_workdir)\$ $*" >&2
     # shellcheck disable=SC2086
     ssh $CK_SSH_OPTS -t "$CK_REMOTE" \
         "export PATH=\"\$HOME/bin:\$PATH\"; cd $(printf '%q' "$(_remote_workdir)") || exit 1; $cmd"
