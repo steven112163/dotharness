@@ -90,7 +90,7 @@ After delivering the final answer, clean up: `rm -rf "$COUNCIL_DIR"`.
 ## Default models
 
 | Model | Strength |
-|---|---|
+| ----- | -------- |
 | `gpt-5.5` | General frontier reasoning |
 | `DeepSeek-V4-Flash` | Math, code, open-source perspective |
 | `gemini-3.5-flash` | Broad knowledge, 1M context, strong factual recall |

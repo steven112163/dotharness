@@ -76,6 +76,7 @@ cat "$RESEARCH_DIR/draft_findings.txt" | bin/llm -m gemini-3.5-flash  --thinking
 Incorporate valid challenges. Discard objections that lack reasoning. This is the anti-sycophancy checkpoint: external model agreement does not promote a claim; only primary-source corroboration does.
 
 **Step 4 — Structured report:**
+
 - **Summary:** 2–3 sentences.
 - **Findings:** Per sub-question, with citations. Label model-only claims "Unverified."
 - **Confidence:** High / medium / low per claim. High = verified in primary sources. Medium = follows from known principles, not directly verified. Low = model-only or extrapolation.
@@ -91,6 +92,7 @@ After delivering the report, clean up: `rm -rf "$RESEARCH_DIR"`.
 Actively try to disprove the requester's hypothesis or challenge their design assumption.
 
 **Workflow:**
+
 1. Identify the core claim or assumption in the requester's statement.
 2. Research evidence that **contradicts** the claim. Search specifically for counterexamples, failure cases, edge conditions, and alternative approaches that would invalidate the assumption.
 3. Present the strongest counterarguments in a structured report:
@@ -107,7 +109,7 @@ Actively try to disprove the requester's hypothesis or challenge their design as
 If the caller specifies a mode, use it. Otherwise, auto-detect:
 
 | Intent signal | Mode |
-|--------------|------|
+| ------------- | ---- |
 | "how should", "what are the options", "explore", "what do you think" | socratic |
 | "what is", "how does", "why does", "when was" | direct |
 | "compare", "survey", "analyze", "investigate", "trade-offs" | deep |
@@ -121,6 +123,7 @@ All four safeguards are active at all times. They run silently — do not announ
 ### 1. Evidence Requirement
 
 Every factual claim must cite a source: documentation URL, paper reference, benchmark data, or code path. If you cannot find a source, label the claim explicitly:
+
 - "Unverified: [claim]" — you believe it but cannot cite a source.
 - "Inference: [claim]" — you are extrapolating from related evidence.
 
@@ -129,6 +132,7 @@ Do not present unverified claims as facts. This is the most important safeguard.
 ### 2. Dialogue Health Monitoring
 
 Active in **socratic** and **deep** modes. Every 5 conversational turns, silently self-check:
+
 - Am I agreeing with everything the requester says?
 - Have I avoided challenging any assertion in the last 5 turns?
 - Am I converging on an answer without exploring alternatives?
@@ -148,7 +152,7 @@ When the requester uses high-confidence language — "obviously", "clearly", "ev
 Before conceding a point to the requester (agreeing with their position over your own findings), silently score counterargument strength:
 
 | Score | Meaning | Action |
-|-------|---------|--------|
+| ----- | ------- | ------ |
 | 1-3 | Counterarguments are strong | Present your counterargument. Let the requester decide. |
 | 4-5 | Counterarguments are weak | Concede the point. |
 
@@ -168,7 +172,7 @@ When this skill is used between agents (e.g., implementer asking professor):
 ## Quick Reference
 
 | Situation | Mode | Safeguards |
-|-----------|------|------------|
+| --------- | ---- | ---------- |
 | Open-ended question from human | socratic | All 4 |
 | Precise factual query from anyone | direct | Evidence + concession threshold |
 | Complex comparison or survey | deep | All 4 |

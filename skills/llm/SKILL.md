@@ -33,7 +33,7 @@ Options:
 **Reasoning effort per model family:**
 
 | Family | Parameter | Notes |
-|---|---|---|
+| ------ | --------- | ----- |
 | `Claude-*-4.6` and older | `budget_tokens` | low=1024 medium=4096 high=16000 xhigh=32768; clamped if near `--max-tokens` |
 | `Claude-*-4.7+` | `output_config.effort` | adaptive mode via gateway |
 | `o1/o3/o4-*` | `reasoning_effort` | always on; xhigh→high |
