@@ -29,12 +29,13 @@ ACCT_DIR=${ACCT_DIR:-$HOME/.cache/ckCommon}
 HOLD_NAME=${HOLD_NAME:-ckhold-$USER}
 
 # Echo the auto-detected backend (direct|docker|srun) for the current host, or
-# return 1 with a message if none. srun first so a login node dispatches rather
-# than building locally; /.dockerenv before docker so an in-container run is not
+# return 1 with a message if none. srun first (via scontrol ping, not command -v
+# srun — the binary may exist on non-Slurm hosts) so a login node dispatches
+# rather than building locally; /.dockerenv before docker so an in-container run is not
 # re-wrapped. $1: noun for the error message ("build" or "run"). Called in $(...),
 # so it must return (not exit) on failure; the caller turns that into an exit.
 _detect_backend() {
-    if command -v srun >/dev/null 2>&1; then
+    if scontrol ping >/dev/null 2>&1; then
         echo srun
     elif [ -f /.dockerenv ]; then
         echo direct
