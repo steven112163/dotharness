@@ -12,6 +12,8 @@ skills/                → own skills, symlinked to ~/.claude/skills/        (sk
   create-pr/           → PR creation with CK team template
   ck-profile/          → static + runtime GPU profiling of a CK target
   multi-review/        → multi-angle code review, consolidated and validated
+  council/             → multi-model debate (GPT, DeepSeek, Gemini) with synthesis
+  llm/                 → external LLM gateway skill (wraps bin/llm)
 agents/                → native subagents (worker roles)                   (agents/README.md)
 hooks/                 → lifecycle hook scripts                            (hooks/README.md)
 rules/                 → user-level rules loaded by Claude Code            (rules/README.md)
