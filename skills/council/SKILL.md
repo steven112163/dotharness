@@ -134,13 +134,13 @@ Extract each model's challenge section from `$ROUND_DIR/challenges.txt` and writ
 
 ```bash
 # Extract GPT challenge
-awk '/=== CHALLENGE: GPT ===/,/=== CHALLENGE: DEEPSEEK ===/' "$ROUND_DIR/challenges.txt" | grep -v "===" > "$NEXT_DIR/challenge-gpt.txt"
+awk '/=== CHALLENGE: GPT ===/,/=== CHALLENGE: DEEPSEEK ===/' "$ROUND_DIR/challenges.txt" | grep -v "^===" > "$NEXT_DIR/challenge-gpt.txt"
 # Extract DeepSeek challenge
-awk '/=== CHALLENGE: DEEPSEEK ===/,/=== CHALLENGE: GEMINI ===/' "$ROUND_DIR/challenges.txt" | grep -v "===" > "$NEXT_DIR/challenge-deepseek.txt"
+awk '/=== CHALLENGE: DEEPSEEK ===/,/=== CHALLENGE: GEMINI ===/' "$ROUND_DIR/challenges.txt" | grep -v "^===" > "$NEXT_DIR/challenge-deepseek.txt"
 # Extract Gemini challenge
-awk '/=== CHALLENGE: GEMINI ===/,/=== CHALLENGE: CLAUDE ===/' "$ROUND_DIR/challenges.txt" | grep -v "===" > "$NEXT_DIR/challenge-gemini.txt"
+awk '/=== CHALLENGE: GEMINI ===/,/=== CHALLENGE: CLAUDE ===/' "$ROUND_DIR/challenges.txt" | grep -v "^===" > "$NEXT_DIR/challenge-gemini.txt"
 # Extract Claude challenge (=== END === is the sentinel appended by the challenger)
-awk '/=== CHALLENGE: CLAUDE ===/,/=== END ===/' "$ROUND_DIR/challenges.txt" | grep -v "===" > "$NEXT_DIR/challenge-claude.txt"
+awk '/=== CHALLENGE: CLAUDE ===/,/=== END ===/' "$ROUND_DIR/challenges.txt" | grep -v "^===" > "$NEXT_DIR/challenge-claude.txt"
 ```
 
 Build an anonymized peer-responses file (model labels replaced with Response A/B/C/D so models evaluate arguments on logic, not identity):
@@ -221,11 +221,7 @@ Update `ROUND_DIR="$NEXT_DIR"` and return to the loop top (Step A challenger).
 
 ### Phase 3 — Synthesis
 
-Read the verdict from `$ROUND_DIR/challenges.txt` (the last round that ran):
-
-```bash
-VERDICT=$(awk '/=== VERDICT ===/{ getline; print; exit }' "$ROUND_DIR/challenges.txt")
-```
+Use the `$VERDICT` variable already set by the loop (either extracted from the last challenger output in Step A, or set to `"CONTINUE (round cap reached)"` when N reached 3). Do not re-extract from `challenges.txt` — it would overwrite the cap-triggered label.
 
 Spawn one `reviewer` subagent with this prompt (fill in COUNCIL_DIR, ROUND_DIR, VERDICT, and the question):
 
