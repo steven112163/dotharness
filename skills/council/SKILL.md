@@ -221,23 +221,46 @@ Update `ROUND_DIR="$NEXT_DIR"` and return to the loop top (Step A challenger).
 
 ### Phase 3 — Synthesis
 
-Spawn one `reviewer` subagent with this prompt (fill in the actual question and COUNCIL_DIR path):
+Read the verdict from `$ROUND_DIR/challenges.txt` (the last round that ran):
 
-> Read four independent responses to: `QUESTION`
+```bash
+VERDICT=$(awk '/=== VERDICT ===/{ getline; print; exit }' "$ROUND_DIR/challenges.txt")
+```
+
+Spawn one `reviewer` subagent with this prompt (fill in COUNCIL_DIR, ROUND_DIR, VERDICT, and the question):
+
+> Read responses to: `<QUESTION>`
 >
-> Files in <COUNCIL_DIR>: claude.txt (Claude), gpt.txt (GPT-5.5), deepseek.txt (DeepSeek-V4-Flash), gemini.txt (Gemini-3.5-Flash).
+> **Round-0 responses** (original independent answers — the historical anchor):
+>
+> - `<COUNCIL_DIR>/round-0/claude.txt` (Claude)
+> - `<COUNCIL_DIR>/round-0/gpt.txt` (GPT-5.5)
+> - `<COUNCIL_DIR>/round-0/deepseek.txt` (DeepSeek-V4-Flash)
+> - `<COUNCIL_DIR>/round-0/gemini.txt` (Gemini-3.5-Flash)
+>
+> **Final-round responses** (after debate, from `<ROUND_DIR>`):
+>
+> - `<ROUND_DIR>/claude.txt`
+> - `<ROUND_DIR>/gpt.txt`
+> - `<ROUND_DIR>/deepseek.txt`
+> - `<ROUND_DIR>/gemini.txt`
+>
+> **Debate outcome:** `<VERDICT>` (CONVERGED, STALEMATE, or CONTINUE-at-cap)
 >
 > Produce a structured synthesis:
 >
-> **Agreements** — claims all or most models share.
-> **Conflicts** — where models disagree; state each position and its reasoning.
-> **Unique insights** — points raised by only one model, worth preserving.
+> **Agreements** — claims all or most models share in the final round.
+> **Conflicts** — where models still disagree after debate; state each position and its reasoning.
+> **Unique insights** — points raised by only one model worth preserving.
+> **Debate effect** — compare the final-round consensus to the round-0 majority. Did debate improve the answer, degrade it, or leave it unchanged? Prefer whichever round has sounder reasoning. If final-round answers differ substantially from round-0, explain why the change is an improvement or a regression.
 > **Logical strength** — which positions have the soundest reasoning (not the most popular).
 > **Recommended position** — the most defensible answer by argument quality.
 >
-> Anti-sycophancy rule: do NOT favor a position because more models hold it. A minority view with strong logic beats a majority with weak logic. Weight by reasoning quality, not vote count.
+> If STALEMATE was reached, name the specific unresolved disagreement and what evidence or data would resolve it.
 >
-> Write synthesis to <COUNCIL_DIR>/synthesis.txt. Return that path and a one-line summary.
+> Anti-sycophancy rule: do NOT favor a position because more models hold it. A minority view with strong logic beats a majority with weak logic. Fast consensus is a warning signal — verify that round-0 responses were not already correct before treating final-round agreement as an improvement. Do not treat final-round agreement as automatically better than round-0.
+>
+> Write synthesis to `<COUNCIL_DIR>/synthesis.txt`. Return that path and a one-line summary.
 
 ### Phase 4 — Final answer (main session)
 
