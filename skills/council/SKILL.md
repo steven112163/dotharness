@@ -119,6 +119,118 @@ If verdict is CONVERGED or STALEMATE, exit the loop and proceed to Phase 4.
 If `N` equals 3, exit the loop and proceed to Phase 4 regardless of verdict.
 Otherwise, proceed to Step B.
 
+#### Step B — Prepare rebuttal context files
+
+Increment the round counter: `N=$((N + 1))`. Create the next round directory:
+
+```bash
+mkdir -p "$COUNCIL_DIR/round-$N"
+NEXT_DIR="$COUNCIL_DIR/round-$N"
+```
+
+Extract each model's challenge section from `$ROUND_DIR/challenges.txt` and write to separate files:
+
+```bash
+# Extract GPT challenge
+awk '/=== CHALLENGE: GPT ===/,/=== CHALLENGE: DEEPSEEK ===/' "$ROUND_DIR/challenges.txt" | grep -v "===" > "$NEXT_DIR/challenge-gpt.txt"
+# Extract DeepSeek challenge
+awk '/=== CHALLENGE: DEEPSEEK ===/,/=== CHALLENGE: GEMINI ===/' "$ROUND_DIR/challenges.txt" | grep -v "===" > "$NEXT_DIR/challenge-deepseek.txt"
+# Extract Gemini challenge
+awk '/=== CHALLENGE: GEMINI ===/,/=== CHALLENGE: CLAUDE ===/' "$ROUND_DIR/challenges.txt" | grep -v "===" > "$NEXT_DIR/challenge-gemini.txt"
+# Extract Claude challenge
+awk '/=== CHALLENGE: CLAUDE ===/,0' "$ROUND_DIR/challenges.txt" | grep -v "===" > "$NEXT_DIR/challenge-claude.txt"
+```
+
+Build an anonymized peer-responses file (model labels replaced with Response A/B/C/D so models evaluate arguments on logic, not identity):
+
+```bash
+{
+  printf "Response A:\n"; cat "$ROUND_DIR/gpt.txt"
+  printf "\nResponse B:\n"; cat "$ROUND_DIR/deepseek.txt"
+  printf "\nResponse C:\n"; cat "$ROUND_DIR/gemini.txt"
+  printf "\nResponse D:\n"; cat "$ROUND_DIR/claude.txt"
+} > "$NEXT_DIR/peer-responses.txt"
+```
+
+Write the rebuttal prompt template to a file:
+
+```bash
+cat > "$NEXT_DIR/rebuttal-prompt.txt" << 'PROMPT'
+Original question:
+<QUESTION>
+
+All responses from the previous round (anonymized — evaluate arguments on logic, not identity):
+<PEER_RESPONSES>
+
+Your previous response:
+<PRIOR_RESPONSE>
+
+Challenge to your position:
+<CHALLENGE>
+
+Instructions:
+- Defend what holds up. Concede what does not.
+- Do not begin with agreement or praise.
+- If you are conceding a point, state specifically which fact or logical step caused the concession.
+- Concede only when the counterargument introduces a verified factual contradiction — not merely an interpretive difference or alternative framing.
+- If you are maintaining your position, explain why the challenge does not change the conclusion.
+- Be specific about what changed and why.
+PROMPT
+```
+
+Fill the prompt template for each model:
+
+```bash
+# GPT rebuttal prompt
+sed -e "s|<QUESTION>|$(cat "$COUNCIL_DIR/question.txt")|g" \
+    -e "s|<PEER_RESPONSES>|$(cat "$NEXT_DIR/peer-responses.txt")|g" \
+    -e "s|<PRIOR_RESPONSE>|$(cat "$ROUND_DIR/gpt.txt")|g" \
+    -e "s|<CHALLENGE>|$(cat "$NEXT_DIR/challenge-gpt.txt")|g" \
+    "$NEXT_DIR/rebuttal-prompt.txt" > "$NEXT_DIR/prompt-gpt.txt"
+
+# DeepSeek rebuttal prompt
+sed -e "s|<QUESTION>|$(cat "$COUNCIL_DIR/question.txt")|g" \
+    -e "s|<PEER_RESPONSES>|$(cat "$NEXT_DIR/peer-responses.txt")|g" \
+    -e "s|<PRIOR_RESPONSE>|$(cat "$ROUND_DIR/deepseek.txt")|g" \
+    -e "s|<CHALLENGE>|$(cat "$NEXT_DIR/challenge-deepseek.txt")|g" \
+    "$NEXT_DIR/rebuttal-prompt.txt" > "$NEXT_DIR/prompt-deepseek.txt"
+
+# Gemini rebuttal prompt
+sed -e "s|<QUESTION>|$(cat "$COUNCIL_DIR/question.txt")|g" \
+    -e "s|<PEER_RESPONSES>|$(cat "$NEXT_DIR/peer-responses.txt")|g" \
+    -e "s|<PRIOR_RESPONSE>|$(cat "$ROUND_DIR/gemini.txt")|g" \
+    -e "s|<CHALLENGE>|$(cat "$NEXT_DIR/challenge-gemini.txt")|g" \
+    "$NEXT_DIR/rebuttal-prompt.txt" > "$NEXT_DIR/prompt-gemini.txt"
+
+# Claude rebuttal prompt
+sed -e "s|<QUESTION>|$(cat "$COUNCIL_DIR/question.txt")|g" \
+    -e "s|<PEER_RESPONSES>|$(cat "$NEXT_DIR/peer-responses.txt")|g" \
+    -e "s|<PRIOR_RESPONSE>|$(cat "$ROUND_DIR/claude.txt")|g" \
+    -e "s|<CHALLENGE>|$(cat "$NEXT_DIR/challenge-claude.txt")|g" \
+    "$NEXT_DIR/rebuttal-prompt.txt" > "$NEXT_DIR/prompt-claude.txt"
+```
+
+Launch 3 background rebuttal calls **simultaneously**:
+
+```bash
+# Bash call 1 — GPT rebuttal
+codex exec -m gpt-5.5 --ephemeral -o "$NEXT_DIR/gpt.txt" < "$NEXT_DIR/prompt-gpt.txt" > "$NEXT_DIR/gpt.log" 2>&1
+```
+
+```bash
+# Bash call 2 — DeepSeek rebuttal
+bin/llm -m DeepSeek-V4-Flash --thinking --effort high < "$NEXT_DIR/prompt-deepseek.txt" > "$NEXT_DIR/deepseek.txt" 2>&1
+```
+
+```bash
+# Bash call 3 — Gemini rebuttal
+codex exec -m gemini-3.5-flash --ephemeral -o "$NEXT_DIR/gemini.txt" < "$NEXT_DIR/prompt-gemini.txt" > "$NEXT_DIR/gemini.log" 2>&1
+```
+
+Wait for all three to complete. Then write Claude's rebuttal inline (main session): read `"$NEXT_DIR/prompt-claude.txt"` and write your response to `"$NEXT_DIR/claude.txt"`.
+
+Update `ROUND_DIR="$NEXT_DIR"` and return to the loop top (Step A challenger).
+
 ### Phase 3 — Synthesis
 
 Spawn one `reviewer` subagent with this prompt (fill in the actual question and COUNCIL_DIR path):
