@@ -242,6 +242,7 @@ if command -v claude &>/dev/null; then
     command -v node &>/dev/null || echo "  warn: node not on PATH; caveman hooks will not run until it is"
     for plugin in \
         "superpowers@claude-plugins-official" \
+        "explanatory-output-style@claude-plugins-official" \
         "example-skills@anthropic-agent-skills" \
         "claude-api@anthropic-agent-skills" \
         "caveman@caveman" \
