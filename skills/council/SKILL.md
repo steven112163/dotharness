@@ -109,6 +109,8 @@ Spawn one `reviewer` subagent with this prompt (fill in COUNCIL_DIR, ROUND_DIR, 
 >
 > === CHALLENGE: CLAUDE ===
 > ...
+>
+> === END ===
 > ```
 >
 > Return the path to challenges.txt and the verdict line.
@@ -137,8 +139,8 @@ awk '/=== CHALLENGE: GPT ===/,/=== CHALLENGE: DEEPSEEK ===/' "$ROUND_DIR/challen
 awk '/=== CHALLENGE: DEEPSEEK ===/,/=== CHALLENGE: GEMINI ===/' "$ROUND_DIR/challenges.txt" | grep -v "===" > "$NEXT_DIR/challenge-deepseek.txt"
 # Extract Gemini challenge
 awk '/=== CHALLENGE: GEMINI ===/,/=== CHALLENGE: CLAUDE ===/' "$ROUND_DIR/challenges.txt" | grep -v "===" > "$NEXT_DIR/challenge-gemini.txt"
-# Extract Claude challenge
-awk '/=== CHALLENGE: CLAUDE ===/,0' "$ROUND_DIR/challenges.txt" | grep -v "===" > "$NEXT_DIR/challenge-claude.txt"
+# Extract Claude challenge (=== END === is the sentinel appended by the challenger)
+awk '/=== CHALLENGE: CLAUDE ===/,/=== END ===/' "$ROUND_DIR/challenges.txt" | grep -v "===" > "$NEXT_DIR/challenge-claude.txt"
 ```
 
 Build an anonymized peer-responses file (model labels replaced with Response A/B/C/D so models evaluate arguments on logic, not identity):
@@ -152,62 +154,48 @@ Build an anonymized peer-responses file (model labels replaced with Response A/B
 } > "$NEXT_DIR/peer-responses.txt"
 ```
 
-Write the rebuttal prompt template to a file:
-
-```bash
-cat > "$NEXT_DIR/rebuttal-prompt.txt" << 'PROMPT'
-Original question:
-<QUESTION>
-
-All responses from the previous round (anonymized — evaluate arguments on logic, not identity):
-<PEER_RESPONSES>
-
-Your previous response:
-<PRIOR_RESPONSE>
-
-Challenge to your position:
-<CHALLENGE>
-
-Instructions:
-- Defend what holds up. Concede what does not.
-- Do not begin with agreement or praise.
-- If you are conceding a point, state specifically which fact or logical step caused the concession.
-- Concede only when the counterargument introduces a verified factual contradiction — not merely an interpretive difference or alternative framing.
-- If you are maintaining your position, explain why the challenge does not change the conclusion.
-- Be specific about what changed and why.
-PROMPT
-```
-
-Fill the prompt template for each model:
+Build each model's prompt by concatenating parts in order. All four prompts must be written before launching any rebuttal call.
 
 ```bash
 # GPT rebuttal prompt
-sed -e "s|<QUESTION>|$(cat "$COUNCIL_DIR/question.txt")|g" \
-    -e "s|<PEER_RESPONSES>|$(cat "$NEXT_DIR/peer-responses.txt")|g" \
-    -e "s|<PRIOR_RESPONSE>|$(cat "$ROUND_DIR/gpt.txt")|g" \
-    -e "s|<CHALLENGE>|$(cat "$NEXT_DIR/challenge-gpt.txt")|g" \
-    "$NEXT_DIR/rebuttal-prompt.txt" > "$NEXT_DIR/prompt-gpt.txt"
+{
+  printf 'Original question:\n'; cat "$COUNCIL_DIR/question.txt"
+  printf '\nAll responses from the previous round (anonymized — evaluate arguments on logic, not identity):\n'
+  cat "$NEXT_DIR/peer-responses.txt"
+  printf '\nYour previous response:\n'; cat "$ROUND_DIR/gpt.txt"
+  printf '\nChallenge to your position:\n'; cat "$NEXT_DIR/challenge-gpt.txt"
+  printf '\nInstructions:\n- Defend what holds up. Concede what does not.\n- Do not begin with agreement or praise.\n- If you are conceding a point, state specifically which fact or logical step caused the concession.\n- Concede only when the counterargument introduces a verified factual contradiction — not merely an interpretive difference or alternative framing.\n- If you are maintaining your position, explain why the challenge does not change the conclusion.\n- Be specific about what changed and why.\n'
+} > "$NEXT_DIR/prompt-gpt.txt"
 
 # DeepSeek rebuttal prompt
-sed -e "s|<QUESTION>|$(cat "$COUNCIL_DIR/question.txt")|g" \
-    -e "s|<PEER_RESPONSES>|$(cat "$NEXT_DIR/peer-responses.txt")|g" \
-    -e "s|<PRIOR_RESPONSE>|$(cat "$ROUND_DIR/deepseek.txt")|g" \
-    -e "s|<CHALLENGE>|$(cat "$NEXT_DIR/challenge-deepseek.txt")|g" \
-    "$NEXT_DIR/rebuttal-prompt.txt" > "$NEXT_DIR/prompt-deepseek.txt"
+{
+  printf 'Original question:\n'; cat "$COUNCIL_DIR/question.txt"
+  printf '\nAll responses from the previous round (anonymized — evaluate arguments on logic, not identity):\n'
+  cat "$NEXT_DIR/peer-responses.txt"
+  printf '\nYour previous response:\n'; cat "$ROUND_DIR/deepseek.txt"
+  printf '\nChallenge to your position:\n'; cat "$NEXT_DIR/challenge-deepseek.txt"
+  printf '\nInstructions:\n- Defend what holds up. Concede what does not.\n- Do not begin with agreement or praise.\n- If you are conceding a point, state specifically which fact or logical step caused the concession.\n- Concede only when the counterargument introduces a verified factual contradiction — not merely an interpretive difference or alternative framing.\n- If you are maintaining your position, explain why the challenge does not change the conclusion.\n- Be specific about what changed and why.\n'
+} > "$NEXT_DIR/prompt-deepseek.txt"
 
 # Gemini rebuttal prompt
-sed -e "s|<QUESTION>|$(cat "$COUNCIL_DIR/question.txt")|g" \
-    -e "s|<PEER_RESPONSES>|$(cat "$NEXT_DIR/peer-responses.txt")|g" \
-    -e "s|<PRIOR_RESPONSE>|$(cat "$ROUND_DIR/gemini.txt")|g" \
-    -e "s|<CHALLENGE>|$(cat "$NEXT_DIR/challenge-gemini.txt")|g" \
-    "$NEXT_DIR/rebuttal-prompt.txt" > "$NEXT_DIR/prompt-gemini.txt"
+{
+  printf 'Original question:\n'; cat "$COUNCIL_DIR/question.txt"
+  printf '\nAll responses from the previous round (anonymized — evaluate arguments on logic, not identity):\n'
+  cat "$NEXT_DIR/peer-responses.txt"
+  printf '\nYour previous response:\n'; cat "$ROUND_DIR/gemini.txt"
+  printf '\nChallenge to your position:\n'; cat "$NEXT_DIR/challenge-gemini.txt"
+  printf '\nInstructions:\n- Defend what holds up. Concede what does not.\n- Do not begin with agreement or praise.\n- If you are conceding a point, state specifically which fact or logical step caused the concession.\n- Concede only when the counterargument introduces a verified factual contradiction — not merely an interpretive difference or alternative framing.\n- If you are maintaining your position, explain why the challenge does not change the conclusion.\n- Be specific about what changed and why.\n'
+} > "$NEXT_DIR/prompt-gemini.txt"
 
 # Claude rebuttal prompt
-sed -e "s|<QUESTION>|$(cat "$COUNCIL_DIR/question.txt")|g" \
-    -e "s|<PEER_RESPONSES>|$(cat "$NEXT_DIR/peer-responses.txt")|g" \
-    -e "s|<PRIOR_RESPONSE>|$(cat "$ROUND_DIR/claude.txt")|g" \
-    -e "s|<CHALLENGE>|$(cat "$NEXT_DIR/challenge-claude.txt")|g" \
-    "$NEXT_DIR/rebuttal-prompt.txt" > "$NEXT_DIR/prompt-claude.txt"
+{
+  printf 'Original question:\n'; cat "$COUNCIL_DIR/question.txt"
+  printf '\nAll responses from the previous round (anonymized — evaluate arguments on logic, not identity):\n'
+  cat "$NEXT_DIR/peer-responses.txt"
+  printf '\nYour previous response:\n'; cat "$ROUND_DIR/claude.txt"
+  printf '\nChallenge to your position:\n'; cat "$NEXT_DIR/challenge-claude.txt"
+  printf '\nInstructions:\n- Defend what holds up. Concede what does not.\n- Do not begin with agreement or praise.\n- If you are conceding a point, state specifically which fact or logical step caused the concession.\n- Concede only when the counterargument introduces a verified factual contradiction — not merely an interpretive difference or alternative framing.\n- If you are maintaining your position, explain why the challenge does not change the conclusion.\n- Be specific about what changed and why.\n'
+} > "$NEXT_DIR/prompt-claude.txt"
 ```
 
 Launch 3 background rebuttal calls **simultaneously**:
@@ -227,7 +215,7 @@ bin/llm -m DeepSeek-V4-Flash --thinking --effort high < "$NEXT_DIR/prompt-deepse
 codex exec -m gemini-3.5-flash --ephemeral -o "$NEXT_DIR/gemini.txt" < "$NEXT_DIR/prompt-gemini.txt" > "$NEXT_DIR/gemini.log" 2>&1
 ```
 
-Wait for all three to complete. Then write Claude's rebuttal inline (main session): read `"$NEXT_DIR/prompt-claude.txt"` and write your response to `"$NEXT_DIR/claude.txt"`.
+Wait for all three to complete. Then write Claude's rebuttal inline (main session): read the full contents of `"$NEXT_DIR/prompt-claude.txt"`, compose your rebuttal following its instructions, and write the rebuttal text (not the prompt) to `"$NEXT_DIR/claude.txt"`.
 
 Update `ROUND_DIR="$NEXT_DIR"` and return to the loop top (Step A challenger).
 
