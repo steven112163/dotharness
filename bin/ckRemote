@@ -169,6 +169,65 @@ _probe() {
         "command -v $bin >/dev/null 2>&1"
 }
 
+# True if the arch $1 is present on the normal (docker) server $2, via rocminfo.
+# Fetches raw rocminfo output, then greps locally so grep's exit code cannot
+# pollute the SSH rc used to distinguish rocminfo-absent from GPU-less.
+# Returns 0 if rocminfo absent or SSH failed (cannot verify, don't penalize);
+# 1 if rocminfo ran but no matching gfx token found (verifiably absent).
+_probe_gpu_arch() {
+    local arch="$1" sshtgt="$2"
+    local out rc=0
+    # shellcheck disable=SC2086
+    out=$(ssh $CK_SSH_OPTS -o BatchMode=yes -o ConnectTimeout=10 "$sshtgt" \
+        "if command -v rocminfo >/dev/null 2>&1; then timeout 15 rocminfo 2>/dev/null; else echo __ROCM_ABSENT__; fi" \
+        2>/dev/null) || rc=$?
+    [ "$rc" -ne 0 ] && return 0 # SSH failed (already screened by _probe): don't penalize
+    case "$out" in
+    *__ROCM_ABSENT__*) return 0 ;; # rocminfo absent: cannot verify, don't penalize
+    esac
+    if [ -z "$out" ]; then
+        echo "  skip $sshtgt: rocminfo returned empty output" >&2
+        return 1 # rocminfo ran but no output: node may lack GPU or ROCm stack is broken
+    fi
+    grep -qiF -- "$arch" <<<"$out"
+}
+
+# Ensure a GPU holder is RUNNING on the remote slurm server. If not RUNNING (absent
+# or PENDING), delegates to ckHold start which skips sbatch for an existing PENDING
+# job and blocks until RUNNING — so the following ckRun can overlap immediately.
+# $1: arch for GRES mapping. CK_REMOTE/CK_SSH_OPTS/SERVER must be set.
+# Note: cannot use remote_exec because it cd's to _remote_workdir (includes CK_REL);
+# ckHold is a user-level command that resolves its own path and needs only ~/bin.
+_ensure_hold() {
+    local arch="$1"
+    if [ -z "$arch" ]; then
+        echo "Warning: no arch specified; skipping GPU holder check on $SERVER." >&2
+        return 0
+    fi
+    # Query RUNNING only for the fast-path return. A PENDING holder is not caught
+    # here; ckHold start's holder_any() (no -t filter) handles it without re-submitting.
+    # Single quotes send the literal string to the remote shell, where $USER expands.
+    # ConnectTimeout bounds TCP; timeout 5 guards against a hung slurmctld.
+    local running
+    # shellcheck disable=SC2086
+    running=$(ssh $CK_SSH_OPTS -o ConnectTimeout=10 "$CK_REMOTE" \
+        'hn="ckhold-$USER"; timeout 5 squeue -h -u "$USER" -n "$hn" -t RUNNING -o "%i" 2>/dev/null | head -1') ||
+        true
+    if [ -n "$running" ]; then
+        echo "GPU holder already RUNNING (job $running) on $SERVER." >&2
+        return 0
+    fi
+    echo "No RUNNING GPU holder on $SERVER; calling ckHold start --arch $arch ..." >&2
+    # No -t: ckHold start is not interactive and runs fine without a TTY.
+    local arch_q
+    arch_q=$(printf '%q' "$arch")
+    # shellcheck disable=SC2086,SC2029
+    if ! ssh $CK_SSH_OPTS -o ConnectTimeout=10 "$CK_REMOTE" \
+        "export PATH=\"\$HOME/bin:\$PATH\"; ckHold start --arch $arch_q"; then
+        echo "Warning: ckHold start failed on $SERVER; proceeding without hold." >&2
+    fi
+}
+
 _apply_server() {
     SERVER="$1"
     CK_REMOTE="${CK_SSH[$1]:-}"
@@ -212,6 +271,14 @@ select_server() {
             continue
             ;;
         esac
+        # For normal (docker) servers, verify the GPU arch is actually present via
+        # rocminfo. Slurm servers skip this: the scheduler handles GPU placement.
+        if [ -n "$arch" ] && [ "${CK_TYPE[$s]:-}" = normal ]; then
+            if ! _probe_gpu_arch "$arch" "${CK_SSH[$s]:-}"; then
+                echo "  skip $s: $arch not found by rocminfo" >&2
+                continue
+            fi
+        fi
         _apply_server "$s"
         echo "Selected server '$SERVER' (${CK_TYPE[$s]}, $CK_REMOTE)${arch:+ for $arch}."
         return
@@ -319,6 +386,11 @@ shell)
     ;;
 *)
     [ "$DO_SYNC" -eq 1 ] && sync_source
+    # For ckRun on a slurm server, ensure a GPU holder is running so the run
+    # dispatches via overlap (instant) instead of waiting for a fresh allocation.
+    if [ "$1" = ckRun ] && [ "${CK_TYPE[$SERVER]:-}" = slurm ]; then
+        _ensure_hold "${ARCH:-}"
+    fi
     remote_exec "$@"
     ;;
 esac
