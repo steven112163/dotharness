@@ -59,6 +59,66 @@ Wait for all three to complete before reading any results.
 
 **Simultaneously**, before reading any external response, write your own independent answer to `$COUNCIL_DIR/round-0/claude.txt`. This is your prior — form it before seeing the others to avoid anchoring.
 
+### Phase 2 — Debate loop (up to 3 rounds)
+
+Track the current round directory as `ROUND_DIR="$COUNCIL_DIR/round-0"` and a round counter `N=0`.
+
+Repeat the following steps until the challenger emits CONVERGED or STALEMATE, or until `N` reaches 3:
+
+#### Step A — Spawn challenger subagent
+
+Spawn one `reviewer` subagent with this prompt (fill in COUNCIL_DIR, ROUND_DIR, and the question):
+
+> You are a reasoning auditor, not a debate opponent. Read four independent responses to: `<QUESTION>`
+>
+> Files in `<ROUND_DIR>`: `claude.txt` (Claude), `gpt.txt` (GPT-5.5), `deepseek.txt` (DeepSeek-V4-Flash), `gemini.txt` (Gemini-3.5-Flash).
+>
+> For each model in order (GPT, DeepSeek, Gemini, Claude):
+>
+> 1. **Steelman:** Restate the model's position in its strongest, most logical form.
+> 2. **Flaw:** Identify the single weakest load-bearing step. Restrict to: (a) unspoken premises, (b) logical non-sequiturs, (c) boundary or edge cases where the argument breaks. **Materiality filter:** Before writing the flaw, ask "If this objection is correct, would the final answer change?" If no, omit it.
+> 3. **Materiality:** Explain why fixing this flaw would change the final answer.
+>
+> Then assess convergence:
+>
+> - CONVERGED: all four positions agree on the core claim and no material flaw remains unanswered. **Do not emit CONVERGED because models sound polite or agreeable — fast consensus is a warning signal, not a success signal.**
+> - STALEMATE: no model changed its position compared to the prior round (or this is round 0 and all four models agreed from the start with sound reasoning).
+> - CONTINUE: material disagreements remain and at least one model changed position this round.
+>
+> Write to `<ROUND_DIR>/challenges.txt` using **exactly** this format:
+>
+> ```text
+> === VERDICT ===
+> CONVERGED|STALEMATE|CONTINUE
+> <one-line reason>
+>
+> === CHALLENGE: GPT ===
+> Steelman: <restate GPT's position at its strongest>
+> Flaw type: premise|non-sequitur|boundary
+> Flaw: <specific objection>
+> Materiality: <why this changes the final answer>
+>
+> === CHALLENGE: DEEPSEEK ===
+> Steelman: ...
+> Flaw type: ...
+> Flaw: ...
+> Materiality: ...
+>
+> === CHALLENGE: GEMINI ===
+> ...
+>
+> === CHALLENGE: CLAUDE ===
+> ...
+> ```
+>
+> Return the path to challenges.txt and the verdict line.
+
+Wait for the subagent to complete. Read the first line after `=== VERDICT ===` to extract CONVERGED, STALEMATE, or CONTINUE.
+
+If verdict is CONVERGED or STALEMATE, exit the loop and proceed to Phase 3.
+If `N` equals 3, exit the loop and proceed to Phase 3 regardless of verdict.
+Otherwise, proceed to Step B.
+
 ### Phase 2 — Synthesis
 
 Spawn one `reviewer` subagent with this prompt (fill in the actual question and COUNCIL_DIR path):
