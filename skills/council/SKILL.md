@@ -76,13 +76,13 @@ Spawn one `reviewer` subagent with this prompt (fill in COUNCIL_DIR, ROUND_DIR, 
 > For each model in order (GPT, DeepSeek, Gemini, Claude):
 >
 > 1. **Steelman:** Restate the model's position in its strongest, most logical form.
-> 2. **Flaw:** Identify the single weakest load-bearing step. Restrict to: (a) unspoken premises, (b) logical non-sequiturs, (c) boundary or edge cases where the argument breaks. **Materiality filter:** Before writing the flaw, ask "If this objection is correct, would the final answer change?" If no, omit it.
-> 3. **Materiality:** Explain why fixing this flaw would change the final answer.
+> 2. **Flaw:** Identify the single weakest load-bearing step. Restrict to: (a) unspoken premises, (b) logical non-sequiturs, (c) boundary or edge cases where the argument breaks. **Materiality filter:** Before writing the flaw, ask "If this objection is correct, would the final answer change?" If no, write `Flaw: none` and omit the Materiality field.
+> 3. **Materiality:** Explain why fixing this flaw would change the final answer. Omit if Flaw is none.
 >
 > Then assess convergence:
 >
-> - CONVERGED: all four positions agree on the core claim and no material flaw remains unanswered. **Do not emit CONVERGED because models sound polite or agreeable — fast consensus is a warning signal, not a success signal.**
-> - STALEMATE: no model changed its position compared to the prior round (or this is round 0 and all four models agreed from the start with sound reasoning).
+> - CONVERGED: all four positions agree on the core claim and no material flaw remains unanswered. Emit CONVERGED even at round 0 if all models immediately agree with sound reasoning. **Do not emit CONVERGED because models sound polite or agreeable — fast consensus is a warning signal, not a success signal.**
+> - STALEMATE: material disagreements remain but no model changed its position compared to the prior round — the debate is stuck. Do not emit STALEMATE at round 0.
 > - CONTINUE: material disagreements remain and at least one model changed position this round.
 >
 > Write to `<ROUND_DIR>/challenges.txt` using **exactly** this format:
@@ -113,7 +113,7 @@ Spawn one `reviewer` subagent with this prompt (fill in COUNCIL_DIR, ROUND_DIR, 
 >
 > Return the path to challenges.txt and the verdict line.
 
-Wait for the subagent to complete. Read the first line after `=== VERDICT ===` to extract CONVERGED, STALEMATE, or CONTINUE.
+Wait for the subagent to complete. Read the immediately following non-blank line after `=== VERDICT ===` to extract CONVERGED, STALEMATE, or CONTINUE.
 
 If verdict is CONVERGED or STALEMATE, exit the loop and proceed to Phase 4.
 If `N` equals 3, exit the loop and proceed to Phase 4 regardless of verdict.
