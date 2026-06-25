@@ -70,18 +70,14 @@ Skip a lens entirely if the diff has no content that the lens covers. For exampl
 shell script adding a new flag does not need the GPU performance lens. A documentation-
 only change needs only the broad lens. Record which lenses are active.
 
-### 2b: Compute SHAs
+### 2b: Read SHAs
 
-`BASE_SHA` must match the base the diff was actually taken against:
+`gather_context.sh` writes `REVIEW_DIR/shas.env` with `HEAD_SHA` and `BASE_SHA`
+already computed to match the base the diff was actually taken against. Read it:
 
 ```bash
-HEAD_SHA=$(git rev-parse HEAD)
-if [ -z "$ARGS" ] && git diff --quiet HEAD 2>/dev/null \
-    && [ -z "$(git ls-files --others --exclude-standard)" ]; then
-    BASE_SHA=$(git merge-base HEAD "$(git rev-parse --abbrev-ref @{upstream} 2>/dev/null || echo main)")
-else
-    BASE_SHA=$HEAD_SHA
-fi
+# shellcheck disable=SC1090
+source "$REVIEW_DIR/shas.env"
 ```
 
 ### 2c: Dispatch reviewers
