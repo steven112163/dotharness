@@ -9,12 +9,15 @@ description: Use when reviewing a diff or pull request before merge and a single
 ## Overview
 
 Run a multi-angle code review and emit a consolidated, validated findings report in
-the conversation. Eight reviewers run in parallel — four Claude subagents (one broad
-generalist plus three specialized lenses) and four external model reviews via
-`bin/llm` — then a spawned consolidator agent merges their findings, a validation
-subagent verifies each against the actual source, and (for a PR) anything existing
-reviewers already raised is stripped. This skill never posts to GitHub; it produces
-a report for the user to act on.
+the conversation. Up to eight reviewers run in parallel — up to four Claude subagents
+(broad generalist plus up to three specialized lenses selected from the diff) and a
+matching set of external model background Bash calls via `bin/llm` — then a spawned
+consolidator agent merges their findings into one file, a validation subagent verifies
+each finding against the actual source and writes a final validated report, and (for a
+PR) anything existing reviewers already raised is stripped. The orchestrator reads only
+the final validated report in normal flow (individual reviewer files are available for
+investigation at the Step 6 reporting stage only). This skill never posts to GitHub;
+it produces a report for the user to act on.
 
 ## Modes
 
@@ -49,12 +52,27 @@ work while the tree is dirty, stash first or pass the PR number.
 If `diff.txt` is empty, stop and tell the user there is nothing to review. If the
 argument is a PR number but `gh` is unauthenticated, report it and offer local mode.
 
-## Step 2: Fan out reviewers (parallel — Claude lenses + external models)
+## Step 2: Select lenses and fan out reviewers (parallel)
 
-Compute SHAs for reviewer context. `BASE_SHA` must match the base the diff was
-actually taken against, so it is `HEAD` whenever `diff.txt` is the uncommitted-delta
-diff (PR mode, or local mode with a dirty tree) and the merge-base only for the
-clean-tree branch diff:
+### 2a: Determine which lenses apply
+
+Read `diff.txt` and decide which of the three specialized lenses are relevant to this
+diff. The broad lens always runs. Activate specialized lenses only when warranted:
+
+| Lens | Activate when |
+|------|--------------|
+| **Broad** (always) | All diffs |
+| **Correctness & numerics** | Logic-heavy code, arithmetic, data structures, error handling, API contracts, security boundaries |
+| **GPU performance** | Files with `.hip`, `.cu`, `.cpp`/`.hpp` touching GPU kernels, HIP/CUDA calls, memory coalescing, occupancy |
+| **Code quality** | Any code change (skip only for trivial doc-only or comment-only diffs) |
+
+Skip a lens entirely if the diff has no content that the lens covers. For example: a
+shell script adding a new flag does not need the GPU performance lens. A documentation-
+only change needs only the broad lens. Record which lenses are active.
+
+### 2b: Compute SHAs
+
+`BASE_SHA` must match the base the diff was actually taken against:
 
 ```bash
 HEAD_SHA=$(git rev-parse HEAD)
@@ -66,14 +84,19 @@ else
 fi
 ```
 
-Dispatch all reviewers in a single message so they run in parallel. Each lens runs
-two reviewers simultaneously: a Claude subagent (deep context, tool access) and an
-external model via `bin/llm` (independent perspective, different training). Give
-each only the diff and lens-specific instructions — never this session's history.
+### 2c: Dispatch reviewers
 
-### Claude lens subagents (4 agents)
+**In a single message**, dispatch all active Claude subagents AND all active external
+background Bash calls so they run in parallel. Each active lens runs two reviewers
+simultaneously: a Claude subagent (deep context, tool access) and an external model
+via `bin/llm` (independent perspective, different training). Give each only the diff
+and lens-specific instructions — never this session's history.
 
-1. **Broad** — `general-purpose` agent, filled from the superpowers
+**Do not dispatch a lens that was marked inactive in 2a.**
+
+#### Claude lens subagents (active lenses only)
+
+1. **Broad** (always) — `general-purpose` agent, filled from the superpowers
    `requesting-code-review` template:
 
    ```bash
@@ -82,64 +105,65 @@ each only the diff and lens-specific instructions — never this session's histo
 
    Returns Critical/Important/Minor. Writes to `review-broad.md`.
 
-2. **Correctness & numerics** — `reviewer` agent, Lens 1 per `REFERENCE.md`.
+2. **Correctness & numerics** (if active) — `reviewer` agent, Lens 1 per `REFERENCE.md`.
    Writes to `review-correctness.md`.
 
-3. **GPU performance** — `reviewer` agent, Lens 2 per `REFERENCE.md`.
+3. **GPU performance** (if active) — `reviewer` agent, Lens 2 per `REFERENCE.md`.
    Writes to `review-gpu.md`.
 
-4. **Code quality** — `reviewer` agent, Lens 3 per `REFERENCE.md` (includes YAGNI pass).
+4. **Code quality** (if active) — `reviewer` agent, Lens 3 per `REFERENCE.md` (includes YAGNI pass).
    Writes to `review-quality.md`.
 
-### External model reviews (4 parallel Bash calls)
-
-Run simultaneously with the Claude agents. Dispatch each as its own **background
-Bash tool call** (`run_in_background: true`) in the same message as the Claude
-subagents. Four separate Bash calls, one per reviewer:
+#### External model reviews (active lenses only, each a separate background Bash call)
 
 ```bash
-# Bash call 1 — broad generalist (GPT-5.5)
+# Broad — GPT-5.5 (always)
 bin/llm -m gpt-5.5 --thinking --effort high \
   -s "You are a senior code reviewer. Review this diff for correctness, security, performance, and readability. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>." \
   < "$REVIEW_DIR/diff.txt" > "$REVIEW_DIR/review-broad-ext.md" 2>&1
 ```
 
 ```bash
-# Bash call 2 — correctness (DeepSeek)
+# Correctness — DeepSeek (if correctness lens active)
 bin/llm -m DeepSeek-V4-Flash --thinking --effort high \
   -s "You are a code correctness reviewer. Focus on: logic errors, unchecked returns, null/dangling pointers, off-by-one, integer overflow, error paths, security at boundaries. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>." \
   < "$REVIEW_DIR/diff.txt" > "$REVIEW_DIR/review-correctness-ext.md" 2>&1
 ```
 
 ```bash
-# Bash call 3 — GPU performance (Gemini)
+# GPU performance — Gemini (if GPU lens active)
 bin/llm -m gemini-3.5-flash --thinking --effort high \
   -s "You are a GPU performance reviewer. Focus on: memory coalescing, LDS bank conflicts, occupancy, wavefront divergence, kernel launch bounds, unnecessary host-device transfers, missed parallelism. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>." \
   < "$REVIEW_DIR/diff.txt" > "$REVIEW_DIR/review-gpu-ext.md" 2>&1
 ```
 
 ```bash
-# Bash call 4 — readability/simplicity (GPT-5.5, different lens from call 1)
-# Same model as call 1 but focused on code quality rather than correctness/security.
+# Code quality — GPT-5.5 different lens (if quality lens active)
 bin/llm -m gpt-5.5 --thinking --effort high \
   -s "You are a code quality reviewer focused on readability and simplicity. Flag: dead code, magic numbers, premature abstractions, naming issues, functions over 100 lines, nesting over 3 levels, YAGNI violations. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>." \
   < "$REVIEW_DIR/diff.txt" > "$REVIEW_DIR/review-quality-ext.md" 2>&1
 ```
 
-Wait for all background Bash calls to complete before proceeding to Step 3.
+### 2d: Wait for all reviewers
 
-All eight outputs feed the consolidator. If an external call fails (env vars not
-set, gateway down), note it and continue with the Claude-only findings.
+**Do not proceed to Step 3 until every dispatched Claude subagent AND every background
+Bash call has completed.** Claude subagents complete when their Agent tool call
+returns. Background Bash calls complete when you receive a task-notification for each
+task ID. Only when all active reviewers have reported — with no outstanding task
+notifications — move to Step 3.
+
+If an external call fails (env vars not set, gateway down), note it and continue with
+the Claude-only findings.
 
 ## Step 3: Consolidate
 
 Do not merge the reviews yourself. Spawn one `reviewer` agent as the
-**consolidator**: it forms its own opinion, then synthesizes all eight reviews
-(four Claude lenses + four external model reviews) into one. Give it all eight
-review file paths, `REVIEW_DIR/diff.txt`, and `rules/code-review.md` as the
-standard. Instruct it to:
+**consolidator**. Pass it: the review file paths for all active lenses (derived from
+`REVIEW_DIR` and the lens names recorded in Step 2a — only files that were actually
+written; do not include paths for inactive lenses), `REVIEW_DIR/diff.txt`, and
+`rules/code-review.md`. Instruct it to:
 
-- Read all eight review files and the diff, and apply `rules/code-review.md`.
+- Read all active review files and the diff, and apply `rules/code-review.md`.
 - Merge findings into one list. Collapse duplicates (same `file:line` and same
   underlying issue) into a single entry, keeping the sharpest fix. When a Claude
   subagent and an external model flag the same issue, merge into one entry and note
@@ -152,25 +176,39 @@ standard. Instruct it to:
   `suggestion:`, Minor → `nit:`).
 - Report dissent: if a reviewer raised a blocker the consolidator discounts, keep
   it with a one-line note on why, rather than silently dropping it.
-- Write the consolidated review to `REVIEW_DIR/review-consolidated.md` and return
-  that path plus a one-line summary.
+- Write the consolidated review to `REVIEW_DIR/review-consolidated.md`.
+
+The consolidator returns only the file path and a one-line summary. Do not read
+`review-consolidated.md` yourself — pass it to the validator in Step 4.
 
 If the consolidator finds nothing, report "no findings" and stop.
 
 ## Step 4: Validate
 
-Dispatch one `general-purpose` subagent to verify each finding in
-`REVIEW_DIR/review-consolidated.md` against the real source. For each finding, read
-~50 lines around the cited line plus the matching `chunk-*` (look it up in
-`chunks.tsv`); budget at most 15 tool calls. The subagent returns a verdict per
-finding:
+Spawn one `general-purpose` subagent as the **validator**. Pass it
+`REVIEW_DIR/review-consolidated.md`, `REVIEW_DIR/diff.txt`, and
+`REVIEW_DIR/chunks.tsv`. Instruct it to:
 
-- **Confirmed** — issue is real and correctly described.
-- **Wrong** — claim is incorrect; drop it.
-- **Overstated** — issue exists but is exaggerated; keep and soften per the note.
+1. Read `review-consolidated.md` first to extract each cited `file:line` reference.
+2. For each finding, read ~50 lines around the cited line in the source and the
+   matching `chunk-*` file (look up via `chunks.tsv`). The validator may read any
+   file in the repository — it should use its own tool access to locate source files
+   from the paths cited in the consolidated review.
+3. Budget at most 15 tool calls total.
+4. Report any finding it cannot verify (file not found, line missing) as unverifiable
+   rather than silently skipping it.
+5. Write a final validated report to `REVIEW_DIR/review-validated.md` with verdicts
+   applied:
 
-Apply verdicts: drop Wrong, adjust Overstated, keep Confirmed. If nothing survives,
-report "no confirmed findings" and stop.
+- **Confirmed** — issue is real and correctly described. Keep.
+- **Wrong** — claim is incorrect. Drop with a note.
+- **Overstated** — issue exists but is exaggerated. Keep and soften.
+
+The validator writes `review-validated.md` and returns its path. Do not read any
+other review file. Read only `REVIEW_DIR/review-validated.md` to produce the final
+report.
+
+If nothing survives validation, report "no confirmed findings" and stop.
 
 ## Step 5: Dedup against existing reviews (PR mode only)
 
@@ -179,7 +217,8 @@ issue was already raised there. Skip this step in local mode.
 
 ## Step 6: Final report
 
-Emit two parts and post nothing:
+Read `REVIEW_DIR/review-validated.md` (written by the validator in Step 4). Emit two
+parts and post nothing:
 
 1. Summary table:
 
@@ -191,4 +230,11 @@ Emit two parts and post nothing:
 2. Per-finding drafts — the cited code line in a fenced block, then the comment with
    its fix. Use normal fenced code blocks, never GitHub `suggestion` blocks.
 
-After delivering the report, clean up: `rm -rf "$REVIEW_DIR"`.
+If you need to investigate a specific claim further, you may read individual reviewer
+files at this stage. Do not read them as part of the normal flow.
+
+After delivering the report, clean up:
+
+```bash
+find "$REVIEW_DIR" -mindepth 1 -delete && rmdir "$REVIEW_DIR"
+```
