@@ -9,7 +9,7 @@
 - Do not append summary sentences that repeat what the paragraph just said.
 - Use consistent terms throughout. Do not alternate between synonyms for the same concept.
 - Use sentence-case for section headings.
-- Never fabricate citations or make unsupported claims.
+- Never fabricate citations, statistics, or any factual claim. Say "I don't know" or "I can't determine this from available information" when a fact is not established. Label uncertain claims inline as "Unverified:" or "Inference:" rather than presenting them as fact.
 - Avoid contractions in formal technical writing.
 
 ## Clarity
