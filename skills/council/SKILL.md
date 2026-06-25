@@ -1,7 +1,7 @@
 ---
 name: council
 argument-hint: "<question>"
-description: Fan out a question to multiple external LLMs (GPT, DeepSeek, Gemini) in parallel, form an independent Claude position, synthesize with a subagent, then deliver a final answer. Use when a hard technical or factual question warrants multiple perspectives, when the user asks to consult multiple models, or on your own initiative when a question is high-stakes or has non-obvious answers.
+description: Fan out a question to multiple external LLMs (GPT, DeepSeek, Gemini) in parallel, run up to 3 rounds of structured debate where a challenger identifies the weakest reasoning in each position and models rebut with full peer context, then synthesize and deliver a final answer weighted by argument quality — not vote count.
 ---
 
 # Council
