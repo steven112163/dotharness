@@ -22,13 +22,14 @@ Coordinates a multi-model discussion: fans out to GPT/Gemini via `codex exec` an
 
 ## Protocol
 
-### Phase 1 — Independent answers (parallel)
+### Phase 1 — Independent answers (parallel, round 0)
 
 Create a temp dir under `.claude/tmp/`:
 
 ```bash
 mkdir -p .claude/tmp
 COUNCIL_DIR=$(mktemp -d .claude/tmp/council-XXXXXX)
+mkdir -p "$COUNCIL_DIR/round-0"
 ```
 
 Write the question to a file first (avoids shell injection and handles multiline questions):
@@ -41,22 +42,22 @@ Launch 3 background Bash jobs **simultaneously** — each as its own `run_in_bac
 
 ```bash
 # Bash call 1
-codex exec -m gpt-5.5 --ephemeral -o "$COUNCIL_DIR/gpt.txt" < "$COUNCIL_DIR/question.txt" > "$COUNCIL_DIR/gpt.log" 2>&1
+codex exec -m gpt-5.5 --ephemeral -o "$COUNCIL_DIR/round-0/gpt.txt" < "$COUNCIL_DIR/question.txt" > "$COUNCIL_DIR/round-0/gpt.log" 2>&1
 ```
 
 ```bash
 # Bash call 2
-bin/llm -m DeepSeek-V4-Flash --thinking --effort high < "$COUNCIL_DIR/question.txt" > "$COUNCIL_DIR/deepseek.txt" 2>&1
+bin/llm -m DeepSeek-V4-Flash --thinking --effort high < "$COUNCIL_DIR/question.txt" > "$COUNCIL_DIR/round-0/deepseek.txt" 2>&1
 ```
 
 ```bash
 # Bash call 3
-codex exec -m gemini-3.5-flash --ephemeral -o "$COUNCIL_DIR/gemini.txt" < "$COUNCIL_DIR/question.txt" > "$COUNCIL_DIR/gemini.log" 2>&1
+codex exec -m gemini-3.5-flash --ephemeral -o "$COUNCIL_DIR/round-0/gemini.txt" < "$COUNCIL_DIR/question.txt" > "$COUNCIL_DIR/round-0/gemini.log" 2>&1
 ```
 
 Wait for all three to complete before reading any results.
 
-**Simultaneously**, before reading any external response, write your own independent answer to `$COUNCIL_DIR/claude.txt`. This is your prior — form it before seeing the others to avoid anchoring.
+**Simultaneously**, before reading any external response, write your own independent answer to `$COUNCIL_DIR/round-0/claude.txt`. This is your prior — form it before seeing the others to avoid anchoring.
 
 ### Phase 2 — Synthesis
 
