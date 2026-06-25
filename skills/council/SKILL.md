@@ -115,11 +115,11 @@ Spawn one `reviewer` subagent with this prompt (fill in COUNCIL_DIR, ROUND_DIR, 
 
 Wait for the subagent to complete. Read the first line after `=== VERDICT ===` to extract CONVERGED, STALEMATE, or CONTINUE.
 
-If verdict is CONVERGED or STALEMATE, exit the loop and proceed to Phase 3.
-If `N` equals 3, exit the loop and proceed to Phase 3 regardless of verdict.
+If verdict is CONVERGED or STALEMATE, exit the loop and proceed to Phase 4.
+If `N` equals 3, exit the loop and proceed to Phase 4 regardless of verdict.
 Otherwise, proceed to Step B.
 
-### Phase 2 — Synthesis
+### Phase 3 — Synthesis
 
 Spawn one `reviewer` subagent with this prompt (fill in the actual question and COUNCIL_DIR path):
 
@@ -139,7 +139,7 @@ Spawn one `reviewer` subagent with this prompt (fill in the actual question and 
 >
 > Write synthesis to <COUNCIL_DIR>/synthesis.txt. Return that path and a one-line summary.
 
-### Phase 3 — Final answer (main session)
+### Phase 4 — Final answer (main session)
 
 Read `synthesis.txt`. Deliver your final answer:
 
