@@ -9,9 +9,15 @@ description: Use when creating or opening a pull request, or pushing branch work
 
 ### 1. Gather context
 
-- Run `git status`, `git log <base>..HEAD --oneline`, and `git diff --stat <base>..HEAD` to understand what changed.
-- Identify the base branch (usually `develop`).
-- If uncommitted changes exist, warn the user before proceeding.
+```bash
+skills/create-pr/scripts/gather_pr_context.sh [BASE_BRANCH]
+```
+
+Defaults to `develop` as base. Prints current branch, commits ahead, diff stat,
+and a warning with `git status --short` if uncommitted changes exist. Read the
+output to understand what changed before proceeding.
+
+If uncommitted changes exist, warn the user before proceeding.
 
 ### 2. Collect PR details
 
