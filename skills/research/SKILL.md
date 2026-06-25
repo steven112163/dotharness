@@ -56,13 +56,26 @@ mkdir -p .claude/tmp
 RESEARCH_DIR=$(mktemp -d .claude/tmp/research-XXXXXX)
 ```
 
-For each sub-question N, run simultaneously: web/database search plus three background `bin/llm` Bash calls. Write the sub-question to a temp file first (avoids shell injection):
+For each sub-question N, write the sub-question to a temp file first (avoids shell injection), then launch the three model calls simultaneously — each as its own background Bash call. The file-write must complete before the model calls start.
 
 ```bash
+# Setup (run first, not in parallel)
 printf '%s' "sub-question N" > "$RESEARCH_DIR/sq_N.txt"
-bin/llm -m gpt-5.5           --thinking --effort high < "$RESEARCH_DIR/sq_N.txt" > "$RESEARCH_DIR/sq_N_gpt.txt" 2>&1
+```
+
+```bash
+# Bash call 1 — run simultaneously with calls 2 and 3
+codex exec -m gpt-5.5 --ephemeral -o "$RESEARCH_DIR/sq_N_gpt.txt" < "$RESEARCH_DIR/sq_N.txt" > "$RESEARCH_DIR/sq_N_gpt.log" 2>&1
+```
+
+```bash
+# Bash call 2 — run simultaneously with calls 1 and 3
 bin/llm -m DeepSeek-V4-Flash --thinking --effort high < "$RESEARCH_DIR/sq_N.txt" > "$RESEARCH_DIR/sq_N_deepseek.txt" 2>&1
-bin/llm -m gemini-3.5-flash  --thinking --effort high < "$RESEARCH_DIR/sq_N.txt" > "$RESEARCH_DIR/sq_N_gemini.txt" 2>&1
+```
+
+```bash
+# Bash call 3 — run simultaneously with calls 1 and 2
+codex exec -m gemini-3.5-flash --ephemeral -o "$RESEARCH_DIR/sq_N_gemini.txt" < "$RESEARCH_DIR/sq_N.txt" > "$RESEARCH_DIR/sq_N_gemini.log" 2>&1
 ```
 
 Merge web findings + model responses per sub-question. Note agreements and conflicts. Label model-only claims as "Unverified" unless corroborated by a primary source.
@@ -71,9 +84,10 @@ Merge web findings + model responses per sub-question. Note agreements and confl
 After all sub-questions are resolved, write draft findings to a file and pipe them to external models for a cross-check pass (piping avoids shell argument length limits):
 
 ```bash
-cat "$RESEARCH_DIR/draft_findings.txt" | bin/llm -m gpt-5.5           --thinking --effort high -s "What's missing or wrong with these findings?" > "$RESEARCH_DIR/challenge_gpt.txt" 2>&1
+# codex exec reads prompt+data piped as stdin; bin/llm supports a separate -s system prompt flag
+{ printf 'What is missing or wrong with these findings?\n\n'; cat "$RESEARCH_DIR/draft_findings.txt"; } | codex exec -m gpt-5.5 --ephemeral -o "$RESEARCH_DIR/challenge_gpt.txt" > "$RESEARCH_DIR/challenge_gpt.log" 2>&1
 cat "$RESEARCH_DIR/draft_findings.txt" | bin/llm -m DeepSeek-V4-Flash --thinking --effort high -s "What's missing or wrong with these findings?" > "$RESEARCH_DIR/challenge_deepseek.txt" 2>&1
-cat "$RESEARCH_DIR/draft_findings.txt" | bin/llm -m gemini-3.5-flash  --thinking --effort high -s "What's missing or wrong with these findings?" > "$RESEARCH_DIR/challenge_gemini.txt" 2>&1
+{ printf 'What is missing or wrong with these findings?\n\n'; cat "$RESEARCH_DIR/draft_findings.txt"; } | codex exec -m gemini-3.5-flash --ephemeral -o "$RESEARCH_DIR/challenge_gemini.txt" > "$RESEARCH_DIR/challenge_gemini.log" 2>&1
 ```
 
 Incorporate valid challenges. Discard objections that lack reasoning. This is the anti-sycophancy checkpoint: external model agreement does not promote a claim; only primary-source corroboration does.

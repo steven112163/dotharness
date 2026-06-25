@@ -6,7 +6,7 @@ description: Fan out a question to multiple external LLMs (GPT, DeepSeek, Gemini
 
 # Council
 
-Coordinates a multi-model discussion: fans out to external LLMs via `bin/llm`, forms an independent Claude position, synthesizes all with a subagent, then delivers a final answer weighted by argument quality — not vote count.
+Coordinates a multi-model discussion: fans out to GPT/Gemini via `codex exec` and DeepSeek via `bin/llm`, forms an independent Claude position, synthesizes all with a subagent, then delivers a final answer weighted by argument quality — not vote count.
 
 ## When to use
 
@@ -41,7 +41,7 @@ Launch 3 background Bash jobs **simultaneously** — each as its own `run_in_bac
 
 ```bash
 # Bash call 1
-bin/llm -m gpt-5.5 --thinking --effort high < "$COUNCIL_DIR/question.txt" > "$COUNCIL_DIR/gpt.txt" 2>&1
+codex exec -m gpt-5.5 --ephemeral -o "$COUNCIL_DIR/gpt.txt" < "$COUNCIL_DIR/question.txt" > "$COUNCIL_DIR/gpt.log" 2>&1
 ```
 
 ```bash
@@ -51,7 +51,7 @@ bin/llm -m DeepSeek-V4-Flash --thinking --effort high < "$COUNCIL_DIR/question.t
 
 ```bash
 # Bash call 3
-bin/llm -m gemini-3.5-flash --thinking --effort high < "$COUNCIL_DIR/question.txt" > "$COUNCIL_DIR/gemini.txt" 2>&1
+codex exec -m gemini-3.5-flash --ephemeral -o "$COUNCIL_DIR/gemini.txt" < "$COUNCIL_DIR/question.txt" > "$COUNCIL_DIR/gemini.log" 2>&1
 ```
 
 Wait for all three to complete before reading any results.
@@ -97,11 +97,12 @@ After delivering the final answer, clean up: `rm -rf "$COUNCIL_DIR"`.
 | `DeepSeek-V4-Flash` | Math, code, open-source perspective |
 | `gemini-3.5-flash` | Broad knowledge, 1M context, strong factual recall |
 
-User can request different models: "council with o3 and Llama". Use `bin/llm --help` for available models.
+User can request different models: "council with o3 and Llama". GPT and Gemini variants use `codex exec`; DeepSeek uses `bin/llm` (not routed through the Codex gateway).
 
 ## Requirements
 
-Same as `bin/llm`: `ANTHROPIC_BASE_URL`, `LLM_GATEWAY_KEY`, `LLM_GATEWAY_KEY_HEADER` must be set.
+- GPT/Gemini legs: `codex exec` must be on PATH with a working config pointing at the gateway.
+- DeepSeek leg: `ANTHROPIC_BASE_URL`, `LLM_GATEWAY_KEY`, `LLM_GATEWAY_KEY_HEADER` must be set.
 
 ## Anti-sycophancy guards (active throughout)
 

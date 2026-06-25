@@ -11,7 +11,7 @@ description: Use when reviewing a diff or pull request before merge and a single
 Run a multi-angle code review and emit a consolidated, validated findings report in
 the conversation. Up to eight reviewers run in parallel — up to four Claude subagents
 (broad generalist plus up to three specialized lenses selected from the diff) and a
-matching set of external model background Bash calls via `bin/llm` — then a spawned
+matching set of external model background Bash calls via `codex exec` (GPT/Gemini) and `bin/llm` (DeepSeek). A spawned
 consolidator agent merges their findings into one file, a validation subagent verifies
 each finding against the actual source and writes a final validated report, and (for a
 PR) anything existing reviewers already raised is stripped. The orchestrator reads only
@@ -85,7 +85,7 @@ source "$REVIEW_DIR/shas.env"
 **In a single message**, dispatch all active Claude subagents AND all active external
 background Bash calls so they run in parallel. Each active lens runs two reviewers
 simultaneously: a Claude subagent (deep context, tool access) and an external model
-via `bin/llm` (independent perspective, different training). Give each only the diff
+via `codex exec` (GPT/Gemini) or `bin/llm` (DeepSeek) (independent perspective, different training). Give each only the diff
 and lens-specific instructions — never this session's history.
 
 **Do not dispatch a lens that was marked inactive in 2a.**
@@ -114,9 +114,8 @@ and lens-specific instructions — never this session's history.
 
 ```bash
 # Broad — GPT-5.5 (always)
-bin/llm -m gpt-5.5 --thinking --effort high \
-  -s "You are a senior code reviewer. Review this diff for correctness, security, performance, and readability. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>." \
-  < "$REVIEW_DIR/diff.txt" > "$REVIEW_DIR/review-broad-ext.md" 2>&1
+{ printf 'You are a senior code reviewer. Review this diff for correctness, security, performance, and readability. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.\n\n'; cat "$REVIEW_DIR/diff.txt"; } \
+  | codex exec -m gpt-5.5 --ephemeral -o "$REVIEW_DIR/review-broad-ext.md" > "$REVIEW_DIR/review-broad-ext.log" 2>&1
 ```
 
 ```bash
@@ -128,16 +127,14 @@ bin/llm -m DeepSeek-V4-Flash --thinking --effort high \
 
 ```bash
 # GPU performance — Gemini (if GPU lens active)
-bin/llm -m gemini-3.5-flash --thinking --effort high \
-  -s "You are a GPU performance reviewer. Focus on: memory coalescing, LDS bank conflicts, occupancy, wavefront divergence, kernel launch bounds, unnecessary host-device transfers, missed parallelism. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>." \
-  < "$REVIEW_DIR/diff.txt" > "$REVIEW_DIR/review-gpu-ext.md" 2>&1
+{ printf 'You are a GPU performance reviewer. Focus on: memory coalescing, LDS bank conflicts, occupancy, wavefront divergence, kernel launch bounds, unnecessary host-device transfers, missed parallelism. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.\n\n'; cat "$REVIEW_DIR/diff.txt"; } \
+  | codex exec -m gemini-3.5-flash --ephemeral -o "$REVIEW_DIR/review-gpu-ext.md" > "$REVIEW_DIR/review-gpu-ext.log" 2>&1
 ```
 
 ```bash
 # Code quality — GPT-5.5 different lens (if quality lens active)
-bin/llm -m gpt-5.5 --thinking --effort high \
-  -s "You are a code quality reviewer focused on readability and simplicity. Flag: dead code, magic numbers, premature abstractions, naming issues, functions over 100 lines, nesting over 3 levels, YAGNI violations. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>." \
-  < "$REVIEW_DIR/diff.txt" > "$REVIEW_DIR/review-quality-ext.md" 2>&1
+{ printf 'You are a code quality reviewer focused on readability and simplicity. Flag: dead code, magic numbers, premature abstractions, naming issues, functions over 100 lines, nesting over 3 levels, YAGNI violations. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.\n\n'; cat "$REVIEW_DIR/diff.txt"; } \
+  | codex exec -m gpt-5.5 --ephemeral -o "$REVIEW_DIR/review-quality-ext.md" > "$REVIEW_DIR/review-quality-ext.log" 2>&1
 ```
 
 ### 2d: Wait for all reviewers
