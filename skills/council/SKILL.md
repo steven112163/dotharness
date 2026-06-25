@@ -117,8 +117,8 @@ Spawn one `reviewer` subagent with this prompt (fill in COUNCIL_DIR, ROUND_DIR, 
 
 Wait for the subagent to complete. Read the immediately following non-blank line after `=== VERDICT ===` to extract CONVERGED, STALEMATE, or CONTINUE.
 
-If verdict is CONVERGED or STALEMATE, exit the loop and proceed to Phase 4.
-If `N` equals 3, exit the loop and proceed to Phase 4 regardless of verdict.
+If verdict is CONVERGED or STALEMATE, exit the loop and proceed to Phase 3.
+If `N` equals 3, set `VERDICT="CONTINUE (round cap reached)"`, exit the loop, and proceed to Phase 3.
 Otherwise, proceed to Step B.
 
 #### Step B — Prepare rebuttal context files
