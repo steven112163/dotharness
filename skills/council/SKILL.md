@@ -290,7 +290,12 @@ User can request different models: "council with o3 and Llama". GPT and Gemini v
 
 ## Anti-sycophancy guards (active throughout)
 
-- Claude's own position is formed **before** reading external responses.
-- Synthesizer is instructed explicitly to weight by logic, not majority.
+- Claude's own position is formed **before** reading external responses in Phase 1.
+- In debate rounds, peer responses shown to rebuttaling models anonymize model labels (Response A/B/C/D, not GPT/DeepSeek/Gemini/Claude). Models evaluate arguments, not identities.
+- Challenger is instructed to treat fast consensus as a warning signal, not a success signal.
+- Challenger is forbidden from emitting CONVERGED if any model changed its position in the last round — convergence requires stability and no remaining material flaw.
+- Rebuttal prompt requires evidence-gated concession: concede only when the counterargument introduces a verified factual contradiction.
+- Synthesizer receives round-0 responses as an anchor and is instructed to prefer sounder reasoning over final-round consensus.
+- Synthesizer is instructed explicitly to weight by argument quality, not vote count.
 - If all external models agree but their reasoning is weak, say so in the final answer.
 - If one model has a minority view with strong reasoning, surface it — do not bury it.
