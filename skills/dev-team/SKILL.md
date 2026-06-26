@@ -82,7 +82,7 @@ Every teammate is spawned and stopped by the **lead**.
 | **principal-researcher** | role prompt | Frame the questions, synthesize the researchers' findings into one conclusion, report dissent | the requester (e.g. implementer) |
 | **reviewer** | native agent | Review code against the checklist, return severity-prefixed findings | software-architect |
 | **software-architect** | role prompt | Review personally, assign reviewers to domains, synthesize one consolidated review, report dissent | the implementer |
-| **builder** | native agent | Build a candidate's worktree with `ckBuild` (serialized across candidates), report errors/warnings | the implementer |
+| **builder** | native agent | Build a candidate's worktree with `ckRemote ckBuild` (serialized across candidates), report errors/warnings | the implementer |
 | **profiler** | native agent | Profile a *built* candidate (drives `ck-profile`), diagnose the bottleneck, return ranked next optimizations. One candidate at a time | the requester (implementer) + lead |
 | **test-architect** | role prompt | Design/receive the test plan, synthesize tester results, benchmark vs target. Owns correctness + benchmark; defers bottleneck diagnosis to the profiler | the lead |
 | **tester** | native agent | Author/execute assigned tests and benchmarks, report pass/fail with evidence | test-architect |
@@ -257,11 +257,11 @@ contract is what makes promotion decisions evidence-based later.
    git dir, so it covers every worktree, and it is not a tracked file — nothing in
    the repo's git tree changes.) Create `.claude/.dev-team/<task_name>/`.
 5. **Hold a GPU if runs go through Slurm.** When profiling and benchmarks dispatch
-   via Slurm (`ckRun`/`ck-profile` detect `srun`), start one persistent holder now —
-   `ckHold --arch <gfx>` — so every Phase 3 profile and Phase 4 benchmark overlaps
-   into the held node instantly instead of re-queuing an allocation per run across N
-   candidates × refine iterations. Stop it in Phase 6 with `ckHold stop`. Skip on a
-   direct/docker host.
+   via Slurm (`ckRemote ckRun`/`ck-profile` detect `srun`), start one persistent holder
+   now — `ckRemote ckHold --arch <gfx>` — so every Phase 3 profile and Phase 4 benchmark
+   overlaps into the held node instantly instead of re-queuing an allocation per run across
+   N candidates × refine iterations. Stop it in Phase 6 with `ckRemote ckHold stop`. Skip
+   on a direct/docker host.
 6. **Spawn no teammates yet.** Unlike a fixed org chart, the lead spawns workers and
    groups on demand in later phases and stops them once they deliver. There is no
    standing team to staff at startup.
@@ -319,10 +319,10 @@ For each chosen direction, create a candidate:
 3. **Build + review + profile (serialized).** Process candidates one at a time
    through the shared builder and profiler — CK builds saturate CPU and the
    GPU/counters allow only one profiling run at a time:
-   - **builder** builds the candidate's worktree with `ckBuild` (the standard CK
-     build command; its compiler cache keeps the cold build cheap) and reports errors
-     directly to that candidate's implementer. Build-fix retries do not count as a
-     refine iteration.
+   - **builder** builds the candidate's worktree with `ckRemote ckBuild` (rsyncs and
+     builds on the remote; its compiler cache keeps the cold build cheap) and reports
+     errors directly to that candidate's implementer. Build-fix retries do not count as
+     a refine iteration.
    - When the build passes, the lead spawns the **review group**
      (software-architect + reviewers); the software-architect delivers the
      consolidated review (with dissent) to the implementer, and the lead stops the
@@ -415,8 +415,8 @@ The lead decides whether this phase runs — skip it for straightforward tasks.
 | Aggregate group input | Coordinator | Report dissent, not just the synthesized verdict |
 | Get research | Any agent → Lead | Lead spawns a research group (principal-researcher + researchers); they deliver to the requester, then the lead stops them |
 | Fan out candidates | Lead | 2–3 distinct directions, one worktree/branch each off the baseline (2 max without ccache/sccache) |
-| Build / run a candidate | builder / tester | `ckBuild` to build, `ckRun --arch <gfx>` to run or benchmark on a GPU (never hand-roll cmake/ninja) |
-| Hold a GPU for fast runs | Lead | `ckHold --arch <gfx>` at startup when runs go through Slurm; `ckHold stop` in Phase 6 |
+| Build / run a candidate | builder / tester | `ckRemote ckBuild gfx942 <target>` to build, `ckRemote ckRun --arch gfx942 <cmd>` to run on a GPU (never hand-roll cmake/ninja) |
+| Hold a GPU for fast runs | Lead | `ckRemote ckHold --arch gfx942` at startup when runs go through Slurm; `ckRemote ckHold stop` in Phase 6 |
 | Request code review | Lead | On a passing build, spawn software-architect + reviewers; they deliver the review to the implementer; lead stops them |
 | Report build error | builder → implementer | Direct, no intermediary |
 | Profile a candidate | Lead → profiler | Profiler runs ck-profile (one candidate at a time), delivers verdict + ranked directions to the implementer |
@@ -503,10 +503,10 @@ independent on-disk checkout sharing the same `.git` object store.
   `build/` and its first build is a **cold full build**. Do not copy a built tree
   between worktrees — CMake/Ninja bake in absolute paths and it will reconfigure
   anyway.
-- **Build with `ckBuild`; the shared cache makes cold builds cheap.** `ckBuild` is the
-  standard CK build command (`REPO=<worktree> ckBuild <target>`); on a first/scratch
-  configure it adds a compiler-launcher (prefers ccache, falls back to sccache)
-  pointed at one persistent cache dir. The user's pre-build warms it, so each
+- **Build with `ckRemote ckBuild`; the shared cache makes cold builds cheap.**
+  `ckRemote ckBuild gfx942 <target>` rsyncs source and builds on the remote; on a
+  first/scratch configure it adds a compiler-launcher (prefers ccache, falls back to
+  sccache) pointed at one persistent cache dir. The user's pre-build warms it, so each
   candidate's cold build reuses cached objects. Refining a candidate **in place** in
   its own worktree is a true incremental build — only the first build per candidate is
   cold.
@@ -514,11 +514,11 @@ independent on-disk checkout sharing the same `.git` object store.
   are queued** (CPU saturation; one GPU profiling run at a time). Disk for N CK build
   trees and cold-build time bound how wide the fan-out can go — 2–3 with ccache/sccache,
   2 without.
-- **Run on GPU with `ckRun`; hold one with `ckHold`.** `ckRun`
-  (`REPO=<worktree> ckRun --arch <gfx> <cmd>`) dispatches a built binary to a GPU
-  (srun/docker/direct auto-detected). When runs go through Slurm, `ckHold` grabs one
-  GPU node up front so every candidate's profile and benchmark overlaps into it
-  instantly rather than re-queuing per run.
+- **Run on GPU with `ckRemote ckRun`; hold one with `ckRemote ckHold`.**
+  `ckRemote ckRun --arch gfx942 <cmd>` dispatches a built binary to a GPU
+  (srun/docker/direct auto-detected on the remote). When runs go through Slurm,
+  `ckRemote ckHold --arch gfx942` grabs one GPU node up front so every candidate's
+  profile and benchmark overlaps into it instantly rather than re-queuing per run.
 - **`ck_profile_out/` stays out of git** automatically: `ck-profile` adds it to the
   shared `.git/info/exclude`, which covers every worktree.
 - **Integration:** the promoted candidate's branch merges back onto the PR branch

@@ -61,8 +61,8 @@ Third-party skills from the `mattpocock-skills` submodule (`third-party/`) are l
 
 **`bin/`** — helper scripts symlinked into `~/bin/`:
 
-- `ckBuild` / `ckRun` / `ckHold` — Composable Kernel build/run inside the CK Docker image, with auto-detected backend (`direct` / `docker` / `srun`). Use `scontrol ping` (not `command -v srun`) to detect an active Slurm daemon.
-- `ckRemote` — drives build/run on a remote server; walks a priority-ordered list in `~/.config/ckremote`, rsyncs source (excluding `build/` and `.git/`), runs `ck*` over SSH.
+- `ckBuild` / `ckRun` / `ckHold` — Composable Kernel build/run inside the CK Docker image, with auto-detected backend (`direct` / `docker` / `srun`). Use `scontrol ping` (not `command -v srun`) to detect an active Slurm daemon. **Development is local (no local GPU/Docker): always invoke these via `ckRemote ckBuild/ckRun/ckHold`.**
+- `ckRemote` — drives build/run on a remote server; walks a priority-ordered list in `~/.config/ckremote`, rsyncs source (excluding `build/` and `.git/`), runs `ck*` over SSH. The primary entry point for all CK operations from a local dev machine.
 - `llm` / `llm.py` — LLM gateway binary. `llm.py` maps `--effort` to per-family API parameters: `budget_tokens` for Claude ≤4.6, `output_config.effort` for Claude ≥4.7, `reasoning_effort` for o-series/gpt-5/DeepSeek, `thinkingBudget` for Gemini.
 
 **`tests/`** — `tests/bats/` for shell hook/script tests; `tests/python/` for the ck-profile Python helpers (gpu_specs, parse_resource_usage, aggregate).
