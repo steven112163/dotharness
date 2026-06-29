@@ -39,10 +39,10 @@ bin/llm --help
 
 **`skills/`** — on-demand skills invoked with `/skill-name`. Each skill is a directory with a `SKILL.md` (YAML frontmatter: `name`, `description`, optional `argument-hint`). Symlinked individually into `~/.claude/skills/`. Key own skills:
 
-- `council` — fans out to GPT-5.5, DeepSeek-V4-Flash, and Gemini in parallel as background Bash calls; Claude forms an independent position first; a synthesizer subagent resolves by argument quality, not vote count.
+- `council` — adversarial two-model debate: Claude and GPT-5.5 generate independent positions, challenge each other for up to 3 rounds, converge on the strongest answer by argument quality — not agreement.
 - `dev-team` — eight-phase candidate workflow: lead spawns native worker agents (researcher, implementer, reviewer, tester, builder, profiler) as teammates; runs 2–3 candidate implementations in parallel git worktrees; picks the winner on profiling evidence.
 - `llm` — thin shell + Python wrapper around the Anthropic SDK with a custom `base_url` for routing to external providers. Requires `ANTHROPIC_BASE_URL`, `LLM_GATEWAY_KEY`, `LLM_GATEWAY_KEY_HEADER`.
-- `multi-review` — 8 parallel reviewers (4 Claude subagents by lens + 3 background `codex exec` calls for GPT/Gemini + 1 `bin/llm` call for DeepSeek); consolidator subagent; validation subagent; dedup against existing PR reviews.
+- `multi-review` — up to 8 parallel reviewers (4 Claude subagents by lens + 4 GPT-5.5 `codex exec` calls, one per active lens); consolidator subagent; validation subagent; dedup against existing PR reviews.
 - `research` — four modes (socratic, direct, deep, adversarial) with anti-sycophancy safeguards. Deep mode fans out per-sub-question to multiple external models.
 - `ck-profile` — static (register/LDS analysis from build logs) + dynamic (rocprofv3 runtime) profiling of Composable Kernel targets.
 

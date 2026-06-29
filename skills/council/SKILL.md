@@ -1,17 +1,17 @@
 ---
 name: council
 argument-hint: "<question>"
-description: Fan out a question to multiple external LLMs (GPT, DeepSeek, Gemini) in parallel, run up to 3 rounds of structured debate where a challenger identifies the weakest reasoning in each position and models rebut with full peer context, then synthesize and deliver a final answer weighted by argument quality — not vote count.
+description: Fan out a question to Claude and GPT-5.5 in parallel, run up to 3 rounds of adversarial debate where each model challenges the other's weakest argument and updates its position, assess convergence after each round with a dedicated subagent, then synthesize and deliver a final answer weighted by argument quality — not consensus.
 ---
 
 # Council
 
-Coordinates a multi-model discussion: fans out to GPT/Gemini via `codex exec` and DeepSeek via `bin/llm`, forms an independent Claude position, synthesizes all with a subagent, then delivers a final answer weighted by argument quality — not vote count.
+Coordinates an adversarial two-model debate: Claude and GPT-5.5 generate independent positions, challenge each other directly for up to 3 rounds, and converge on the strongest answer by argument quality — not agreement.
 
 ## When to use
 
-- User asks a hard technical or factual question where diverse perspectives reduce error
-- User says "council", "ask multiple models", "get multiple opinions", "what do GPT and Gemini think"
+- User asks a hard technical or factual question where a second perspective reduces error
+- User says "council", "ask GPT", "get a second opinion", "debate this"
 - On your own initiative: question is high-stakes, has conflicting priors, or your confidence is low
 
 ## When NOT to use
@@ -38,210 +38,158 @@ Write the question to a file first (avoids shell injection and handles multiline
 printf '%s' "<question>" > "$COUNCIL_DIR/question.txt"
 ```
 
-Launch 3 background Bash jobs **simultaneously** — each as its own `run_in_background` Bash tool call:
+Launch the GPT background call **immediately**:
 
 ```bash
-# Bash call 1
 codex exec -m gpt-5.5 --ephemeral -o "$COUNCIL_DIR/round-0/gpt.txt" < "$COUNCIL_DIR/question.txt" > "$COUNCIL_DIR/round-0/gpt.log" 2>&1
 ```
 
-```bash
-# Bash call 2
-bin/llm -m DeepSeek-V4-Flash --thinking --effort high < "$COUNCIL_DIR/question.txt" > "$COUNCIL_DIR/round-0/deepseek.txt" 2>&1
-```
+**While waiting for GPT to complete**, write your own independent answer to `$COUNCIL_DIR/round-0/claude.txt`. Form it before seeing GPT's response to avoid anchoring.
 
-```bash
-# Bash call 3
-codex exec -m gemini-3.5-flash --ephemeral -o "$COUNCIL_DIR/round-0/gemini.txt" < "$COUNCIL_DIR/question.txt" > "$COUNCIL_DIR/round-0/gemini.log" 2>&1
-```
-
-Wait for all three to complete before reading any results.
-
-**Simultaneously**, before reading any external response, write your own independent answer to `$COUNCIL_DIR/round-0/claude.txt`. This is your prior — form it before seeing the others to avoid anchoring.
-
-**Output file note:** For `codex exec` runs, `-o <file>.txt` is the model's response; the log (`<file>.log`) is the codex session transcript (tool calls, file reads, etc.) and should not be read for content. DeepSeek writes directly to its output file with no separate log.
+**Output file note:** For `codex exec` runs, `-o <file>.txt` is the model's response; the log (`<file>.log`) is the codex session transcript and should not be read for content.
 
 ### Phase 2 — Debate loop (up to 3 rounds)
 
 Track the current round directory as `ROUND_DIR="$COUNCIL_DIR/round-0"` and a round counter `N=0`.
 
-Repeat the following steps until the challenger emits CONVERGED or STALEMATE, or until `N` reaches 3:
+Repeat the following steps until the convergence checker emits CONVERGED, or until `N` reaches 3:
 
-#### Step A — Spawn challenger subagent
+#### Step A — Check convergence
 
-Spawn one `reviewer` subagent with this prompt (fill in COUNCIL_DIR, ROUND_DIR, and the question):
+Spawn one `reviewer` subagent as the **convergence checker** with this fully self-contained prompt (substitute literal values for `<QUESTION>`, `<ROUND_DIR>`):
 
-> You are a reasoning auditor, not a debate opponent. Read four independent responses to: `<QUESTION>`
+> You are a convergence checker for a two-model debate. Read the two responses to: `<QUESTION>`
 >
-> Files in `<ROUND_DIR>`: `claude.txt` (Claude), `gpt.txt` (GPT-5.5), `deepseek.txt` (DeepSeek-V4-Flash), `gemini.txt` (Gemini-3.5-Flash).
+> Files in `<ROUND_DIR>`: `claude.txt` (Claude), `gpt.txt` (GPT-5.5).
 >
-> For each model in order (GPT, DeepSeek, Gemini, Claude):
+> For each model:
 >
 > 1. **Steelman:** Restate the model's position in its strongest, most logical form.
-> 2. **Flaw:** Identify the single weakest load-bearing step. Restrict to: (a) unspoken premises, (b) logical non-sequiturs, (c) boundary or edge cases where the argument breaks. **Materiality filter:** Before writing the flaw, ask "If this objection is correct, would the final answer change?" If no, write `Flaw: none` and omit the Materiality field.
-> 3. **Materiality:** Explain why fixing this flaw would change the final answer. Omit if Flaw is none.
+> 2. **Flaw:** Identify the single weakest load-bearing step. Restrict to: (a) unspoken premises, (b) logical non-sequiturs, (c) boundary or edge cases where the argument breaks. **Materiality filter:** If fixing this flaw would not change the final answer, write `Flaw: none`.
+> 3. **Materiality:** Why fixing this flaw would change the final answer. Omit if Flaw is none.
 >
 > Then assess convergence:
 >
-> - CONVERGED: all four positions agree on the core claim and no material flaw remains unanswered. Emit CONVERGED even at round 0 if all models immediately agree with sound reasoning. **Do not emit CONVERGED because models sound polite or agreeable — fast consensus is a warning signal, not a success signal.**
-> - STALEMATE: material disagreements remain but no model changed its position compared to the prior round — the debate is stuck. Do not emit STALEMATE at round 0.
-> - CONTINUE: material disagreements remain and at least one model changed position this round.
+> - CONVERGED: both positions agree on the core claim **and** you cannot find a material flaw in either after a genuine attack. Fast consensus is a warning signal — if both models agreed quickly with thin reasoning, do NOT emit CONVERGED.
+> - CONTINUE: material disagreements remain or you found a material flaw that has not been addressed.
 >
-> Write to `<ROUND_DIR>/challenges.txt` using **exactly** this format:
+> Write to `<ROUND_DIR>/convergence.txt` using **exactly** this format:
 >
 > ```text
 > === VERDICT ===
 > CONVERGED|STALEMATE|CONTINUE
 > <one-line reason>
 >
-> === CHALLENGE: GPT ===
+> === ASSESSMENT: CLAUDE ===
+> Steelman: <restate Claude's position at its strongest>
+> Flaw type: premise|non-sequitur|boundary|none
+> Flaw: <specific objection, or "none">
+> Materiality: <why this changes the final answer, or "none" if Flaw is none>
+>
+> === ASSESSMENT: GPT ===
 > Steelman: <restate GPT's position at its strongest>
-> Flaw type: premise|non-sequitur|boundary
-> Flaw: <specific objection>
-> Materiality: <why this changes the final answer>
->
-> === CHALLENGE: DEEPSEEK ===
-> Steelman: ...
-> Flaw type: ...
-> Flaw: ...
-> Materiality: ...
->
-> === CHALLENGE: GEMINI ===
-> ...
->
-> === CHALLENGE: CLAUDE ===
-> ...
+> Flaw type: premise|non-sequitur|boundary|none
+> Flaw: <specific objection, or "none">
+> Materiality: <why this changes the final answer, or "none" if Flaw is none>
 >
 > === END ===
 > ```
 >
-> Return the path to challenges.txt and the verdict line.
->
-> **If the verdict is CONTINUE**, you will receive a follow-up with additional instructions to build rebuttal prompt files. Stay available.
+> Return the path to convergence.txt and the verdict line.
 
-Wait for the subagent to complete. Read `$ROUND_DIR/challenges.txt` — extract the verdict (the non-blank line immediately after `=== VERDICT ===`).
+Wait for the subagent to complete. Extract the verdict — the non-blank line immediately after `=== VERDICT ===`.
 
-If verdict is CONVERGED or STALEMATE, exit the loop and proceed to Phase 3.
+If verdict is CONVERGED, exit the loop and proceed to Phase 3.
 If `N` equals 3, set `VERDICT="CONTINUE (round cap reached)"`, exit the loop, and proceed to Phase 3.
 Otherwise, proceed to Step B.
 
-#### Step B — Build rebuttal prompts (challenger) and launch rebuttals
+#### Step B — Adversarial debate round
 
-Increment the round counter: `N=$((N + 1))`. Spawn the challenger again — this time it both writes `challenges.txt` **and** builds the rebuttal prompt files. This keeps the main session from reading raw model responses (which would break anonymization for Claude's own rebuttal).
-
-Append to the challenger prompt from Step A (fill in COUNCIL_DIR, ROUND_DIR, NEXT_DIR, and the question):
-
-> **Additional task after writing challenges.txt:**
->
-> Create `<NEXT_DIR>/` and build four rebuttal prompt files — one per model. For each model, the prompt contains:
->
-> 1. The original question (from `<COUNCIL_DIR>/question.txt`)
-> 2. All previous-round responses **anonymized** as Response A/B/C/D (GPT→A, DeepSeek→B, Gemini→C, Claude→D) — this prevents models from evaluating identity rather than argument
-> 3. That model's own previous response (non-anonymized — it knows its own prior)
-> 4. That model's challenge section from challenges.txt
-> 5. Rebuttal instructions
->
-> Shell commands to build the files:
->
-> ```bash
-> NEXT_DIR="<NEXT_DIR>"
-> mkdir -p "$NEXT_DIR"
->
-> # Anonymized peer-responses (A=GPT, B=DeepSeek, C=Gemini, D=Claude)
-> {
->   printf "Response A:\n"; cat "<ROUND_DIR>/gpt.txt"
->   printf "\nResponse B:\n"; cat "<ROUND_DIR>/deepseek.txt"
->   printf "\nResponse C:\n"; cat "<ROUND_DIR>/gemini.txt"
->   printf "\nResponse D:\n"; cat "<ROUND_DIR>/claude.txt"
-> } > "$NEXT_DIR/peer-responses.txt"
->
-> INSTRUCTIONS='- Defend what holds up. Concede what does not.
-> - Do not begin with agreement or praise.
-> - If you are conceding a point, state specifically which fact or logical step caused the concession.
-> - Concede only when the counterargument introduces a verified factual contradiction — not merely an interpretive difference or alternative framing.
-> - If you are maintaining your position, explain why the challenge does not change the conclusion.
-> - Be specific about what changed and why.'
->
-> for model in gpt deepseek gemini claude; do
->   case "$model" in
->     gpt)      label=A; challenge_section="GPT" ;;
->     deepseek) label=B; challenge_section="DEEPSEEK" ;;
->     gemini)   label=C; challenge_section="GEMINI" ;;
->     claude)   label=D; challenge_section="CLAUDE" ;;
->   esac
->   {
->     printf 'Original question:\n'; cat "<COUNCIL_DIR>/question.txt"
->     printf '\nAll responses from the previous round (anonymized — evaluate arguments on logic, not identity):\n'
->     cat "$NEXT_DIR/peer-responses.txt"
->     printf '\nYour previous response (you were Response %s):\n' "$label"
->     cat "<ROUND_DIR>/$model.txt"
->     printf '\nChallenge to your position:\n'
->     awk "/=== CHALLENGE: $challenge_section ===/,/=== (CHALLENGE:|END) ===/" \
->       "<ROUND_DIR>/challenges.txt" | grep -v "^==="
->     printf '\nInstructions:\n%s\n' "$INSTRUCTIONS"
->   } > "$NEXT_DIR/prompt-$model.txt"
-> done
-> ```
->
-> Return the paths of the four prompt files created.
-
-Wait for the challenger subagent to complete. Then launch 3 background rebuttal calls **simultaneously**:
+Increment the round counter: `N=$((N + 1))`. Set `NEXT_DIR="$COUNCIL_DIR/round-$N"`.
 
 ```bash
-# Bash call 1 — GPT rebuttal
+mkdir -p "$NEXT_DIR"
+```
+
+Build each model's debate prompt. Each model receives: the original question, both previous-round responses (anonymized as Position A/B to prevent identity bias), its own prior response identified, and instructions to challenge the opponent's weakest argument then state its updated position.
+
+```bash
+# Build anonymized peer context (Claude=A, GPT=B)
+{
+  printf "Position A:\n"; cat "<ROUND_DIR>/claude.txt"
+  printf "\nPosition B:\n"; cat "<ROUND_DIR>/gpt.txt"
+} > "$NEXT_DIR/positions.txt"
+
+DEBATE_INSTRUCTIONS='Identify the single weakest argument in the opposing position and explain why it fails — be specific about which premise is unspoken, which step is a non-sequitur, or which boundary case breaks the argument. Then state your own updated position. Rules:
+- Challenge only arguments that materially affect the conclusion.
+- Concede points only when the opponent introduced a verified factual contradiction — not merely an alternative framing.
+- If you are maintaining your position, explain why the challenge does not change the conclusion.
+- Do not begin with agreement or praise. State your challenge directly.'
+
+# Claude prompt (Claude was Position A)
+{
+  printf 'Original question:\n'; cat "<COUNCIL_DIR>/question.txt"
+  printf '\nBoth positions from the previous round (evaluate arguments on logic, not identity):\n'
+  cat "$NEXT_DIR/positions.txt"
+  printf '\nYour previous response (you were Position A):\n'
+  cat "<ROUND_DIR>/claude.txt"
+  printf '\nOpponent flaw identified by the convergence checker:\n'
+  awk '/=== ASSESSMENT: GPT ===/,/^=== /' "<ROUND_DIR>/convergence.txt" | grep -v "^==="
+  printf '\nInstructions:\n%s\n' "$DEBATE_INSTRUCTIONS"
+} > "$NEXT_DIR/prompt-claude.txt"
+
+# GPT prompt (GPT was Position B)
+{
+  printf 'Original question:\n'; cat "<COUNCIL_DIR>/question.txt"
+  printf '\nBoth positions from the previous round (evaluate arguments on logic, not identity):\n'
+  cat "$NEXT_DIR/positions.txt"
+  printf '\nYour previous response (you were Position B):\n'
+  cat "<ROUND_DIR>/gpt.txt"
+  printf '\nOpponent flaw identified by the convergence checker:\n'
+  awk '/=== ASSESSMENT: CLAUDE ===/,/^=== /' "<ROUND_DIR>/convergence.txt" | grep -v "^==="
+  printf '\nInstructions:\n%s\n' "$DEBATE_INSTRUCTIONS"
+} > "$NEXT_DIR/prompt-gpt.txt"
+```
+
+Launch the GPT debate call in the background **immediately**:
+
+```bash
 codex exec -m gpt-5.5 --ephemeral -o "$NEXT_DIR/gpt.txt" < "$NEXT_DIR/prompt-gpt.txt" > "$NEXT_DIR/gpt.log" 2>&1
 ```
 
-```bash
-# Bash call 2 — DeepSeek rebuttal
-bin/llm -m DeepSeek-V4-Flash --thinking --effort high < "$NEXT_DIR/prompt-deepseek.txt" > "$NEXT_DIR/deepseek.txt" 2>&1
-```
+**While waiting for GPT**, read `$NEXT_DIR/prompt-claude.txt` and write your own debate response to `$NEXT_DIR/claude.txt`.
 
-```bash
-# Bash call 3 — Gemini rebuttal
-codex exec -m gemini-3.5-flash --ephemeral -o "$NEXT_DIR/gemini.txt" < "$NEXT_DIR/prompt-gemini.txt" > "$NEXT_DIR/gemini.log" 2>&1
-```
-
-Wait for all three to complete. Then write Claude's rebuttal inline (main session): read `"$NEXT_DIR/prompt-claude.txt"` — it contains the anonymized peer responses and your own prior, so reading it does not leak other models' identities — compose your rebuttal, and write it to `"$NEXT_DIR/claude.txt"`.
-
-Update `ROUND_DIR="$NEXT_DIR"` and return to the loop top (Step A challenger).
+Update `ROUND_DIR="$NEXT_DIR"` and return to the loop top (Step A).
 
 ### Phase 3 — Synthesis
 
-Use the `$VERDICT` variable already set by the loop (either extracted from the last challenger output in Step A, or set to `"CONTINUE (round cap reached)"` when N reached 3). Do not re-extract from `challenges.txt` — it would overwrite the cap-triggered label.
-
-Spawn one `reviewer` subagent with this prompt (fill in COUNCIL_DIR, ROUND_DIR, VERDICT, and the question):
+Use the `$VERDICT` variable already set by the loop. Spawn one `reviewer` subagent with this fully self-contained prompt (substitute literal values for `<QUESTION>`, `<COUNCIL_DIR>`, `<ROUND_DIR>`, `<VERDICT>`):
 
 > Read responses to: `<QUESTION>`
 >
-> **Round-0 responses** (original independent answers — the historical anchor):
+> **Round-0 responses** (original independent answers — historical anchor):
 >
 > - `<COUNCIL_DIR>/round-0/claude.txt` (Claude)
 > - `<COUNCIL_DIR>/round-0/gpt.txt` (GPT-5.5)
-> - `<COUNCIL_DIR>/round-0/deepseek.txt` (DeepSeek-V4-Flash)
-> - `<COUNCIL_DIR>/round-0/gemini.txt` (Gemini-3.5-Flash)
 >
-> **Final-round responses** (after debate, from `<ROUND_DIR>`):
+> **Final-round responses** (after debate):
 >
 > - `<ROUND_DIR>/claude.txt`
 > - `<ROUND_DIR>/gpt.txt`
-> - `<ROUND_DIR>/deepseek.txt`
-> - `<ROUND_DIR>/gemini.txt`
 >
-> **Debate outcome:** `<VERDICT>` (CONVERGED, STALEMATE, or CONTINUE-at-cap)
+> **Debate outcome:** `<VERDICT>` (CONVERGED or CONTINUE-at-cap)
 >
 > Produce a structured synthesis:
 >
-> **Agreements** — claims all or most models share in the final round.
-> **Conflicts** — where models still disagree after debate; state each position and its reasoning.
-> **Unique insights** — points raised by only one model worth preserving.
-> **Debate effect** — compare the final-round consensus to the round-0 majority. Did debate improve the answer, degrade it, or leave it unchanged? Prefer whichever round has sounder reasoning. If final-round answers differ substantially from round-0, explain why the change is an improvement or a regression.
-> **Logical strength** — which positions have the soundest reasoning (not the most popular).
-> **Recommended position** — the most defensible answer by argument quality.
+> **Did debate improve on round-0?** Compare the final-round responses to the round-0 responses. Did the reasoning get stronger, weaker, or unchanged? Name specific improvements or regressions. If final-round agreement is shallower than round-0 reasoning, say so.
 >
-> If STALEMATE was reached, name the specific unresolved disagreement and what evidence or data would resolve it.
+> **Which argument is stronger?** Assess Claude's and GPT's final positions by logical quality — soundness of reasoning, specificity of evidence, handling of edge cases. Name the stronger argument and explain why. Do NOT favor a position because both models eventually agreed on it.
 >
-> Anti-sycophancy rule: do NOT favor a position because more models hold it. A minority view with strong logic beats a majority with weak logic. Fast consensus is a warning signal — verify that round-0 responses were not already correct before treating final-round agreement as an improvement. Do not treat final-round agreement as automatically better than round-0.
+> **What remains unresolved?** Identify any material disagreement or open question that debate did not settle.
+>
+> **Recommended position:** The most defensible answer given the debate record. Take a position — do not hedge without cause.
+>
+> Anti-sycophancy rule: fast consensus is a warning signal. Verify that round-0 responses were not already correct before treating final-round convergence as an improvement.
 >
 > Write synthesis to `<COUNCIL_DIR>/synthesis.txt`. Return that path and a one-line summary.
 
@@ -250,35 +198,29 @@ Spawn one `reviewer` subagent with this prompt (fill in COUNCIL_DIR, ROUND_DIR, 
 Read `synthesis.txt`. Deliver your final answer:
 
 - Lead with the recommended position.
-- State where models disagreed and how you resolve it — name the reasoning, not just the conclusion.
+- Name where the debate changed the reasoning and why that change is an improvement — or flag if debate degraded the round-0 answer.
 - Surface unresolved uncertainty explicitly.
-- Do NOT average the models or hedge without cause. Take a position.
+- Do NOT hedge without cause. Take a position.
 
 After delivering the final answer, clean up: `rm -rf "$COUNCIL_DIR"`.
 
 ## Default models
 
-| Model | Strength |
-| ----- | -------- |
-| `gpt-5.5` | General frontier reasoning |
-| `DeepSeek-V4-Flash` | Math, code, open-source perspective |
-| `gemini-3.5-flash` | Broad knowledge, 1M context, strong factual recall |
-
-User can request different models: "council with o3 and Llama". GPT and Gemini variants use `codex exec`; DeepSeek uses `bin/llm` (not routed through the Codex gateway).
+| Model | Role |
+| ----- | ---- |
+| Claude | Main session — forms prior, debates, synthesizes |
+| `gpt-5.5` | External challenger via `codex exec` |
 
 ## Requirements
 
-- GPT/Gemini legs: `codex exec` must be on PATH with a working config pointing at the gateway.
-- DeepSeek leg: `ANTHROPIC_BASE_URL`, `LLM_GATEWAY_KEY`, `LLM_GATEWAY_KEY_HEADER` must be set.
+- `codex exec` must be on PATH with a working config pointing at the gateway.
 
 ## Anti-sycophancy guards (active throughout)
 
-- Claude's own position is formed **before** reading external responses in Phase 1.
-- In debate rounds, peer responses shown to rebuttaling models anonymize model labels (Response A/B/C/D, not GPT/DeepSeek/Gemini/Claude). Models evaluate arguments, not identities.
-- Challenger is instructed to treat fast consensus as a warning signal, not a success signal.
-- Challenger emits CONVERGED only when all four positions are stable, agree on the core claim, and no material flaw remains unanswered — not merely because debate produced agreement.
-- Rebuttal prompt requires evidence-gated concession: concede only when the counterargument introduces a verified factual contradiction.
-- Synthesizer receives round-0 responses as an anchor and is instructed to prefer sounder reasoning over final-round consensus.
-- Synthesizer is instructed explicitly to weight by argument quality, not vote count.
-- If all models agree but their reasoning is weak, say so in the final answer.
-- If one model has a minority view with strong reasoning, surface it — do not bury it.
+- Claude's position is formed **before** reading GPT's response in Phase 1.
+- In debate rounds, both positions are anonymized as A/B — models evaluate arguments, not identities.
+- Convergence checker is instructed to treat fast consensus as a warning signal, not a success signal.
+- Convergence checker steelmans both positions and finds material flaws before assessing CONVERGED.
+- Debate instructions require evidence-gated concession: concede only on verified factual contradictions.
+- Synthesizer anchors on round-0 responses and is instructed to prefer sounder reasoning over final-round agreement.
+- If both models agree but their reasoning is weak, say so in the final answer.

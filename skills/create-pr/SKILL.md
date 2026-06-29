@@ -10,7 +10,7 @@ description: Use when creating or opening a pull request, or pushing branch work
 ### 1. Gather context
 
 ```bash
-skills/create-pr/scripts/gather_pr_context.sh [BASE_BRANCH]
+~/.claude/skills/create-pr/scripts/gather_pr_context.sh [BASE_BRANCH]
 ```
 
 Defaults to `develop` as base. Prints current branch, commits ahead, diff stat,
