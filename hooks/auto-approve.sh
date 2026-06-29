@@ -15,16 +15,21 @@ if [ -z "$cmd" ]; then
     exit 0
 fi
 
-# Auto-approve only a single, simple invocation. A command that chains or
-# substitutes (; && || | & redirection $(...) backticks) can hide a destructive
-# tail behind a read-only prefix, so defer those to the normal permission prompt.
-echo "$cmd" | grep -qE '[;&|<>`]|\$\(' && exit 0
-
 approve() {
     jq -nc --arg reason "Auto-approved: $1" \
         '{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "allow", permissionDecisionReason: $reason}}'
     exit 0
 }
+
+# Auto-approve only a single, simple invocation. A command that chains or
+# substitutes (; && || | & redirection $(...) backticks) can hide a destructive
+# tail behind a read-only prefix, so defer those to the normal permission prompt.
+echo "$cmd" | grep -qE '[;&|<>`]|\$\(' && exit 0
+
+# Writes to the repo-local scratch dir are safe. Require .claude/tmp/ as a
+# whitespace-delimited token so substring matches (e.g. in a pipe tail) don't
+# auto-approve chained destructive commands.
+echo "$cmd" | grep -qE '(^|[[:space:]])(\./)?\.claude/tmp/' && approve "write to .claude/tmp/"
 
 # Linters and type checkers (read-only)
 echo "$cmd" | grep -qE '^(npm|npx|yarn|pnpm|bun|bunx) run (lint|check|typecheck|format:check)\b' && approve "JS/TS lint/check"
