@@ -38,13 +38,19 @@ Write the question to a file first (avoids shell injection and handles multiline
 printf '%s' "<question>" > "$COUNCIL_DIR/question.txt"
 ```
 
-Launch the GPT background call **immediately**:
+**Write your own independent answer to `$COUNCIL_DIR/round-0/claude.txt` first.** Form and commit your position before spawning the GPT subagent — this is the anti-anchoring guarantee.
 
-```bash
-codex exec -m gpt-5.5 --ephemeral -o "$COUNCIL_DIR/round-0/gpt.txt" < "$COUNCIL_DIR/question.txt" > "$COUNCIL_DIR/round-0/gpt.log" 2>&1
-```
+Then spawn a `general-purpose` subagent to get GPT's response. Provide the literal expanded path values in the prompt (subagents do not inherit shell variables):
 
-**While waiting for GPT to complete**, write your own independent answer to `$COUNCIL_DIR/round-0/claude.txt`. Form it before seeing GPT's response to avoid anchoring.
+> Run this command:
+>
+> ```bash
+> codex exec -m gpt-5.5 --ephemeral -o "<COUNCIL_DIR>/round-0/gpt.txt" < "<COUNCIL_DIR>/question.txt" > "<COUNCIL_DIR>/round-0/gpt.log" 2>&1
+> ```
+>
+> Return: "done" if `<COUNCIL_DIR>/round-0/gpt.txt` exists and is non-empty, otherwise the error from the log.
+
+**Do not proceed until the subagent returns.**
 
 **Output file note:** For `codex exec` runs, `-o <file>.txt` is the model's response; the log (`<file>.log`) is the codex session transcript and should not be read for content.
 
@@ -151,13 +157,19 @@ DEBATE_INSTRUCTIONS='Identify the single weakest argument in the opposing positi
 } > "$NEXT_DIR/prompt-gpt.txt"
 ```
 
-Launch the GPT debate call in the background **immediately**:
+**Read `$NEXT_DIR/prompt-claude.txt` and write your debate response to `$NEXT_DIR/claude.txt` first.** Commit your position before spawning the GPT subagent.
 
-```bash
-codex exec -m gpt-5.5 --ephemeral -o "$NEXT_DIR/gpt.txt" < "$NEXT_DIR/prompt-gpt.txt" > "$NEXT_DIR/gpt.log" 2>&1
-```
+Then spawn a `general-purpose` subagent for the GPT debate call. Substitute literal expanded paths:
 
-**While waiting for GPT**, read `$NEXT_DIR/prompt-claude.txt` and write your own debate response to `$NEXT_DIR/claude.txt`.
+> Run this command:
+>
+> ```bash
+> codex exec -m gpt-5.5 --ephemeral -o "<NEXT_DIR>/gpt.txt" < "<NEXT_DIR>/prompt-gpt.txt" > "<NEXT_DIR>/gpt.log" 2>&1
+> ```
+>
+> Return: "done" if `<NEXT_DIR>/gpt.txt` exists and is non-empty, otherwise the error from the log.
+
+**Do not proceed until the subagent returns.**
 
 Update `ROUND_DIR="$NEXT_DIR"` and return to the loop top (Step A).
 
@@ -213,7 +225,7 @@ After delivering the final answer, clean up: `rm -rf "$COUNCIL_DIR"`.
 
 ## Requirements
 
-- `codex exec` must be on PATH with a working config pointing at the gateway.
+- `codex exec` must be on PATH in the subagent execution environment (not the orchestrator session) with a working config pointing at the gateway.
 
 ## Anti-sycophancy guards (active throughout)
 

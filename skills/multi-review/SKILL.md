@@ -11,7 +11,7 @@ description: Use when reviewing a diff or pull request before merge and a single
 Run a multi-angle code review and emit a consolidated, validated findings report in
 the conversation. Up to eight reviewers run in parallel — up to four Claude subagents
 (broad generalist plus up to three specialized lenses selected from the diff) and a
-matching set of external GPT-5.5 background Bash calls via `codex exec` (one per active lens). A spawned
+matching set of external GPT-5.5 general-purpose subagents (one per active lens). A spawned
 consolidator agent merges their findings into one file, a validation subagent verifies
 each finding against the actual source and writes a final validated report, and (for a
 PR) anything existing reviewers already raised is stripped. The orchestrator reads only
@@ -82,11 +82,7 @@ source "$REVIEW_DIR/shas.env"
 
 ### 2c: Dispatch reviewers
 
-**In a single message**, dispatch all active Claude subagents AND all active external
-background Bash calls so they run in parallel. Each active lens runs two reviewers
-simultaneously: a Claude subagent (deep context, tool access) and an external model
-via `codex exec` with GPT-5.5 (independent perspective, different training). Give each only the diff
-and lens-specific instructions — never this session's history.
+**In a single message**, dispatch all active Claude subagents AND all active external model subagents so they run in parallel. Each active lens runs two reviewers simultaneously: a Claude subagent (deep context, tool access) and a `general-purpose` subagent running `codex exec` with GPT-5.5 (independent perspective, different training). Give each only the diff and lens-specific instructions — never this session's history.
 
 **Do not dispatch a lens that was marked inactive in 2a.**
 
@@ -112,39 +108,57 @@ and lens-specific instructions — never this session's history.
 4. **Code quality** (if active) — `reviewer` agent, Lens 3 per `~/.claude/skills/multi-review/REFERENCE.md` (includes YAGNI pass).
    Instruct it to write findings to `<REVIEW_DIR>/review-quality.md` (substitute the literal path).
 
-#### External model reviews (active lenses only, each a separate background Bash call)
+#### External model reviews (active lenses only, each a separate subagent)
 
-```bash
-# Broad — GPT-5.5 (always)
-{ printf 'You are a senior code reviewer. Review this diff for correctness, security, performance, and readability. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.\n\n'; cat "$REVIEW_DIR/diff.txt"; } \
-  | codex exec -m gpt-5.5 --ephemeral -o "$REVIEW_DIR/review-broad-ext.md" > "$REVIEW_DIR/review-broad-ext.log" 2>&1
-```
+For each active lens, spawn a `general-purpose` subagent (the Claude Code built-in default type, not a custom agent in `agents/`). Substitute `<REVIEW_DIR>` with the literal expanded path in every prompt. Each subagent runs the `codex exec` command and returns when the output file is written.
 
-```bash
-# Correctness — GPT-5.5 (if correctness lens active)
-{ printf 'You are a code correctness reviewer. Focus on: logic errors, unchecked returns, null/dangling pointers, off-by-one, integer overflow, error paths, security at boundaries. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.\n\n'; cat "$REVIEW_DIR/diff.txt"; } \
-  | codex exec -m gpt-5.5 --ephemeral -o "$REVIEW_DIR/review-correctness-ext.md" > "$REVIEW_DIR/review-correctness-ext.log" 2>&1
-```
+**Broad (always):**
 
-```bash
-# GPU performance — GPT-5.5 (if GPU lens active)
-{ printf 'You are a GPU performance reviewer. Focus on: memory coalescing, LDS bank conflicts, occupancy, wavefront divergence, kernel launch bounds, unnecessary host-device transfers, missed parallelism. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.\n\n'; cat "$REVIEW_DIR/diff.txt"; } \
-  | codex exec -m gpt-5.5 --ephemeral -o "$REVIEW_DIR/review-gpu-ext.md" > "$REVIEW_DIR/review-gpu-ext.log" 2>&1
-```
+> Run this command:
+>
+> ```bash
+> { printf 'You are a senior code reviewer. Review this diff for correctness, security, performance, and readability. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.\n\n'; cat "<REVIEW_DIR>/diff.txt"; } \
+>   | codex exec -m gpt-5.5 --ephemeral -o "<REVIEW_DIR>/review-broad-ext.md" > "<REVIEW_DIR>/review-broad-ext.log" 2>&1
+> ```
+>
+> Return: "done" if `<REVIEW_DIR>/review-broad-ext.md` is non-empty, otherwise the last 10 lines of the log.
 
-```bash
-# Code quality — GPT-5.5 (if quality lens active)
-{ printf 'You are a code quality reviewer focused on readability and simplicity. Flag: dead code, magic numbers, premature abstractions, naming issues, functions over 100 lines, nesting over 3 levels, YAGNI violations. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.\n\n'; cat "$REVIEW_DIR/diff.txt"; } \
-  | codex exec -m gpt-5.5 --ephemeral -o "$REVIEW_DIR/review-quality-ext.md" > "$REVIEW_DIR/review-quality-ext.log" 2>&1
-```
+**Correctness (if active):**
+
+> Run this command:
+>
+> ```bash
+> { printf 'You are a code correctness reviewer. Focus on: logic errors, unchecked returns, null/dangling pointers, off-by-one, integer overflow, error paths, security at boundaries. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.\n\n'; cat "<REVIEW_DIR>/diff.txt"; } \
+>   | codex exec -m gpt-5.5 --ephemeral -o "<REVIEW_DIR>/review-correctness-ext.md" > "<REVIEW_DIR>/review-correctness-ext.log" 2>&1
+> ```
+>
+> Return: "done" if `<REVIEW_DIR>/review-correctness-ext.md` is non-empty, otherwise the last 10 lines of the log.
+
+**GPU performance (if active):**
+
+> Run this command:
+>
+> ```bash
+> { printf 'You are a GPU performance reviewer. Focus on: memory coalescing, LDS bank conflicts, occupancy, wavefront divergence, kernel launch bounds, unnecessary host-device transfers, missed parallelism. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.\n\n'; cat "<REVIEW_DIR>/diff.txt"; } \
+>   | codex exec -m gpt-5.5 --ephemeral -o "<REVIEW_DIR>/review-gpu-ext.md" > "<REVIEW_DIR>/review-gpu-ext.log" 2>&1
+> ```
+>
+> Return: "done" if `<REVIEW_DIR>/review-gpu-ext.md` is non-empty, otherwise the last 10 lines of the log.
+
+**Code quality (if active):**
+
+> Run this command:
+>
+> ```bash
+> { printf 'You are a code quality reviewer focused on readability and simplicity. Flag: dead code, magic numbers, premature abstractions, naming issues, functions over 100 lines, nesting over 3 levels, YAGNI violations. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.\n\n'; cat "<REVIEW_DIR>/diff.txt"; } \
+>   | codex exec -m gpt-5.5 --ephemeral -o "<REVIEW_DIR>/review-quality-ext.md" > "<REVIEW_DIR>/review-quality-ext.log" 2>&1
+> ```
+>
+> Return: "done" if `<REVIEW_DIR>/review-quality-ext.md` is non-empty, otherwise the last 10 lines of the log.
 
 ### 2d: Wait for all reviewers
 
-**Do not proceed to Step 3 until every dispatched Claude subagent AND every background
-Bash call has completed.** Claude subagents complete when their Agent tool call
-returns. Background Bash calls complete when you receive a task-notification for each
-task ID. Only when all active reviewers have reported — with no outstanding task
-notifications — move to Step 3.
+**Do not proceed to Step 3 until every active Claude lens subagent and external model subagent has returned.**
 
 If an external call fails (env vars not set, gateway down), note it and continue with
 the Claude-only findings.

@@ -56,27 +56,42 @@ mkdir -p .claude/tmp
 RESEARCH_DIR=$(mktemp -d .claude/tmp/research-XXXXXX)
 ```
 
-For each sub-question N, write the sub-question to a temp file first (avoids shell injection), then launch the GPT call as a background Bash call. The file-write must complete before the model call starts.
+For each sub-question N (replace `N` with the concrete index: 1, 2, 3, …), write the sub-question to a temp file first (avoids shell injection), then spawn a subagent for the GPT call. The file-write must complete before the subagent is spawned.
 
 ```bash
 # Setup (run first)
 printf '%s' "sub-question N" > "$RESEARCH_DIR/sq_N.txt"
 ```
 
-```bash
-# GPT call — run in background while Claude does its own web research
-codex exec -m gpt-5.5 --ephemeral -o "$RESEARCH_DIR/sq_N_gpt.txt" < "$RESEARCH_DIR/sq_N.txt" > "$RESEARCH_DIR/sq_N_gpt.log" 2>&1
-```
+Spawn a `general-purpose` subagent for the GPT call (substitute literal expanded paths, including the concrete index for N):
+
+> Run this command:
+>
+> ```bash
+> codex exec -m gpt-5.5 --ephemeral -o "<RESEARCH_DIR>/sq_N_gpt.txt" < "<RESEARCH_DIR>/sq_N.txt" > "<RESEARCH_DIR>/sq_N_gpt.log" 2>&1
+> ```
+>
+> Return: "done" if `<RESEARCH_DIR>/sq_N_gpt.txt` is non-empty, otherwise the last 10 lines of the log.
+
+Spawn the subagent, then do your own web research for this sub-question. Do not merge or finalize this sub-question until the subagent has returned.
 
 Merge web findings + GPT response per sub-question. Note agreements and conflicts. Label model-only claims as "Unverified" unless corroborated by a primary source.
 
 **Step 3 — GPT challenge pass.**
 After all sub-questions are resolved, write draft findings to a file and pipe to GPT for a cross-check (piping avoids shell argument length limits):
 
-```bash
-{ printf 'What is missing or wrong with these findings?\n\n'; cat "$RESEARCH_DIR/draft_findings.txt"; } \
-  | codex exec -m gpt-5.5 --ephemeral -o "$RESEARCH_DIR/challenge_gpt.txt" > "$RESEARCH_DIR/challenge_gpt.log" 2>&1
-```
+Spawn a `general-purpose` subagent for the GPT challenge (substitute literal expanded paths):
+
+> Run this command:
+>
+> ```bash
+> { printf 'What is missing or wrong with these findings?\n\n'; cat "<RESEARCH_DIR>/draft_findings.txt"; } \
+>   | codex exec -m gpt-5.5 --ephemeral -o "<RESEARCH_DIR>/challenge_gpt.txt" > "<RESEARCH_DIR>/challenge_gpt.log" 2>&1
+> ```
+>
+> Return: "done" if `<RESEARCH_DIR>/challenge_gpt.txt` is non-empty, otherwise the last 10 lines of the log.
+
+**Do not read `<RESEARCH_DIR>/challenge_gpt.txt` until the subagent returns.**
 
 Incorporate valid challenges. Discard objections that lack reasoning. This is the anti-sycophancy checkpoint: external model agreement does not promote a claim; only primary-source corroboration does.
 
