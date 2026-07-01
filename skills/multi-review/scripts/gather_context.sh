@@ -10,17 +10,15 @@
 set -euo pipefail
 
 PR_NUMBER="${1:-}"
-# Default the scratch dir under the repo's .claude/tmp (gitignored). Inside a repo
-# this keeps scratch out of /tmp; outside a repo fall back to $TMPDIR rather than
-# writing .claude/tmp into an arbitrary cwd.
+# Scratch dir under the repo's tmp/ (gitignored). Errors if not in a git repo.
 if [ -z "${REVIEW_DIR:-}" ]; then
-    if repo_root=$(git rev-parse --show-toplevel 2>/dev/null); then
-        tmp_root="$repo_root/.claude/tmp"
-        mkdir -p "$tmp_root"
-        REVIEW_DIR=$(mktemp -d "$tmp_root/multi-review-XXXXXX")
-    else
-        REVIEW_DIR=$(mktemp -d "${TMPDIR:-/tmp}/multi-review-XXXXXX")
-    fi
+    repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+        echo "ERROR: gather_context.sh must be run inside a git repo" >&2
+        exit 1
+    }
+    tmp_root="$repo_root/tmp"
+    mkdir -p "$tmp_root"
+    REVIEW_DIR=$(mktemp -d "$tmp_root/multi-review-XXXXXX")
 fi
 mkdir -p "$REVIEW_DIR"
 
@@ -72,21 +70,16 @@ split_chunks "$REVIEW_DIR/diff.txt"
 # Compute SHAs. BASE_SHA matches the base the diff was actually taken against:
 # HEAD when we diffed a dirty working tree (or PR mode), merge-base otherwise.
 HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-CODEX_REVIEW_FLAGS=""
 if [ -n "$PR_NUMBER" ]; then
     # PR mode: diff is the PR's full patch set; SHA context is HEAD of the PR head.
     BASE_SHA=$HEAD_SHA
-    CODEX_REVIEW_FLAGS="--base $BASE_SHA"
 elif [ -n "${untracked:-}" ] || ! git diff --quiet HEAD 2>/dev/null; then
-    # Dirty working tree was diffed against HEAD — use --uncommitted so codex review
-    # sees the same changes as the diff (not a commit range, which would be empty).
+    # Dirty working tree was diffed against HEAD.
     BASE_SHA=$HEAD_SHA
-    CODEX_REVIEW_FLAGS="--uncommitted"
 else
     upstream=$(git rev-parse --abbrev-ref '@{upstream}' 2>/dev/null || echo main)
     BASE_SHA=$(git merge-base HEAD "$upstream" 2>/dev/null || echo "$HEAD_SHA")
-    CODEX_REVIEW_FLAGS="--base $BASE_SHA"
 fi
-printf 'HEAD_SHA=%s\nBASE_SHA=%s\nCODEX_REVIEW_FLAGS=%s\n' "$HEAD_SHA" "$BASE_SHA" "$CODEX_REVIEW_FLAGS" >"$REVIEW_DIR/shas.env"
+printf 'HEAD_SHA=%s\nBASE_SHA=%s\n' "$HEAD_SHA" "$BASE_SHA" >"$REVIEW_DIR/shas.env"
 
 echo "$REVIEW_DIR"

@@ -49,11 +49,12 @@ Thorough multi-source, multi-model investigation with structured synthesis.
 
 **Step 2 — Per-sub-question multi-model gathering (parallel per sub-question).**
 
-Create a temp dir for this run:
+Create a temp dir under the repo's `tmp/` (gitignored, not in `/tmp`):
 
 ```bash
-mkdir -p .claude/tmp
-RESEARCH_DIR=$(mktemp -d .claude/tmp/research-XXXXXX)
+_repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+mkdir -p "$_repo_root/tmp"
+RESEARCH_DIR=$(mktemp -d "$_repo_root/tmp/research-XXXXXX")
 ```
 
 For each sub-question N (replace `N` with the concrete index: 1, 2, 3, …), write the sub-question to a temp file first (avoids shell injection), then spawn a subagent for the GPT call. The file-write must complete before the subagent is spawned.

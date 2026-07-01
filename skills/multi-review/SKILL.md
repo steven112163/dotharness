@@ -82,11 +82,13 @@ source "$REVIEW_DIR/shas.env"
 
 ### 2c: Dispatch reviewers
 
-**In a single message**, dispatch all active Claude subagents AND all active external model subagents so they run in parallel. Each active lens runs two reviewers simultaneously: a Claude subagent (deep context, tool access) and a `general-purpose` subagent running `codex review` (independent perspective, different model). Give each only the diff and lens-specific instructions — never this session's history.
+**In a single message**, dispatch all Claude subagents in background so they run in parallel. After dispatching, run the external `codex exec` reviews in parallel in the background from the orchestrator (not in subagents — subagents don't inherit `permissions.allow`). Each active lens gets two perspectives: a Claude subagent (deep context, tool access) and a GPT-5.5 codex review (independent perspective, different training). Give each only the diff and lens-specific instructions — never this session's history.
 
 **Do not dispatch a lens that was marked inactive in 2a.**
 
-**Path substitution rule:** Every subagent prompt must contain the literal expanded value of `$REVIEW_DIR` (e.g. `/home/user/repo/.claude/tmp/multi-review-XXXXXX`), never the shell variable `$REVIEW_DIR`. Subagents run in isolated contexts where that variable is not set — they need the actual path to write files.
+**Subagent write rule:** Claude subagents cannot reliably write files — `permissions.allow` does not propagate into subagent contexts (known Claude Code bug). Do **not** instruct subagents to write files. Instead, instruct each subagent to **return its findings as plain text**. After each subagent returns, the orchestrator writes its findings to the appropriate file using the Write tool.
+
+**Path substitution rule:** Every subagent prompt must contain the literal expanded value of `$REVIEW_DIR` (e.g. `/home/user/repo/tmp/multi-review-XXXXXX`), never the shell variable `$REVIEW_DIR`. Subagents run in isolated contexts where that variable is not set.
 
 #### Claude lens subagents (active lenses only)
 
@@ -97,82 +99,76 @@ source "$REVIEW_DIR/shas.env"
    ls -d ~/.claude/plugins/cache/claude-plugins-official/superpowers/*/skills/requesting-code-review/code-reviewer.md | sort -V | tail -1
    ```
 
-   Returns Critical/Important/Minor. Instruct it to write findings to `<REVIEW_DIR>/review-broad.md` (substitute the literal path).
+   Returns Critical/Important/Minor. Instruct it to **return findings as text** (not write a file).
+   After it returns, write its response to `<REVIEW_DIR>/review-broad.md` using the Write tool.
 
 2. **Correctness & numerics** (if active) — `reviewer` agent, Lens 1 per `~/.claude/skills/multi-review/REFERENCE.md`.
-   Instruct it to write findings to `<REVIEW_DIR>/review-correctness.md` (substitute the literal path).
+   Instruct it to **return findings as text**. After it returns, write to `<REVIEW_DIR>/review-correctness.md`.
 
 3. **GPU performance** (if active) — `reviewer` agent, Lens 2 per `~/.claude/skills/multi-review/REFERENCE.md`.
-   Instruct it to write findings to `<REVIEW_DIR>/review-gpu.md` (substitute the literal path).
+   Instruct it to **return findings as text**. After it returns, write to `<REVIEW_DIR>/review-gpu.md`.
 
 4. **Code quality** (if active) — `reviewer` agent, Lens 3 per `~/.claude/skills/multi-review/REFERENCE.md` (includes YAGNI pass).
-   Instruct it to write findings to `<REVIEW_DIR>/review-quality.md` (substitute the literal path).
+   Instruct it to **return findings as text**. After it returns, write to `<REVIEW_DIR>/review-quality.md`.
 
-#### External model reviews (active lenses only, each a separate subagent)
+#### External model reviews (active lenses only, run in parallel in background by the orchestrator)
 
-For each active lens, spawn a `general-purpose` subagent. Substitute `<REVIEW_DIR>` and `<BASE_SHA>` with literal expanded values in every prompt. Each subagent runs `codex review` from the repo root and writes the output file.
+Run each active lens directly using the Bash tool — do **not** wrap in a subagent. Subagents do not inherit `permissions.allow` (known Claude Code bug), so `codex exec` would be blocked. Run from the orchestrator's context where `Bash(codex exec *)` is allowed. Run all active lenses in parallel by passing `run_in_background: true` to each Bash tool call. Claude Code notifies you when each background task completes; collect all notifications before Step 3.
 
-`codex review` operates on the git repo directly. `gather_context.sh` writes `CODEX_REVIEW_FLAGS` to `shas.env` — it is either `--uncommitted` (dirty working tree) or `--base <SHA>` (committed branch work). Source `shas.env` to get the correct flags. Run from the repo root (the directory containing `.git`).
+Substitute `<REVIEW_DIR>` with the literal expanded path in every command.
 
 **Broad (always):**
 
-> Run these commands from the repo root (cd to it first if needed):
->
-> ```bash
-> source "<REVIEW_DIR>/shas.env"
-> codex review $CODEX_REVIEW_FLAGS \
->   'Senior code review: correctness, security, performance, readability. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.' \
->   > "<REVIEW_DIR>/review-broad-ext.md" 2>"<REVIEW_DIR>/review-broad-ext.log"
-> ```
->
-> Return: "done" if `<REVIEW_DIR>/review-broad-ext.md` is non-empty, otherwise the last 10 lines of the log.
+```bash
+codex exec -m gpt-5.5 --ephemeral \
+  -o "<REVIEW_DIR>/review-broad-ext.md" \
+  'Read the diff at <REVIEW_DIR>/diff.txt and do a senior code review for correctness, security, performance, and readability. One finding per line: file:line: blocker|suggestion|nit: issue. fix.' \
+  > "<REVIEW_DIR>/review-broad-ext.log" 2>&1
+```
 
 **Correctness (if active):**
 
-> ```bash
-> source "<REVIEW_DIR>/shas.env"
-> codex review $CODEX_REVIEW_FLAGS \
->   'Correctness review: logic errors, unchecked returns, null/dangling pointers, off-by-one, integer overflow, error paths, security at boundaries. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.' \
->   > "<REVIEW_DIR>/review-correctness-ext.md" 2>"<REVIEW_DIR>/review-correctness-ext.log"
-> ```
->
-> Return: "done" if `<REVIEW_DIR>/review-correctness-ext.md` is non-empty, otherwise the last 10 lines of the log.
+```bash
+codex exec -m gpt-5.5 --ephemeral \
+  -o "<REVIEW_DIR>/review-correctness-ext.md" \
+  'Read the diff at <REVIEW_DIR>/diff.txt and review for correctness: logic errors, unchecked returns, null/dangling pointers, off-by-one, integer overflow, error paths, security at boundaries. One finding per line: file:line: blocker|suggestion|nit: issue. fix.' \
+  > "<REVIEW_DIR>/review-correctness-ext.log" 2>&1
+```
 
 **GPU performance (if active):**
 
-> ```bash
-> source "<REVIEW_DIR>/shas.env"
-> codex review $CODEX_REVIEW_FLAGS \
->   'GPU performance review: memory coalescing, LDS bank conflicts, occupancy, wavefront divergence, kernel launch bounds, unnecessary host-device transfers, missed parallelism. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.' \
->   > "<REVIEW_DIR>/review-gpu-ext.md" 2>"<REVIEW_DIR>/review-gpu-ext.log"
-> ```
->
-> Return: "done" if `<REVIEW_DIR>/review-gpu-ext.md` is non-empty, otherwise the last 10 lines of the log.
+```bash
+codex exec -m gpt-5.5 --ephemeral \
+  -o "<REVIEW_DIR>/review-gpu-ext.md" \
+  'Read the diff at <REVIEW_DIR>/diff.txt and review for GPU performance: memory coalescing, LDS bank conflicts, occupancy, wavefront divergence, kernel launch bounds, unnecessary host-device transfers, missed parallelism. One finding per line: file:line: blocker|suggestion|nit: issue. fix.' \
+  > "<REVIEW_DIR>/review-gpu-ext.log" 2>&1
+```
 
 **Code quality (if active):**
 
-> ```bash
-> source "<REVIEW_DIR>/shas.env"
-> codex review $CODEX_REVIEW_FLAGS \
->   'Code quality review: dead code, magic numbers, premature abstractions, naming issues, functions over 100 lines, nesting over 3 levels, YAGNI violations. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.' \
->   > "<REVIEW_DIR>/review-quality-ext.md" 2>"<REVIEW_DIR>/review-quality-ext.log"
-> ```
->
-> Return: "done" if `<REVIEW_DIR>/review-quality-ext.md` is non-empty, otherwise the last 10 lines of the log.
+```bash
+codex exec -m gpt-5.5 --ephemeral \
+  -o "<REVIEW_DIR>/review-quality-ext.md" \
+  'Read the diff at <REVIEW_DIR>/diff.txt and review for code quality: dead code, magic numbers, premature abstractions, naming issues, functions over 100 lines, nesting over 3 levels, YAGNI violations. One finding per line: file:line: blocker|suggestion|nit: issue. fix.' \
+  > "<REVIEW_DIR>/review-quality-ext.log" 2>&1
+```
 
-### 2d: Wait for all reviewers
+If a command fails (gateway down, codex not installed), note it and continue with Claude-only findings.
 
-**Do not proceed to Step 3 until every active Claude lens subagent and external model subagent has returned.**
+### 2d: Wait for all Claude reviewers and external model reviewers
 
-If an external call fails (env vars not set, gateway down), note it and continue with
-the Claude-only findings.
+**Do not proceed to Step 3 until every active Claude lens subagent has returned AND every background codex Bash task has sent a completion notification.**
+
+Dispatch all Claude subagents in one message, then immediately issue all codex Bash calls with `run_in_background: true`. Claude subagents and codex tasks run concurrently. You will receive a notification for each background Bash task when it completes. Wait for all of them.
+
+**Do not fix anything at any point during the review.** The orchestrator's only job is to run the review pipeline (Steps 1–6) and deliver the report. Whether to fix findings is the user's decision after reading the report.
 
 ## Step 3: Consolidate
 
 Do not merge the reviews yourself. Spawn one `reviewer` agent as the
 **consolidator**. In the prompt, substitute all `<REVIEW_DIR>` placeholders with the
 literal expanded path. Pass it: the literal review file paths for all active lenses
-(e.g. `/home/user/repo/.claude/tmp/multi-review-XXXXXX/review-broad.md` — only files
+(e.g. `/home/user/repo/tmp/multi-review-XXXXXX/review-broad.md` — only files
 that were actually written), the literal path to `<REVIEW_DIR>/diff.txt`, and
 `~/.claude/rules/code-review.md`. Instruct it to:
 
@@ -189,10 +185,9 @@ that were actually written), the literal path to `<REVIEW_DIR>/diff.txt`, and
   `suggestion:`, Minor → `nit:`).
 - Report dissent: if a reviewer raised a blocker the consolidator discounts, keep
   it with a one-line note on why, rather than silently dropping it.
-- Write the consolidated review to `<REVIEW_DIR>/review-consolidated.md` (literal path).
+- **Return the consolidated findings as text** (not write a file — subagents cannot write).
 
-The consolidator returns only the file path and a one-line summary. Do not read
-`review-consolidated.md` yourself — pass its literal path to the validator in Step 4.
+After the consolidator returns, write its response to `<REVIEW_DIR>/review-consolidated.md` using the Write tool. Then pass that literal path to the validator in Step 4.
 
 If the consolidator finds nothing, report "no findings" and stop.
 
@@ -211,16 +206,13 @@ Pass it the literal paths to `<REVIEW_DIR>/review-consolidated.md`,
 3. Budget at most 15 tool calls total.
 4. Report any finding it cannot verify (file not found, line missing) as unverifiable
    rather than silently skipping it.
-5. Write a final validated report to `<REVIEW_DIR>/review-validated.md` (literal path) with verdicts
-   applied:
+5. **Return the final validated report as text** with verdicts applied:
 
 - **Confirmed** — issue is real and correctly described. Keep.
 - **Wrong** — claim is incorrect. Drop with a note.
 - **Overstated** — issue exists but is exaggerated. Keep and soften.
 
-The validator writes `<REVIEW_DIR>/review-validated.md` and returns its path. Do not read any
-other review file. Read only `<REVIEW_DIR>/review-validated.md` (literal path) to produce the final
-report.
+After the validator returns, write its response to `<REVIEW_DIR>/review-validated.md` using the Write tool. Read only `<REVIEW_DIR>/review-validated.md` to produce the final report.
 
 If nothing survives validation, report "no confirmed findings" and stop.
 

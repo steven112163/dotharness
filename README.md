@@ -1,31 +1,39 @@
 # dotharness
 
-Personal monorepo for Claude Code skills, rules, and configuration.
+Host-level configuration hub for Claude Code. Clone once; `setup.sh` symlinks skills, rules, hooks, agents, CLI tools, and libraries into `~/.claude/`, `~/bin/`, and `~/lib/` so they are available in **every repo on this machine** — no per-project install needed.
+
+## How it works
+
+Everything lives here and is symlinked outward:
+
+| Source | Symlink target | Available as |
+|---|---|---|
+| `rules/` | `~/.claude/rules/` | Always-loaded / path-scoped Claude rules |
+| `skills/` | `~/.claude/skills/` | `/skill-name` invocations in any session |
+| `agents/` | `~/.claude/agents/` | Subagent worker roles |
+| `hooks/` | `~/.claude/hooks/` | Lifecycle scripts (PreToolUse, SessionStart, …) |
+| `output-styles/` | `~/.claude/output-styles/` | Voice/format presets |
+| `bin/` | `~/bin/` (on PATH) | CLI commands (`ckBuild`, `ckRunProfile`, `llm`, …) |
+| `lib/` | `~/lib/` | Internal libraries imported by `bin/` scripts |
+
+Changes to any file here take effect immediately in all repos — no reinstall.
 
 ## Structure
 
 ```text
-skills/                → own skills, symlinked to ~/.claude/skills/        (skills/README.md)
-  dev-team/            → agent team orchestration (lead spawns native agents as teammates)
-  research/            → multi-mode research with anti-sycophancy safeguards
-  survey/              → literature survey with grounded citations
-  create-pr/           → PR creation with CK team template
-  ck-profile/          → static + runtime GPU profiling of a CK target
-  multi-review/        → multi-angle code review, consolidated and validated
-  council/             → adversarial two-model debate (Claude + GPT-5.5) with synthesis
-  llm/                 → external LLM gateway skill (wraps bin/llm)
+skills/                → own skills                                        (skills/README.md)
 agents/                → native subagents (worker roles)                   (agents/README.md)
 hooks/                 → lifecycle hook scripts                            (hooks/README.md)
 rules/                 → user-level rules loaded by Claude Code            (rules/README.md)
 output-styles/         → output styles                                     (output-styles/README.md)
 bin/                   → helper scripts, symlinked to ~/bin/ (on PATH)     (bin/README.md)
-tests/                 → bats + pytest suites (tests/bats, tests/python)   (tests/README.md)
+lib/                   → internal libraries, symlinked to ~/lib/
+  ck-profile/          → Python libs + data for ck*Profile binaries        (lib/ck-profile/README.md)
+tests/                 → bats + pytest suites                              (tests/README.md)
 third-party/
   mattpocock-skills/   → git submodule (engineering + productivity skills)
 statusline.sh          → compact status line, symlinked to ~/.claude/
 setup.sh               → symlinks, hooks, output style, plugins, pre-commit provisioning
-.pre-commit-config.yaml → lint/format/secret gate
-.github/workflows/ci.yml → CI: pre-commit + bats + pytest + full-history gitleaks
 ```
 
 ## Setup
@@ -35,7 +43,7 @@ git submodule update --init
 ./setup.sh
 ```
 
-Symlinks `skills/`, `hooks/`, `output-styles/`, `rules/`, third-party skills, and `statusline.sh` into `~/.claude/`, and `bin/` scripts into `~/bin/`. Registers hooks and sets the `dotharness` output style in `~/.claude/settings.json` (requires `jq`), creating that file if it does not yet exist (fresh-machine safe). Installs plugins via the Claude CLI. Provisions a repo-local `.venv` with `pre-commit` and installs the git pre-commit hook. Existing files are backed up to `.bak`. Re-running is idempotent. Per-folder `README.md` files are skipped, so they document the repo without being linked into the live `~/.claude/` tree.
+Symlinks `skills/`, `hooks/`, `output-styles/`, `rules/`, third-party skills, and `statusline.sh` into `~/.claude/`; `bin/` scripts into `~/bin/`; `lib/` subdirs into `~/lib/`. Registers hooks and sets the `dotharness` output style in `~/.claude/settings.json` (requires `jq`), creating that file if it does not yet exist (fresh-machine safe). Installs plugins via the Claude CLI. Provisions a repo-local `.venv` with `pre-commit` and installs the git pre-commit hook. Existing files are backed up to `.bak`. Re-running is idempotent. Per-folder `README.md` files are skipped so they document the repo without being linked into the live `~/.claude/` tree.
 
 Optional: desktop notifications work out of the box, but Teams notifications need a webhook URL you configure manually — see [hooks/README.md](hooks/README.md#teams-notifications).
 
@@ -49,6 +57,7 @@ Each component is documented next to its code:
 - [Hooks](hooks/README.md) — lifecycle hooks and Teams notification setup
 - [Output styles](output-styles/README.md) — the `dotharness` voice
 - [Binaries](bin/README.md) — `bin/` helper scripts on `PATH`
+- [CK profile libs](lib/ck-profile/README.md) — internal Python libs and data for `ck*Profile` binaries
 - [Tests](tests/README.md) — the bats hook/script suites and the pytest suite for the ck-profile helpers
 
 ## Pre-commit and CI

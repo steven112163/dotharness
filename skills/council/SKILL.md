@@ -24,11 +24,12 @@ Coordinates an adversarial two-model debate: Claude and GPT-5.5 generate indepen
 
 ### Phase 1 — Independent answers (parallel, round 0)
 
-Create a temp dir under `.claude/tmp/`:
+Create a temp dir under the repo's `tmp/` (gitignored, not in `/tmp`):
 
 ```bash
-mkdir -p .claude/tmp
-COUNCIL_DIR=$(mktemp -d .claude/tmp/council-XXXXXX)
+_repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+mkdir -p "$_repo_root/tmp"
+COUNCIL_DIR=$(mktemp -d "$_repo_root/tmp/council-XXXXXX")
 mkdir -p "$COUNCIL_DIR/round-0"
 ```
 
