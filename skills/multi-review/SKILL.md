@@ -82,7 +82,7 @@ source "$REVIEW_DIR/shas.env"
 
 ### 2c: Dispatch reviewers
 
-**In a single message**, dispatch all active Claude subagents AND all active external model subagents so they run in parallel. Each active lens runs two reviewers simultaneously: a Claude subagent (deep context, tool access) and a `general-purpose` subagent running `codex exec` with GPT-5.5 (independent perspective, different training). Give each only the diff and lens-specific instructions — never this session's history.
+**In a single message**, dispatch all active Claude subagents AND all active external model subagents so they run in parallel. Each active lens runs two reviewers simultaneously: a Claude subagent (deep context, tool access) and a `general-purpose` subagent running `codex review` (independent perspective, different model). Give each only the diff and lens-specific instructions — never this session's history.
 
 **Do not dispatch a lens that was marked inactive in 2a.**
 
@@ -110,48 +110,52 @@ source "$REVIEW_DIR/shas.env"
 
 #### External model reviews (active lenses only, each a separate subagent)
 
-For each active lens, spawn a `general-purpose` subagent (the Claude Code built-in default type, not a custom agent in `agents/`). Substitute `<REVIEW_DIR>` with the literal expanded path in every prompt. Each subagent runs the `codex exec` command and returns when the output file is written.
+For each active lens, spawn a `general-purpose` subagent. Substitute `<REVIEW_DIR>` and `<BASE_SHA>` with literal expanded values in every prompt. Each subagent runs `codex review` from the repo root and writes the output file.
+
+`codex review` operates on the git repo directly. `gather_context.sh` writes `CODEX_REVIEW_FLAGS` to `shas.env` — it is either `--uncommitted` (dirty working tree) or `--base <SHA>` (committed branch work). Source `shas.env` to get the correct flags. Run from the repo root (the directory containing `.git`).
 
 **Broad (always):**
 
-> Run this command:
+> Run these commands from the repo root (cd to it first if needed):
 >
 > ```bash
-> { printf 'You are a senior code reviewer. Review this diff for correctness, security, performance, and readability. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.\n\n'; cat "<REVIEW_DIR>/diff.txt"; } \
->   | codex exec -m gpt-5.5 --ephemeral -o "<REVIEW_DIR>/review-broad-ext.md" > "<REVIEW_DIR>/review-broad-ext.log" 2>&1
+> source "<REVIEW_DIR>/shas.env"
+> codex review $CODEX_REVIEW_FLAGS \
+>   'Senior code review: correctness, security, performance, readability. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.' \
+>   > "<REVIEW_DIR>/review-broad-ext.md" 2>"<REVIEW_DIR>/review-broad-ext.log"
 > ```
 >
 > Return: "done" if `<REVIEW_DIR>/review-broad-ext.md` is non-empty, otherwise the last 10 lines of the log.
 
 **Correctness (if active):**
 
-> Run this command:
->
 > ```bash
-> { printf 'You are a code correctness reviewer. Focus on: logic errors, unchecked returns, null/dangling pointers, off-by-one, integer overflow, error paths, security at boundaries. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.\n\n'; cat "<REVIEW_DIR>/diff.txt"; } \
->   | codex exec -m gpt-5.5 --ephemeral -o "<REVIEW_DIR>/review-correctness-ext.md" > "<REVIEW_DIR>/review-correctness-ext.log" 2>&1
+> source "<REVIEW_DIR>/shas.env"
+> codex review $CODEX_REVIEW_FLAGS \
+>   'Correctness review: logic errors, unchecked returns, null/dangling pointers, off-by-one, integer overflow, error paths, security at boundaries. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.' \
+>   > "<REVIEW_DIR>/review-correctness-ext.md" 2>"<REVIEW_DIR>/review-correctness-ext.log"
 > ```
 >
 > Return: "done" if `<REVIEW_DIR>/review-correctness-ext.md` is non-empty, otherwise the last 10 lines of the log.
 
 **GPU performance (if active):**
 
-> Run this command:
->
 > ```bash
-> { printf 'You are a GPU performance reviewer. Focus on: memory coalescing, LDS bank conflicts, occupancy, wavefront divergence, kernel launch bounds, unnecessary host-device transfers, missed parallelism. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.\n\n'; cat "<REVIEW_DIR>/diff.txt"; } \
->   | codex exec -m gpt-5.5 --ephemeral -o "<REVIEW_DIR>/review-gpu-ext.md" > "<REVIEW_DIR>/review-gpu-ext.log" 2>&1
+> source "<REVIEW_DIR>/shas.env"
+> codex review $CODEX_REVIEW_FLAGS \
+>   'GPU performance review: memory coalescing, LDS bank conflicts, occupancy, wavefront divergence, kernel launch bounds, unnecessary host-device transfers, missed parallelism. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.' \
+>   > "<REVIEW_DIR>/review-gpu-ext.md" 2>"<REVIEW_DIR>/review-gpu-ext.log"
 > ```
 >
 > Return: "done" if `<REVIEW_DIR>/review-gpu-ext.md` is non-empty, otherwise the last 10 lines of the log.
 
 **Code quality (if active):**
 
-> Run this command:
->
 > ```bash
-> { printf 'You are a code quality reviewer focused on readability and simplicity. Flag: dead code, magic numbers, premature abstractions, naming issues, functions over 100 lines, nesting over 3 levels, YAGNI violations. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.\n\n'; cat "<REVIEW_DIR>/diff.txt"; } \
->   | codex exec -m gpt-5.5 --ephemeral -o "<REVIEW_DIR>/review-quality-ext.md" > "<REVIEW_DIR>/review-quality-ext.log" 2>&1
+> source "<REVIEW_DIR>/shas.env"
+> codex review $CODEX_REVIEW_FLAGS \
+>   'Code quality review: dead code, magic numbers, premature abstractions, naming issues, functions over 100 lines, nesting over 3 levels, YAGNI violations. One finding per line: file:line: <blocker|suggestion|nit>: <issue>. <fix>.' \
+>   > "<REVIEW_DIR>/review-quality-ext.md" 2>"<REVIEW_DIR>/review-quality-ext.log"
 > ```
 >
 > Return: "done" if `<REVIEW_DIR>/review-quality-ext.md` is non-empty, otherwise the last 10 lines of the log.
