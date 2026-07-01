@@ -25,9 +25,9 @@ Run with `bats tests/bats/`. CI runs the same suite (the `bats` job installs
 ## pytest (Python)
 
 `test_gpu_specs.py`, `test_parse_resource_usage.py`, and `test_aggregate.py` cover
-the pure helpers in `skills/ck-profile/scripts/` (hardware-spec lookups, build-log
-parsing and VGPR/spill math, bottleneck classification and stats). `conftest.py`
-puts the script directory on `sys.path` so they import by name.
+the pure helpers in `bin/` and `lib/ck-profile/` (hardware-spec lookups, build-log
+parsing and VGPR/spill math, bottleneck classification and stats). `conftest.py` puts
+both `bin/` and `lib/ck-profile/` on `sys.path` so they import by name.
 
 Run with `pytest` (config in `pyproject.toml` points at `tests/python`). CI runs
 it in the `pytest` job.

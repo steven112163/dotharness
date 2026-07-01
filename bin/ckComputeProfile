@@ -1,0 +1,175 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Deep microarchitecture profiling with rocprof-compute: roofline + speed-of-light
+# + memory hierarchy panels. On Slurm, rocprofiler-compute must already be in the
+# image (dxroot/package install not supported on ephemeral --rm containers).
+#
+#   ckComputeProfile [--arch gfx...] [--base-args <args>] [--workload <name>] <bin>
+
+SELF_DIR=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+
+# shellcheck source=bin/ckExec disable=SC1091
+source "$SELF_DIR/ckExec"
+
+REPO=${REPO:-$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")}
+ARCH=${ARCH:-}
+BIN=${BIN:-}
+BASE_ARGS=${BASE_ARGS:--v=0}
+WORKLOAD=${WORKLOAD:-}
+OUTDIR=${OUTDIR:-}
+
+usage() {
+    cat >&2 <<EOF
+Usage: $(basename "$0") [--arch gfx...] [--base-args <args>]
+                        [--workload <name>] <bin>
+
+  --arch gfx...      GPU arch (e.g. gfx942); required on Slurm
+  --base-args <args> args passed to the app (default: "-v=0")
+  --workload <name>  workload label (default: basename of bin)
+  <bin>              binary path (relative to REPO root, e.g. build/bin/foo)
+
+On Slurm: pre-install rocprofiler-compute in the image (dxroot not supported).
+Env overrides: REPO=$REPO  ARCH=<gfx...>  CONTAINER=<name>  IMAGE=<image>
+               VENV=<path>
+EOF
+    exit 1
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+    -h | --help) usage ;;
+    --arch)
+        [ $# -ge 2 ] || {
+            echo "ERROR: --arch needs a value" >&2
+            usage
+        }
+        ARCH="$2"
+        shift 2
+        ;;
+    --base-args)
+        [ $# -ge 2 ] || {
+            echo "ERROR: --base-args needs a value" >&2
+            usage
+        }
+        BASE_ARGS="$2"
+        shift 2
+        ;;
+    --workload)
+        [ $# -ge 2 ] || {
+            echo "ERROR: --workload needs a value" >&2
+            usage
+        }
+        WORKLOAD="$2"
+        shift 2
+        ;;
+    -*)
+        echo "Unknown option: $1" >&2
+        usage
+        ;;
+    *)
+        BIN="$1"
+        shift
+        ;;
+    esac
+done
+
+[ -n "$BIN" ] || {
+    echo "ERROR: no binary given" >&2
+    usage
+}
+[[ "$BIN" == */* ]] || BIN="build/bin/$BIN"
+
+_find_ck_root() {
+    local d="$1"
+    while [ -n "$d" ] && [ "$d" != "/" ]; do
+        [ -e "$d/script/cmake-ck-dev.sh" ] && {
+            printf '%s\n' "$d"
+            return 0
+        }
+        d=$(dirname "$d")
+    done
+    return 1
+}
+if [ ! -e "$REPO/$BIN" ]; then
+    alt=$(_find_ck_root "$REPO" || _find_ck_root "$PWD") && REPO="$alt"
+fi
+if [ ! -e "$REPO/$BIN" ]; then
+    echo "ERROR: binary not found: $REPO/$BIN" >&2
+    exit 1
+fi
+
+WORKLOAD=${WORKLOAD:-$(basename "$BIN")}
+OUTDIR=${OUTDIR:-$REPO/ck_profile_out/compute}
+
+[ -z "$ARCH" ] && ARCH=$(arch_from_container)
+mkdir -p "$OUTDIR"
+cp "$LIB_DIR/profile_readme.md" "$REPO/ck_profile_out/README.md" 2>/dev/null || true
+bash "$LIB_DIR/git_exclude_outdir.sh" "$REPO" 2>/dev/null || true
+
+# shellcheck disable=SC2016  # template eval'd inside container; must not expand locally
+_resolve_rpc='command -v rocprof-compute 2>/dev/null || for p in /opt/rocm/bin/rocprof-compute /opt/rocm*/bin/rocprof-compute; do [ -x "$p" ] && { echo "$p"; break; }; done'
+RPC=$(dx "$_resolve_rpc" || true)
+if [ -z "$RPC" ]; then
+    echo "rocprof-compute not found — installing rocprofiler-compute as root (modifies the container) ..."
+    dxroot "apt-get install -y rocprofiler-compute || (apt-get update && apt-get install -y rocprofiler-compute)" ||
+        {
+            echo 'ERROR: rocprofiler-compute install failed.' >&2
+            exit 2
+        }
+    RPC=$(dx "$_resolve_rpc" || true)
+fi
+[ -z "$RPC" ] && {
+    echo 'ERROR: rocprof-compute not found after install.' >&2
+    exit 2
+}
+
+RPC_REAL=$(dx "readlink -f '$RPC' 2>/dev/null || echo '$RPC'")
+REQ=$(dx "ls /opt/rocm/libexec/rocprofiler-compute/requirements.txt /opt/rocm*/libexec/rocprofiler-compute/requirements.txt 2>/dev/null | head -1")
+PYVER=$(dx 'python3 -c "import sys;print(f\"{sys.version_info.major}.{sys.version_info.minor}\")" 2>/dev/null')
+VENV="${VENV:-$HOME/pyenv/rocprof-compute-py$PYVER}"
+PYBIN="$VENV/bin/python"
+if ! dx "test -x '$PYBIN' && '$PYBIN' '$RPC_REAL' --version >/dev/null 2>&1"; then
+    [ -z "$REQ" ] && {
+        echo 'ERROR: requirements.txt not found for rocprof-compute.' >&2
+        exit 2
+    }
+    echo "Installing rocprof-compute python deps into venv $VENV (python $PYVER; one-time) ..."
+    if dx "command -v uv >/dev/null 2>&1"; then
+        dx "uv venv --system-site-packages --python python3 '$VENV' && uv pip install -q --python '$PYBIN' -r '$REQ'" ||
+            {
+                echo 'ERROR: uv failed to build rocprof-compute venv.' >&2
+                exit 2
+            }
+    else
+        dx "python3 -m venv --system-site-packages '$VENV' && '$PYBIN' -m pip install -q --upgrade pip && '$PYBIN' -m pip install -q -r '$REQ'" ||
+            {
+                echo 'ERROR: failed to install rocprof-compute python deps.' >&2
+                exit 2
+            }
+    fi
+fi
+RUN_RPC="'$PYBIN' '$RPC_REAL'"
+echo "rocprof-compute: $(dx "$RUN_RPC --version 2>&1 | head -1")  (venv: $VENV, python $PYVER)"
+
+RAW="$OUTDIR/raw"
+mkdir -p "$RAW"
+wl_dir="$RAW/$WORKLOAD"
+echo "Profiling $BIN with rocprof-compute (multi-pass) ..."
+if dx "$RUN_RPC profile -n '$WORKLOAD' -p '$wl_dir' -- ./$BIN $BASE_ARGS >'$RAW/profile.log' 2>&1"; then pe=0; else pe=$?; fi
+echo "profile exit: $pe"
+
+echo "Analyzing (CSV panels + text dump) ..."
+csvname="${WORKLOAD}_csv"
+csvdir="$RAW/$csvname"
+if dx "cd '$RAW' && $RUN_RPC analyze -p '$wl_dir' --output-format csv --output-name '$csvname' >'$RAW/analyze_csv.log' 2>&1"; then ae=0; else ae=$?; fi
+echo "analyze exit: $ae"
+dx "$RUN_RPC analyze -p '$wl_dir' >'$RAW/${WORKLOAD}_analyze.txt' 2>&1" || true
+
+echo "Rendering HTML + Markdown report ..."
+if dx "python3 '$LIB_DIR/compute_report.py' --csv '$csvdir' --out '$OUTDIR' --name '$WORKLOAD' --arch '$ARCH'"; then re=0; else re=$?; fi
+find "$REPO/.rocprofv3" -mindepth 1 -delete 2>/dev/null || true
+rmdir "$REPO/.rocprofv3" 2>/dev/null || true
+echo "DONE  (profile=$pe analyze=$ae report=$re)"
+echo "  report: $OUTDIR/${WORKLOAD}_report.html / .md"
+[ $pe -eq 0 ] && [ $ae -eq 0 ] && [ $re -eq 0 ]

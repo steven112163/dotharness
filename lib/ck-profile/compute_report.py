@@ -19,10 +19,8 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import html_report as H
-
-COMPUTE_BOUND_PCT = 60.0
-BW_BOUND_PCT = 60.0
+import html_report as H  # noqa: E402
+from ck_profile_utils import classify  # noqa: E402
 
 
 def read_panel(csvdir, stem):
@@ -48,16 +46,6 @@ def short_kernel(name):
     s = s.split("(")[0].split("<")[0]
     s = s.split("::")[-1].strip()
     return s[:34] if s else "kernel"
-
-
-def classify(compute_pct, bw_pct):
-    if compute_pct >= COMPUTE_BOUND_PCT:
-        return "compute-bound (VALU/MFMA)"
-    if bw_pct >= BW_BOUND_PCT:
-        return "memory-bandwidth-bound"
-    if compute_pct < 25 and bw_pct < 25:
-        return "latency/occupancy-bound"
-    return "mixed / partially bound"
 
 
 def sol_rows(csvdir):

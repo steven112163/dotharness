@@ -61,8 +61,8 @@ citing the specific numbers that justify it.
 |-------|----------|---------|-------|
 | mode | yes | — | One or more of `static`, `dynamic`, `trace`, `cfg`, `depgraph`, `compute`. Ask if unspecified. |
 | target | yes | — | CMake target, e.g. `tile_example_ssd_fwd`. No default. |
-| container | no | `styuan_dev` | Named long-lived container on the remote server. Required for profile scripts (static/dynamic/trace/cfg/compute), which use `docker exec CONTAINER`. Not used by `ckBuild`/`ckRun`. Start once with `~/bin/dockerRun <image> <container>` on the remote. |
-| image | no | `rocm/composable_kernel:ck_ub24.04_rocm7.1.1_develop` | Only used when starting the named container for profile scripts. |
+| container | no | `styuan_dev` | Named long-lived container. Used only when the remote server is a normal (non-Slurm) docker host. On Slurm, ignored — profile scripts auto-detect `srun` and dispatch via the GPU holder instead. |
+| image | no | `rocm/composable_kernel:ck_ub24.04_rocm7.1.1_develop` | Container image. Used by both paths: the named container on docker servers, and the ephemeral `--rm` containers on Slurm (loaded from tarball on the compute node). |
 | base args | no | `-v=0` | `dynamic`/`trace`/`compute`; passed every run (`-v=0` skips CPU verify). |
 | sweep | no | none | `dynamic`/`trace`. A flag + comma values, e.g. `-prec=fp32,fp16,bf16` or `-B=1,2,4`. |
 | nruns | no | 20 (dynamic), 1 (trace) | Runs per variant. |
@@ -70,33 +70,37 @@ citing the specific numbers that justify it.
 ## Common setup (all modes)
 
 Development is local (no local GPU or Docker). All commands run on a remote server
-via `ckRemote`. Two execution paths require different setup:
+via `ckRemote`. Profile scripts auto-detect the backend the same way `ckBuild`/`ckRun`
+do — no separate named-container setup is needed.
 
-**Path A — `ckBuild` / `ckRun` / `ckHold`** (build and run only):
+**Slurm login node (the default workflow):**
 
-Invoke as `ckRemote ckBuild gfx942 <target>`, `ckRemote ckRun --arch gfx942 <cmd>`,
-`ckRemote ckHold --arch gfx942`. `ckRemote` rsyncs source and runs the command
-on the configured remote server. `ckBuild`/`ckRun` use `ckCommon` to auto-detect
-the backend (srun/docker/direct) and spawn ephemeral `--rm` containers internally.
-No named container setup is needed.
+Profile scripts detect `srun` via `scontrol ping` and dispatch each container command
+into the running GPU holder via `srun --overlap`. The holder must be running before
+any GPU-mode profile script is invoked:
 
-**Path B — profile scripts** (`static_profile.sh`, `run_profile.sh`, `trace_profile.sh`,
-`cfg_dump.sh`, `compute_profile.sh`):
+```bash
+ckRemote ckHold --arch gfx942   # start once; keeps a GPU allocation alive
+```
 
-These scripts use `docker exec CONTAINER` — they require a named, long-lived container
-already running on the host where the script executes. Set up once on the remote:
+Then invoke profile scripts via `ckRemote`:
+
+```bash
+ckRemote --no-sync REPO=<remote-repo-path> BIN=build/bin/<target> ARCH=gfx942 ckRunProfile
+```
+
+**Normal docker server (non-Slurm):**
+
+Start the named container once:
 
 ```bash
 ssh <remote> '~/bin/dockerRun <image> <container>'
 ```
 
-Run profile scripts on the remote via `ckRemote` (which SSHes to the login node) or
-direct SSH, with all env vars inlined — non-interactive SSH does not source profile
-files, so `CONTAINER`, `REPO`, and `BIN` must be passed explicitly:
+Then pass `CONTAINER` when invoking profile scripts:
 
 ```bash
-ckRemote "CONTAINER=<container> REPO=<remote-repo-path> BIN=build/bin/<target> \
-  bash <remote-skill-dir>/scripts/run_profile.sh"
+ckRemote --no-sync CONTAINER=<container> REPO=<remote-repo-path> BIN=build/bin/<target> ckRunProfile
 ```
 
 **`REPO`** must be the **remote** absolute path to the CK project root — the same
@@ -104,36 +108,26 @@ path the container bind-mounts. The local checkout path is irrelevant. Do not us
 `$PWD`; the cwd on the remote may differ. Prefer the literal remote path, e.g.
 `REPO=/home/you/composable_kernel`.
 
-**Slurm servers:** `docker exec` is host-local. If the script runs on the login node,
-the container must be there too (valid if Docker is installed on the login node and
-site policy permits). For GPU profiling on Slurm, use an interactive allocation
-instead — `salloc` or `srun --pty` to get a shell on a compute node, start the
-container there, and run the script directly from that shell (not via `ckRemote`).
-If neither is viable, use a normal-server target for profiling.
+1. **GPU arch.** Pass `ARCH=gfx942` explicitly (required on Slurm; auto-detected on
+   docker servers from `rocminfo`). For `ckRemote ckBuild gfx942 <target>`, the arch
+   is also a positional argument.
 
-1. **GPU arch.** Probe via the container on the remote:
-
-   ```bash
-   ssh <remote> "docker exec <container> bash -c 'rocminfo | grep -m1 -oE gfx[0-9a-z]+'"
-   ```
-
-   Save as `$ARCH`. For `ckRemote ckBuild gfx942 <target>`, pass the arch as an argument
-   (required in srun mode; docker/direct servers auto-detect).
-
-Every mode auto-adds `ck_profile_out/` to the repo's **`.git/info/exclude`** (via
-`scripts/git_exclude_outdir.sh`, idempotent, worktree-correct), so the output never
+Every mode auto-adds `ck_profile_out/` to the repo's **`.git/info/exclude`** via
+`git_exclude_outdir.sh` in `~/lib/ck-profile/` (idempotent, worktree-correct), so the output never
 shows in `git status` — the tracked `.gitignore` is left untouched.
 
 ## Static mode
 
 Run the bundled wrapper (separate throwaway build dir; the main `build/` is
 untouched). The build is slow and template-heavy — run in background / delegate.
-Run on the remote (the script uses `docker exec CONTAINER`):
+Run on the remote (auto-detects srun/docker backend):
 
 ```bash
-ckRemote "CONTAINER=<container> REPO=<remote-repo-path> TARGET=<target> ARCH=$ARCH \
-  bash <remote-skill-dir>/scripts/static_profile.sh"
+ckRemote REPO=<remote-repo-path> TARGET=<target> ARCH=gfx942 ckStaticProfile
 ```
+
+On a docker server, add `CONTAINER=<container>`.
+On Slurm, ensure `ckHold` is running first; the script dispatches via the holder.
 
 It builds with the resource-usage remark flag, parses the log (demangling kernel
 names with `c++filt`), and prints a summary; full report + CSV land under the
@@ -160,28 +154,34 @@ worst offenders. The occupancy cliff to watch is **129 effective VGPRs**
    an arch/toolchain/cmake-option change. `CONTAINER` is not used by `ckBuild`.
 2. **Profile.** The harness writes per-run CSVs under
    `ck_profile_out/dynamic/raw/<variant>/run_NN/` and is robust to PMC counter-capacity
-   crashes (kills orphaned app processes; cleans the `.rocprofv3/` scratch dir):
+   crashes (kills orphaned app processes; cleans the `.rocprofv3/` scratch dir).
+   On Slurm, ensure `ckHold` is running first:
 
    ```bash
-   ckRemote "CONTAINER=<container> REPO=<remote-repo-path> BIN=build/bin/<target> \
-     BASE_ARGS='-v=0' SWEEP_FLAG='<flag>' SWEEP_VALS='<v1,v2,...>' NRUNS=<n> \
-     bash <remote-skill-dir>/scripts/run_profile.sh"
+   ckRemote ckHold --arch gfx942   # keep GPU allocated
+   ckRemote --no-sync REPO=<remote-repo-path> BIN=build/bin/<target> ARCH=gfx942 \
+     BASE_ARGS=-v=0 SWEEP_FLAG=<flag> SWEEP_VALS=<v1,v2,...> NRUNS=<n> ckRunProfile
    ```
+
+   On a docker server, replace `ARCH=gfx942` with `CONTAINER=<container>` (arch
+   auto-detected from `rocminfo`). Use `--no-sync` if source is already synced.
 
    Omit `SWEEP_FLAG`/`SWEEP_VALS` for a single variant. A long sweep
    (variants × nruns × passes) takes minutes — run in background.
 3. **Aggregate + classify.**
 
+   After pulling results locally (`ckRemote pull`), run:
+
    ```bash
-   python3 <skill-dir>/scripts/aggregate.py --raw $REPO/ck_profile_out/dynamic/raw \
-     --arch $ARCH [--iters N | --marker <kernel-substr>]
+   ckAggregate --raw ck_profile_out/dynamic/raw \
+     --arch gfx942 [--iters N | --marker <kernel-substr>]
    ```
 
    `--iters` (e.g. warmup+repeat) or `--marker` (a kernel firing once per
    pipeline) gives per-iteration numbers; otherwise values are per-run. Writes
    `summary.md` (readable report), `summary_overall.csv`, and
    `per_kernel_<variant>.csv`.
-4. **Report.** `aggregate.py` writes `summary.md` (markdown), `summary.html`
+4. **Report.** `ckAggregate` writes `summary.md` (markdown), `summary.html`
    (self-contained, opens offline — runtime bar chart, per-variant roofline
    gauges + verdict badges, per-kernel bars), `summary_overall.csv`, and
    `per_kernel_*.csv`. Show `summary.md` (point the user at `summary.html` for the
@@ -195,13 +195,15 @@ worst offenders. The occupancy cliff to watch is **129 effective VGPRs**
 
 ## Trace mode
 
-A dispatch timeline (one run is enough; supports the same sweep as dynamic):
+A dispatch timeline (one run is enough; supports the same sweep as dynamic).
+On Slurm, ensure `ckHold` is running:
 
 ```bash
-ckRemote "CONTAINER=<container> REPO=<remote-repo-path> BIN=build/bin/<target> \
-  BASE_ARGS='-v=0' SWEEP_FLAG='-prec' SWEEP_VALS='fp16,bf16' NRUNS=1 PC_SAMPLING=1 \
-  bash <remote-skill-dir>/scripts/trace_profile.sh"
+ckRemote --no-sync REPO=<remote-repo-path> BIN=build/bin/<target> ARCH=gfx942 \
+  BASE_ARGS=-v=0 SWEEP_FLAG=-prec SWEEP_VALS=fp16,bf16 NRUNS=1 PC_SAMPLING=1 ckTraceProfile
 ```
+
+On a docker server, replace `ARCH=gfx942` with `CONTAINER=<container>`.
 
 Each run writes two views of the same trace under
 `ck_profile_out/trace/raw/<variant>/run_NN/`:
@@ -227,9 +229,12 @@ overhead); use **trace** to see ordering, gaps, and host launch latency.
 Per-kernel ISA control-flow graphs as Graphviz DOT (no GPU run):
 
 ```bash
-ckRemote "CONTAINER=<container> REPO=<remote-repo-path> BIN=build/bin/<target> ARCH=$ARCH \
-  bash <remote-skill-dir>/scripts/cfg_dump.sh"
+ckRemote --no-sync REPO=<remote-repo-path> BIN=build/bin/<target> ARCH=gfx942 ckCfgProfile
 ```
+
+On Slurm, cfg dispatches into the holder with `_CK_EXEC_GPU=0` (no GRES claimed
+in the overlap step, so a running holder is sufficient but no GPU is required).
+On a docker server, add `CONTAINER=<container>`.
 
 Extracts the amdgcn code object (`roc-obj-ls`/`roc-obj-extract`), disassembles it
 (`/opt/rocm/llvm/bin/llvm-objdump -d`), and writes one `ck_profile_out/cfg/dot/<kernel>.dot`
@@ -242,9 +247,11 @@ edge rules: see REFERENCE.md.
 
 Two dependency graphs as DOT:
 
+After pulling results locally (`ckRemote pull`):
+
 ```bash
-python3 <skill-dir>/scripts/depgraph.py --mode both \
-  --raw $REPO/ck_profile_out --out $REPO/ck_profile_out/depgraph
+ckDepgraph --mode both \
+  --raw ck_profile_out --out ck_profile_out/depgraph
 ```
 
 - `dot/data_dependency.dot` — the logical producer→consumer DAG over workspace
@@ -262,12 +269,15 @@ Deep microarchitecture analysis with rocprof-compute (roofline / speed-of-light 
 memory hierarchy). **This is the only mode that modifies the container.**
 
 ```bash
-ckRemote "CONTAINER=<container> REPO=<remote-repo-path> BIN=build/bin/<target> ARCH=$ARCH BASE_ARGS='-v=0' \
-  bash <remote-skill-dir>/scripts/compute_profile.sh"   # slow (multi-pass) — run in background
+ckRemote --no-sync REPO=<remote-repo-path> BIN=build/bin/<target> ARCH=gfx942 BASE_ARGS=-v=0 ckComputeProfile  # slow (multi-pass) — run in background
 ```
 
-On first use it installs the `rocprofiler-compute` apt package **as root**
-(`docker exec -u 0`; the default user's sudo needs a password). The apt package
+On a docker server, add `CONTAINER=<container>`.
+
+On first use on a **docker server**, it installs the `rocprofiler-compute` apt package
+**as root** (`docker exec -u 0`; the default user's sudo needs a password).
+**On Slurm**, ephemeral `--rm` containers cannot be modified — pre-install
+`rocprofiler-compute` in the image before using compute mode. The apt package
 ships only the launcher; its Python deps (`requirements.txt`) are **not** apt —
 the official install uses pip, and Ubuntu 24.04 blocks system pip (PEP 668), so
 the script installs them into a **persistent venv at

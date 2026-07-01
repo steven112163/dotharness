@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ISA control-flow graphs for a CK binary. Extracts the amdgcn code object and
+# disassembles it with llvm-objdump, emitting one Graphviz .dot per kernel.
+# No GPU run required.
+#
+#   ckCfgProfile [--arch gfx...] <bin>
+
+SELF_DIR=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+
+_CK_EXEC_GPU=0 # cfg: disassembly only, no GPU run
+# shellcheck source=bin/ckExec disable=SC1091
+source "$SELF_DIR/ckExec"
+
+REPO=${REPO:-$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")}
+ARCH=${ARCH:-}
+BIN=${BIN:-}
+OUTDIR=${OUTDIR:-}
+OBJDUMP=${OBJDUMP:-/opt/rocm/llvm/bin/llvm-objdump}
+
+usage() {
+    cat >&2 <<EOF
+Usage: $(basename "$0") [--arch gfx...] <bin>
+
+  --arch gfx...  GPU arch (e.g. gfx942); used to filter the code object
+  <bin>          binary path (relative to REPO root, e.g. build/bin/foo)
+
+Env overrides: REPO=$REPO  ARCH=<gfx...>  CONTAINER=<name>  IMAGE=<image>
+               OBJDUMP=<path>
+EOF
+    exit 1
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+    -h | --help) usage ;;
+    --arch)
+        [ $# -ge 2 ] || {
+            echo "ERROR: --arch needs a value" >&2
+            usage
+        }
+        ARCH="$2"
+        shift 2
+        ;;
+    -*)
+        echo "Unknown option: $1" >&2
+        usage
+        ;;
+    *)
+        BIN="$1"
+        shift
+        ;;
+    esac
+done
+
+[ -n "$BIN" ] || {
+    echo "ERROR: no binary given" >&2
+    usage
+}
+[[ "$BIN" == */* ]] || BIN="build/bin/$BIN"
+
+_find_ck_root() {
+    local d="$1"
+    while [ -n "$d" ] && [ "$d" != "/" ]; do
+        [ -e "$d/script/cmake-ck-dev.sh" ] && {
+            printf '%s\n' "$d"
+            return 0
+        }
+        d=$(dirname "$d")
+    done
+    return 1
+}
+if [ ! -e "$REPO/$BIN" ]; then
+    alt=$(_find_ck_root "$REPO" || _find_ck_root "$PWD") && REPO="$alt"
+fi
+if [ ! -e "$REPO/$BIN" ]; then
+    echo "ERROR: binary not found: $REPO/$BIN" >&2
+    exit 1
+fi
+
+OUTDIR=${OUTDIR:-$REPO/ck_profile_out/cfg}
+[ -z "$ARCH" ] && ARCH=$(arch_from_container)
+
+mkdir -p "$OUTDIR"
+cp "$LIB_DIR/profile_readme.md" "$REPO/ck_profile_out/README.md" 2>/dev/null || true
+bash "$LIB_DIR/git_exclude_outdir.sh" "$REPO" 2>/dev/null || true
+echo "Extracting amdgcn code object from $BIN and disassembling ($ARCH) ..."
+dx "
+set -e
+tmp=\$(mktemp -d); cd \"\$tmp\"
+uri=\$(roc-obj-ls '$REPO/$BIN' 2>/dev/null | grep gfx | awk '{print \$NF}' | head -1)
+[ -z \"\$uri\" ] && { echo 'no amdgcn code object found in binary' >&2; exit 2; }
+roc-obj-extract \"\$uri\" >/dev/null 2>&1
+co=\$(ls *.co 2>/dev/null | head -1)
+[ -z \"\$co\" ] && { echo 'roc-obj-extract produced no .co file' >&2; exit 3; }
+'$OBJDUMP' -d \"\$co\" 2>/dev/null | python3 '$LIB_DIR/cfg_to_dot.py' --out '$OUTDIR' --arch '$ARCH'
+rm -rf \"\$tmp\"
+"
+rc=$?
+[ $rc -eq 0 ] && echo "CFG DOT files in $OUTDIR" || echo "ckCfgProfile failed (exit $rc)"
+exit $rc

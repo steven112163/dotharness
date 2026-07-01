@@ -1,5 +1,4 @@
-"""Tests for skills/ck-profile/scripts/parse_resource_usage.py — log parsing and
-the VGPR/spill helpers."""
+"""Tests for lib/ck-profile/parse_resource_usage.py — log parsing and the VGPR/spill helpers."""
 
 import parse_resource_usage as pru
 

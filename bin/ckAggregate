@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Aggregate rocprofv3 trace + PMC output produced by run_profile.sh.
+"""Aggregate rocprofv3 trace + PMC output produced by ckRunProfile.
 
 Counter-set agnostic: it scans every pmc_*/p_counter_collection.csv, so adding
 or removing lines in counters.txt does not require editing this script. Known
@@ -11,7 +11,7 @@ For each variant (sweep value), averaged over all runs:
   LDS bank conflicts, wavefronts, achieved HBM bandwidth, roofline-lite verdict.
 
 Usage:
-  aggregate.py --raw DIR [--arch gfx942] [--iters N | --marker SUBSTR] [--out DIR]
+  ckAggregate --raw DIR [--arch gfx942] [--iters N | --marker SUBSTR] [--out DIR]
 """
 
 import argparse
@@ -22,30 +22,15 @@ import re
 import statistics
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from gpu_specs import PEAK_MEM_GBS, get_spec  # peak bandwidth + per-arch hardware specs
-import html_report as H  # zero-dependency self-contained HTML report
+_here = os.path.dirname(os.path.abspath(__file__))
+_lib = os.path.join(_here, "..", "lib", "ck-profile")
+sys.path.insert(0, _lib)
+from gpu_specs import PEAK_MEM_GBS, get_spec  # noqa: E402
+import html_report as H  # noqa: E402
+from ck_profile_utils import classify, msd, short  # noqa: E402
 
-COMPUTE_BOUND_PCT = 60.0
-BW_BOUND_PCT = 60.0
 # Counters reported as a duration-weighted mean (percentages/rates); the rest summed.
 MEAN_COUNTERS = {"VALUBusy", "SALUBusy", "MeanOccupancyPerCU", "MemUnitStalled"}
-
-
-def short(name):
-    for k, label in [
-        ("rocclr_fillBuffer", "memset(fill)"),
-        ("rocclr_copyBuffer", "memcopy"),
-        ("fillBuffer", "memset(fill)"),
-        ("copyBuffer", "memcopy"),
-    ]:
-        if k in name:
-            return label
-    if "kentry" in name or "GemmKernel" in name or "BatchedGemm" in name:
-        return "gemm(kentry)"
-    base = name.split("(")[0]
-    base = base.split("::")[-1] if "::" in base else base
-    return base[:28] if base else name[:28]
 
 
 def read_csv(p):
@@ -112,23 +97,6 @@ def pmc_metrics(run_dir):
         "lds_conf": s.get("LDSBankConflict", 0.0),
         "waves": s.get("SQ_WAVES", 0.0),
     }
-
-
-def msd(xs):
-    xs = [x for x in xs if x == x]
-    if not xs:
-        return float("nan"), float("nan")
-    return statistics.mean(xs), (statistics.stdev(xs) if len(xs) > 1 else 0.0)
-
-
-def classify(compute_pct, bw_util_pct):
-    if compute_pct >= COMPUTE_BOUND_PCT:
-        return "compute-bound (VALU/MFMA)"
-    if bw_util_pct >= BW_BOUND_PCT:
-        return "memory-bandwidth-bound"
-    if compute_pct < 25 and bw_util_pct < 25:
-        return "latency/occupancy-bound"
-    return "mixed / partially bound"
 
 
 def write_html(overall, pk_rows, spec, peak, arch, unit, out):

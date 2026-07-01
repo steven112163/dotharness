@@ -14,7 +14,7 @@ Two views (`--mode data|runtime|both`):
 
 DOT only — preview .dot in VS Code's Graphviz extension.
 
-    depgraph.py --mode both --raw ck_profile_out/dynamic/raw --out ck_profile_out/depgraph
+    ckDepgraph --mode both --raw ck_profile_out/dynamic/raw --out ck_profile_out/depgraph
 """
 
 import argparse
@@ -25,8 +25,10 @@ import shutil
 import subprocess
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from aggregate import short  # short kernel label, shared with the dynamic report
+_here = os.path.dirname(os.path.abspath(__file__))
+_lib = os.path.normpath(os.path.join(_here, "..", "lib", "ck-profile"))
+sys.path.insert(0, _lib)
+from ck_profile_utils import short  # noqa: E402
 
 # SSD forward pipeline as launched in ssd_fwd.hpp (step order preserved).
 # Each stage: (id, label, reads, writes). Names p_* are external tensors;
@@ -223,14 +225,13 @@ def main():
     with open(os.path.join(a.out, "index.md"), "w") as f:
         f.write("\n".join(md) + "\n")
     try:
-        here = os.path.dirname(os.path.abspath(__file__))
         parent = os.path.dirname(os.path.abspath(a.out.rstrip("/"))) or "."
         shutil.copy(
-            os.path.join(here, "profile_readme.md"), os.path.join(parent, "README.md")
+            os.path.join(_lib, "profile_readme.md"), os.path.join(parent, "README.md")
         )
         # ignore the output dir via .git/info/exclude (not the tracked .gitignore)
         subprocess.run(
-            ["bash", os.path.join(here, "git_exclude_outdir.sh"), parent],
+            ["bash", os.path.join(_lib, "git_exclude_outdir.sh"), parent],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )

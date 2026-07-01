@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Static (compile-time) kernel resource analysis: build a CK target with
+# -Rpass-analysis=kernel-resource-usage and parse the remarks for VGPR/AGPR/
+# SGPR/occupancy/spill/scratch/LDS. No GPU execution.
+#
+# Uses a separate build dir (ck_profile_out/static/build/) so the main build/
+# tree is never touched.
+#
+#   ckStaticProfile [--arch gfx...] <target>
+
+SELF_DIR=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+
+# shellcheck source=bin/ckExec disable=SC1091
+source "$SELF_DIR/ckExec"
+
+REPO=${REPO:-$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")}
+ARCH=${ARCH:-}
+TARGET=${TARGET:-}
+PARSER=${PARSER:-$LIB_DIR/parse_resource_usage.py}
+
+usage() {
+    cat >&2 <<EOF
+Usage: $(basename "$0") [--arch gfx...] <target>
+
+  --arch gfx...  GPU arch (e.g. gfx942); required on Slurm (no GPU to probe)
+  <target>       CMake target name (e.g. tile_example_ssd_fwd)
+
+Env overrides: REPO=$REPO  ARCH=<gfx...>  CONTAINER=<name>  IMAGE=<image>
+EOF
+    exit 1
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+    -h | --help) usage ;;
+    --arch)
+        [ $# -ge 2 ] || {
+            echo "ERROR: --arch needs a value" >&2
+            usage
+        }
+        ARCH="$2"
+        shift 2
+        ;;
+    -*)
+        echo "Unknown option: $1" >&2
+        usage
+        ;;
+    *)
+        TARGET="$1"
+        shift
+        ;;
+    esac
+done
+
+[ -n "$TARGET" ] || {
+    echo "ERROR: no target given" >&2
+    usage
+}
+
+_find_ck_root() {
+    local d="$1"
+    while [ -n "$d" ] && [ "$d" != "/" ]; do
+        [ -e "$d/script/cmake-ck-dev.sh" ] && {
+            printf '%s\n' "$d"
+            return 0
+        }
+        d=$(dirname "$d")
+    done
+    return 1
+}
+if [ ! -e "$REPO/script/cmake-ck-dev.sh" ]; then
+    alt=$(_find_ck_root "$REPO" || _find_ck_root "$PWD") && REPO="$alt"
+fi
+if [ ! -e "$REPO/CMakeLists.txt" ] || [ ! -e "$REPO/script/cmake-ck-dev.sh" ]; then
+    echo "ERROR: \$REPO ($REPO) is not the CK project root" >&2
+    exit 1
+fi
+
+_CK_EXEC_GPU=0 # static: no GPU needed
+[ -z "$ARCH" ] && ARCH=$(arch_from_container)
+[ -z "$ARCH" ] && {
+    echo "ERROR: could not detect GPU arch; pass --arch gfx942" >&2
+    exit 1
+}
+
+# Keep the heavy CMake/Ninja tree out of the reports dir: editor tooling
+# activates on a build tree and would cause Live Preview to reload repeatedly.
+REPORTDIR=$REPO/ck_profile_out/static
+BUILD=$REPORTDIR/build
+LOG=$BUILD/build.log
+mkdir -p "$BUILD" "$REPORTDIR"
+cp "$LIB_DIR/profile_readme.md" "$REPO/ck_profile_out/README.md" 2>/dev/null || true
+bash "$LIB_DIR/git_exclude_outdir.sh" "$REPO" 2>/dev/null || true
+
+echo "Configuring static-analysis build ($ARCH) in $BUILD ..."
+dx "cmake -S '$REPO' -B '$BUILD' -GNinja \
+  -DCMAKE_PREFIX_PATH=/opt/rocm/ \
+  -DCMAKE_CXX_COMPILER=/opt/rocm/llvm/bin/clang++ \
+  -DCMAKE_HIP_COMPILER=/opt/rocm/llvm/bin/clang++ \
+  '-DCMAKE_CXX_FLAGS=-Rpass-analysis=kernel-resource-usage -ftemplate-backtrace-limit=0 -fPIE -Wno-gnu-line-marker -fbracket-depth=1024' \
+  -DCMAKE_BUILD_TYPE=Release -DBUILD_DEV=ON -DGPU_TARGETS=$ARCH" || {
+    echo "configure failed"
+    exit 1
+}
+
+echo "Building $TARGET (slow; remarks go to the log) ..."
+if dx "cmake --build '$BUILD' --target '$TARGET' -j\$(( \$(nproc) / 2 )) > '$LOG' 2>&1"; then
+    build_rc=0
+else
+    build_rc=$?
+fi
+echo "build exit: $build_rc  (parsing any partial logs ...)"
+
+echo "Parsing resource-usage remarks (demangling with c++filt) ..."
+dx "python3 '$PARSER' '$LOG' --target '$TARGET' --arch '$ARCH' --out '$REPORTDIR'" || true
+echo "Reports: $REPORTDIR/build_report.{md,csv,html}"
+exit "$build_rc"

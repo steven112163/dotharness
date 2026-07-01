@@ -1,4 +1,4 @@
-"""Tests for skills/ck-profile/scripts/gpu_specs.py — the hardware-spec lookups."""
+"""Tests for lib/ck-profile/gpu_specs.py — the hardware-spec lookups."""
 
 import gpu_specs
 

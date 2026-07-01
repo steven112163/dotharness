@@ -1,14 +1,17 @@
-"""Make the ck-profile helper scripts importable by name in tests.
+"""Make the ck-profile helpers importable by name in tests.
 
-The scripts are standalone CLIs, not an installed package, so their directory is
-prepended to sys.path here once for the whole test session.
+User-callable CLIs (ckAggregate, ckDepgraph) live in bin/.
+Pure libs and data (gpu_specs, html_report, parse_resource_usage, etc.) live in
+lib/ck-profile/. Both are added to sys.path so tests can import by module name.
 """
 
 import sys
 from pathlib import Path
 
-_CKP_SCRIPTS = (
-    Path(__file__).resolve().parent.parent.parent / "skills" / "ck-profile" / "scripts"
-)
-if str(_CKP_SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(_CKP_SCRIPTS))
+_REPO = Path(__file__).resolve().parent.parent.parent
+_BIN = _REPO / "bin"
+_LIB = _REPO / "lib" / "ck-profile"
+
+for _p in (_LIB, _BIN):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))

@@ -24,7 +24,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from aggregate import short  # shared short kernel label
+from ck_profile_utils import short  # shared short kernel label
 from html_report import page, section, esc, bars
 
 PALETTE = [

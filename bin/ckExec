@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# Shared container-exec helper for ck-profile scripts. SOURCED, not executed.
+#
+# Provides dx() and kill_orphans() that auto-select the right execution backend:
+#
+#   srun  (Slurm login node, detected via scontrol ping): dispatch via srun
+#         --overlap into the running GPU holder (ckHold). Each dx() call runs
+#         one docker --rm container on a compute node.
+#   docker (non-Slurm host with docker): docker exec into named CONTAINER.
+#
+# Callers set before sourcing:
+#   REPO        absolute path to CK root (same on host and in container)
+#   IMAGE       docker image ref         (default: from ckCommon)
+#   CONTAINER   named container          (docker path only; default: styuan_dev)
+#   ARCH        gfx arch                 (for GRES; required by srun GPU path)
+#   binbase     basename of BIN          (for kill_orphans)
+
+[ -n "${_CK_EXEC_SOURCED:-}" ] && return 0
+_CK_EXEC_SOURCED=1
+
+# Resolve the dotharness root from this file's real location (through symlinks),
+# then derive LIB_DIR so all sourcing scripts find lib/ck-profile/ from any repo.
+_CKEXEC_REAL=$(readlink -f "${BASH_SOURCE[0]}")
+_CKEXEC_BIN=$(cd "$(dirname "$_CKEXEC_REAL")" && pwd)
+# shellcheck disable=SC2034  # used by ck*Profile scripts
+LIB_DIR=$(cd "$_CKEXEC_BIN/../lib/ck-profile" 2>/dev/null && pwd) || {
+    echo "ERROR: ckExec: lib/ck-profile not found at $(cd "$_CKEXEC_BIN/.." && pwd)/lib/ck-profile" >&2
+    echo "  Run setup.sh to link lib/ to ~/lib/." >&2
+    return 1
+}
+
+# Source ckCommon for _run_in_container, _srun_overlap_dispatch, etc.
+# setup.sh links ckCommon into ~/bin; that is on PATH for remote ssh sessions.
+_CKCOMMON=$(command -v ckCommon 2>/dev/null || echo "$HOME/bin/ckCommon")
+# shellcheck source=bin/ckCommon disable=SC1091
+source "$_CKCOMMON"
+
+CONTAINER=${CONTAINER:-styuan_dev}
+IMAGE=${IMAGE:-rocm/composable_kernel:ck_ub24.04_rocm7.1.1_develop}
+
+# Detect backend once.
+if scontrol ping >/dev/null 2>&1; then
+    _CK_BACKEND=srun
+else
+    _CK_BACKEND=docker
+fi
+
+# dx CMD: run CMD (a shell snippet) inside the CK container, working dir $REPO.
+# srun path: dispatches into the running GPU holder via srun --overlap.
+#   GPU=1 (default): holder owns the GPU; the overlap inherits it.
+#   GPU=0 (static/cfg): try overlap first (holder provides the container env);
+#     fall back to a fresh srun without GRES if no holder is running.
+# docker path: docker exec into the named CONTAINER.
+dx() {
+    local cmd="$1"
+    if [ "$_CK_BACKEND" = srun ]; then
+        local gpu="${_CK_EXEC_GPU:-1}"
+        local prog
+        prog=$(_run_in_container "$gpu" "$REPO" "cd '$REPO' && $cmd")
+        if ! _srun_overlap_dispatch "$prog"; then
+            if [ "$gpu" -eq 0 ]; then
+                # No holder needed for CPU-only work; dispatch a fresh srun without GRES.
+                echo "No GPU holder; dispatching CPU-only srun (no GRES) ..."
+                GPU=0 GRES="" ARCH="${ARCH:-}" _srun_dispatch "$prog"
+            else
+                echo "ERROR: srun --overlap dispatch failed (no running ckHold?)" >&2
+                echo "  Run: ckRemote ckHold --arch ${ARCH:-gfx942}" >&2
+                return 1
+            fi
+        fi
+    else
+        docker exec -w "$REPO" "$CONTAINER" bash -c "$cmd"
+    fi
+}
+
+# kill_orphans: best-effort kill of stray profilee processes.
+kill_orphans() {
+    if [ "$_CK_BACKEND" = srun ]; then
+        # The process is inside an srun allocation; we cannot pkill it from the
+        # login node. The rocprofv3 wrapper waits for the app anyway; this is
+        # a no-op on the srun path.
+        true
+    else
+        docker exec "$CONTAINER" pkill -9 -f "${binbase:-}" 2>/dev/null || true
+    fi
+}
+
+# dxroot CMD: run CMD as root. On the srun path there is no persistent container
+# to modify, so this is only valid on the docker path (compute mode installs pkgs).
+dxroot() {
+    local cmd="$1"
+    if [ "$_CK_BACKEND" = srun ]; then
+        echo "ERROR: dxroot not supported on srun path (no persistent container to modify)." >&2
+        echo "  For compute mode on Slurm, pre-install rocprofiler-compute in the image." >&2
+        return 1
+    else
+        docker exec -u 0 -w "$REPO" "$CONTAINER" bash -c "$cmd"
+    fi
+}
+
+# arch_from_container: detect GPU arch from within a container. On srun, dispatches
+# a short srun job; on docker, queries the named container.
+arch_from_container() {
+    if [ "$_CK_BACKEND" = srun ]; then
+        dx "rocminfo 2>/dev/null | grep -m1 -oE 'gfx[0-9a-z]+'"
+    else
+        docker exec "$CONTAINER" bash -c "rocminfo 2>/dev/null | grep -m1 -oE 'gfx[0-9a-z]+'"
+    fi
+}
