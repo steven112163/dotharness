@@ -155,6 +155,14 @@ if [ -f "$SETTINGS" ] && command -v jq &>/dev/null; then
     register_hook "SessionStart" "bash ~/.claude/hooks/session-start.sh" "session-start hook" 10
     register_hook "SessionEnd" "bash ~/.claude/hooks/session-end.sh" "session-end hook" 10
 
+    # Allow codex commands without a per-call prompt (used by multi-review skill).
+    if jq -e '.permissions.allow | index("Bash(codex exec *)")' "$SETTINGS" >/dev/null 2>&1; then
+        echo "    ok  permissions.allow codex"
+    else
+        jq '.permissions.allow += ["Bash(codex exec *)"]' "$SETTINGS" >"${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
+        echo "    set permissions.allow codex"
+    fi
+
     # Activate the dotharness output style unless the user already set one.
     if jq -e '.outputStyle' "$SETTINGS" >/dev/null 2>&1; then
         echo "    ok  outputStyle"
@@ -180,6 +188,13 @@ readonly BIN_DIR="${HOME}/bin"
 mkdir -p "$BIN_DIR"
 link_items "$REPO_DIR/bin" "$BIN_DIR" "    "
 prune "$BIN_DIR" "    "
+
+# --- Libraries (linked into ~/lib, importable by ck* scripts) ---
+echo "  Libraries:"
+readonly _SETUP_LIB_DIR="${HOME}/lib"
+mkdir -p "$_SETUP_LIB_DIR"
+link_items "$REPO_DIR/lib" "$_SETUP_LIB_DIR" "    "
+prune "$_SETUP_LIB_DIR" "    "
 
 # --- Statusline ---
 echo "  Statusline:"

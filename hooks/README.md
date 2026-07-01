@@ -5,7 +5,7 @@ Lifecycle hooks registered in `~/.claude/settings.json` by `setup.sh`. Scripts l
 | Hook | Event | Trigger | Purpose |
 |------|-------|---------|---------|
 | `anti-sycophancy.sh` | UserPromptSubmit | Every prompt | Detects confirmatory language ("right?", "looks good"), injects critical-thinking reminder |
-| `block-dangerous.sh` | PreToolUse | Bash / Write / Edit | Blocks `rm -rf`, `git push --force`, `DROP TABLE`, `killall`; denies Write/Edit to `.env`, SSH/AWS keys, `/etc/`, and system temp (`/tmp`, `/var/tmp`) — scratch goes in the repo's `.claude/tmp` |
+| `block-dangerous.sh` | PreToolUse | Bash / Write / Edit | Blocks `rm -rf`, `git push --force`, `DROP TABLE`, `killall`; denies Write/Edit to `.env`, SSH/AWS keys, `/etc/`, and system temp (`/tmp`, `/var/tmp`) — scratch goes in the repo's `tmp/` |
 | `auto-approve.sh` | PreToolUse | Bash commands | Auto-approves known-safe read-only commands (linters, checkers, `ctest`) |
 | `commit-lint.sh` | PreToolUse | Bash commands | Validates commit messages against conventional commits format, rejects non-conforming messages |
 | `auto-format.sh` | PostToolUse | Write/Edit | Runs clang-format (.cpp/.hip/.cu), ruff/black (.py), jq (.json), shfmt (.sh) |

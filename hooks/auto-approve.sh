@@ -26,10 +26,12 @@ approve() {
 # tail behind a read-only prefix, so defer those to the normal permission prompt.
 echo "$cmd" | grep -qE '[;&|<>`]|\$\(' && exit 0
 
-# Writes to the repo-local scratch dir are safe. Require .claude/tmp/ as a
-# whitespace-delimited token so substring matches (e.g. in a pipe tail) don't
-# auto-approve chained destructive commands.
-echo "$cmd" | grep -qE '(^|[[:space:]])(\./)?\.claude/tmp/' && approve "write to .claude/tmp/"
+# Writes to the repo-local scratch dir are safe. Require explicit ./tmp/ prefix
+# (repo-relative) so bare tmp/ tokens in arbitrary commands don't match.
+# Exclude rm/find-delete so plain destructive commands don't get auto-approved.
+if ! echo "$cmd" | grep -qE '^\s*(rm\b|find\b.*-delete)'; then
+    echo "$cmd" | grep -qE '(^|[[:space:]])\./tmp/' && approve "write to ./tmp/"
+fi
 
 # Linters and type checkers (read-only)
 echo "$cmd" | grep -qE '^(npm|npx|yarn|pnpm|bun|bunx) run (lint|check|typecheck|format:check)\b' && approve "JS/TS lint/check"

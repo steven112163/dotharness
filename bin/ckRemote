@@ -97,12 +97,13 @@ CK_REMOTE_REPO=""
 usage() {
     cat >&2 <<'EOF'
 Usage: ckRemote [-t <server>] [--arch <gfx>] [--no-sync]
-                <push|shell|targets|select|ckBuild|ckRun|ckHold|cmd...>
+                <push|pull|shell|targets|select|ckBuild|ckRun|ckHold|cmd...>
 
   -t, --server <name>  force a configured server (skip priority selection)
   -a, --arch <gfx>     GPU arch to select a server by (else detected from cmd)
   --no-sync            skip the source rsync (e.g. run an already-built binary)
   push                 rsync source to the chosen server, nothing else
+  pull [path...]       rsync ck_profile_out/ (and any extra paths) from remote to local
   shell                interactive shell in the remote checkout
   targets              list configured servers and their gpus
   select               print which server would be chosen, then exit
@@ -293,6 +294,24 @@ require_local() {
     [ -d "$CK_LOCAL_REPO" ] || die "CK_LOCAL_REPO ($CK_LOCAL_REPO) is not a directory."
 }
 
+# Pull profiling artifacts from the remote repo back to the local checkout.
+# Default path: ck_profile_out/. Additional paths may be passed as arguments
+# (relative to the remote repo root). Useful after ckRunProfile/ckStaticProfile.
+pull_artifacts() {
+    require_local
+    local paths=("$@")
+    [ "${#paths[@]}" -eq 0 ] && paths=(ck_profile_out)
+    local p
+    for p in "${paths[@]}"; do
+        local remote_path="$CK_REMOTE_REPO/$p"
+        local local_path="$CK_LOCAL_REPO/$p"
+        echo "Pulling $p <- $SERVER:$remote_path ..."
+        # shellcheck disable=SC2086
+        rsync -avz --info=progress2 ${CK_SSH_OPTS:+-e "ssh $CK_SSH_OPTS"} \
+            "$CK_REMOTE:$remote_path/" "$local_path/"
+    done
+}
+
 sync_source() {
     require_local
     local excludes=() e
@@ -382,6 +401,10 @@ push)
     [ $# -eq 1 ] || die "push takes no arguments."
     sync_source
     ;;
+pull)
+    shift
+    pull_artifacts "$@"
+    ;;
 shell)
     # shellcheck disable=SC2086
     ssh $CK_SSH_OPTS -t "$CK_REMOTE" "cd $(printf '%q' "$(_remote_workdir)") 2>/dev/null; exec \$SHELL -l"
@@ -390,7 +413,7 @@ shell)
     [ "$DO_SYNC" -eq 1 ] && sync_source
     # For ckRun on a slurm server, ensure a GPU holder is running so the run
     # dispatches via overlap (instant) instead of waiting for a fresh allocation.
-    if [ "$1" = ckRun ] && [ "${CK_TYPE[$SERVER]:-}" = slurm ]; then
+    if [[ "$1" =~ ^(ckRun|ckRunProfile|ckTraceProfile|ckComputeProfile)$ ]] && [ "${CK_TYPE[$SERVER]:-}" = slurm ]; then
         _ensure_hold "${ARCH:-}"
     fi
     remote_exec "$@"

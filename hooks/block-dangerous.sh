@@ -55,11 +55,11 @@ Bash)
     echo "$cmd" | grep -qE '>\s*\.env\b' && blocked="writing to .env"
     echo "$cmd" | grep -qE '>\s*/etc/' && blocked="writing to /etc/"
 
-    # Scratch files belong in the repo's .claude/tmp, never system temp (/tmp,
+    # Scratch files belong in the repo's tmp/, never system temp (/tmp,
     # /var/tmp). Match only an absolute system-temp path at a token boundary so a
-    # repo path like .../.claude/tmp/ or .../proj/tmp/ is not caught.
-    echo "$cmd" | grep -qE '(>>?|&>)[[:space:]]*/(var/)?tmp/' && blocked="writing to /tmp (use the repo .claude/tmp)"
-    echo "$cmd" | grep -qE '\b(tee|touch|cp|mv|install|mkdir)\b[^|;&]*[[:space:]]/(var/)?tmp/' && blocked="creating files in /tmp (use the repo .claude/tmp)"
+    # repo path like .../proj/tmp/ is not caught.
+    echo "$cmd" | grep -qE '(>>?|&>)[[:space:]]*/(var/)?tmp/' && blocked="writing to /tmp (use the repo tmp/)"
+    echo "$cmd" | grep -qE '\b(tee|touch|cp|mv|install|mkdir)\b[^|;&]*[[:space:]]/(var/)?tmp/' && blocked="creating files in /tmp (use the repo tmp/)"
 
     # Kill all
     echo "$cmd" | grep -qE '\bkillall\b|\bkill\s+-9\s+-1\b' && blocked="killall / kill -9 -1"
@@ -74,7 +74,7 @@ Write | Edit)
 
     # Sensitive locations
     case "$file" in
-    /tmp/* | /var/tmp/*) deny "write to system temp ($file); use the repo's .claude/tmp instead" ;;
+    /tmp/* | /var/tmp/*) deny "write to system temp ($file); use the repo's tmp/ instead" ;;
     /etc/*) deny "write to /etc/ ($file)" ;;
     */.ssh/*) deny "write inside .ssh ($file)" ;;
     */.aws/credentials) deny "write to AWS credentials ($file)" ;;
