@@ -63,8 +63,11 @@ pmc: SQ_VALU_MFMA_BUSY_CYCLES SQ_WAVES # pass 8 — matrix-engine busy cycles; w
 
 `FETCH_SIZE` and `WRITE_SIZE` are derived from TCC_EA counters and **exceed the
 per-pass counter budget if combined** (rocprof error 38, then it leaves an
-orphaned app process holding the GPU — `run_profile.sh` kills orphans between
-runs). Keep them in separate passes. `FETCH_SIZE`/`WRITE_SIZE` units are **KB**.
+orphaned app process holding the GPU — on docker/srun each run dispatches in
+its own ephemeral `--rm` container, so the orphan dies with the container; on
+`MODE=direct` there is no container, so `kill_orphans` in `ckExec` `pkill`s
+the target binary after each pass instead). Keep them in separate passes.
+`FETCH_SIZE`/`WRITE_SIZE` units are **KB**.
 
 `aggregate.py` is counter-set-agnostic: it scans every `pmc_*` dir, so you can
 add/remove `pmc:` lines without editing it. Verify each new group fits one pass
@@ -578,20 +581,27 @@ memory-hierarchy panels. Two install facts learned the hard way:
 
 1. The apt package installs only the launcher (`/opt/rocm/bin/rocprof-compute`, a
    symlink into `libexec/`), often **not on the non-login `docker exec` PATH** —
-   resolve it by path. Install needs **root** (`docker exec -u 0`; the default
-   user's sudo wants a password).
+   resolve it by path. Every dispatch runs in a fresh, ephemeral `--rm`
+   container, so nothing installed at runtime persists to the next call;
+   `rocprofiler-compute` must already be present in the image (added via a
+   custom Dockerfile layer, a one-time image-build task) on either backend.
+   The script fails fast with a clear error if it is missing rather than
+   attempting an install.
 2. The launcher is a Python app whose deps are **not** in the apt package; the
    official install runs `pip install -r
    /opt/rocm/libexec/rocprofiler-compute/requirements.txt`. Ubuntu 24.04 blocks
    system pip (PEP 668), so the script installs them into a **persistent venv**
-   at `$HOME/pyenv/rocprof-compute-py<ver>` (python version in the name to avoid
-   interpreter collisions; override `VENV=`; `uv venv`+`uv pip` if `uv` is
-   installed, else `python3 -m venv --system-site-packages`+pip) and runs the launcher with that
-   venv's python. The venv lives under `$HOME` (bind-mounted, so it persists and
-   is reused across container sessions) but is **container-only**: it is built
-   with the container's python (e.g. 3.12) and the host python differs (3.10), so
-   the same venv can't run on the host — and the host has no in-container ROCm to
-   run rocprof-compute regardless. Reversible: delete the dir.
+   at `$REPO/ck_profile_out/.venv-rocprof-compute-py<ver>` (python version in
+   the name to avoid interpreter collisions; override `VENV=`; `uv venv`+`uv
+   pip` if `uv` is installed, else `python3 -m venv --system-site-packages`+pip)
+   and runs the launcher with that venv's python. The venv lives under `$REPO`
+   specifically because that is the only host directory bind-mounted at an
+   identical path in every container — `$HOME` is not mounted, so anything
+   written there would vanish with the ephemeral container. The venv is
+   **container-only**: it is built with the container's python (e.g. 3.12) and
+   the host python differs (3.10), so the same venv can't run on the host —
+   and the host has no in-container ROCm to run rocprof-compute regardless.
+   Reversible: delete the dir.
 
 `rocprof-compute profile -n <wl> -p <dir> -- <app>` runs the app multi-pass
 (slow) and writes the workload data **directly into `<dir>`** (sysinfo.csv,

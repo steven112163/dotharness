@@ -10,7 +10,7 @@ Internal Python libs and data files live in `lib/ck-profile/` — see `../lib/ck
 - **ckHold** — hold one persistent GPU allocation on Slurm (`sleep infinity` batch job) so `ckRun` calls land instantly. `start` / `status` / `stop`.
 - **ckRemote** — drive remote CK work from a local checkout. Rsyncs source, picks the first reachable/capable server from `~/.config/ckremote`, runs the `ck*` command over SSH. `ckRemote pull` rsyncs `ck_profile_out/` back locally after profiling.
 - **ckCommon** — sourced by `ckBuild`/`ckRun`/`ckHold`/`dockerRun`; not executed directly. Defines cluster defaults, docker-flag assembly, LDAP/SSSD account files, GPU-holder dispatch, and `srun` node-exclude retry.
-- **ckExec** — sourced by all `ck*Profile` scripts; not executed directly. Provides `dx()`/`kill_orphans()`/`dxroot()`/`arch_from_container()` with auto-detected `srun`/`docker` backend, and sets `LIB_DIR` pointing at `lib/ck-profile/`.
+- **ckExec** — sourced by all `ck*Profile` scripts; not executed directly. Provides `arch_from_container()`, and sets `LIB_DIR` pointing at `lib/ck-profile/`. Generic dispatch (direct/docker/srun) lives in `ckCommon` via `_dispatch_build_like`/`_dispatch_run_like`.
 
 ## Composable Kernel profiling
 
@@ -20,7 +20,7 @@ All profiling binaries follow the same CLI style as `ckBuild`/`ckRun`: `REPO` au
 - **ckRunProfile** — dynamic profiling with rocprofv3 (kernel trace + PMC multipass). Accepts `<bin>`, `--sweep <flag>=<v1,v2,...>`, `--nruns N`, `--base-args`.
 - **ckTraceProfile** — rocprofv3 `--sys-trace` → perfetto `.pftrace` + offline HTML timeline. Same sweep/nruns flags as `ckRunProfile`. `--no-pc-sampling` to skip PC sampling.
 - **ckCfgProfile** — ISA CFG as Graphviz DOT via `llvm-objdump`. No GPU run.
-- **ckComputeProfile** — deep microarchitecture analysis with rocprof-compute. Accepts `--workload <name>`. On Slurm, `rocprofiler-compute` must be pre-installed in the image.
+- **ckComputeProfile** — deep microarchitecture analysis with rocprof-compute. Accepts `--workload <name>`. `rocprofiler-compute` must be pre-installed in the image (no runtime install, on any backend).
 - **ckAggregate** — aggregate raw rocprofv3 output from `ckRunProfile` into a summary report (markdown + HTML + CSV). Run locally after `ckRemote pull`.
 - **ckDepgraph** — emit kernel dependency graphs as Graphviz DOT (logical data-dependency DAG and runtime dispatch graph from a kernel trace CSV).
 

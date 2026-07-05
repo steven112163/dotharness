@@ -39,8 +39,8 @@ Six independent modes; the user picks one or several:
   each other."
 - **compute** — `rocprof-compute` (ROCm Compute Profiler): roofline +
   speed-of-light + memory-hierarchy panels. Answers "where in the
-  microarchitecture is the kernel limited." Installs `rocprofiler-compute` if
-  missing — the only mode that modifies the container.
+  microarchitecture is the kernel limited." Requires `rocprofiler-compute`
+  pre-baked into the image; fails fast with a clear error if it is missing.
 
 Modes are independent and may be combined; **graphs (`cfg`, `depgraph`) emit DOT
 only** — preview `.dot` in VS Code's Graphviz extension (no graphviz/SVG).
@@ -61,7 +61,6 @@ citing the specific numbers that justify it.
 |-------|----------|---------|-------|
 | mode | yes | — | One or more of `static`, `dynamic`, `trace`, `cfg`, `depgraph`, `compute`. Ask if unspecified. |
 | target | yes | — | CMake target, e.g. `tile_example_ssd_fwd`. No default. |
-| container | no | `styuan_dev` | Named long-lived container. Used only when the remote server is a normal (non-Slurm) docker host. On Slurm, ignored — profile scripts auto-detect `srun` and dispatch via the GPU holder instead. |
 | image | no | `rocm/composable_kernel:ck_ub24.04_rocm7.1.1_develop` | Container image. Used by both paths: the named container on docker servers, and the ephemeral `--rm` containers on Slurm (loaded from tarball on the compute node). |
 | base args | no | `-v=0` | `dynamic`/`trace`/`compute`; passed every run (`-v=0` skips CPU verify). |
 | sweep | no | none | `dynamic`/`trace`. A flag + comma values, e.g. `-prec=fp32,fp16,bf16` or `-B=1,2,4`. |
@@ -89,18 +88,12 @@ Then invoke profile scripts via `ckRemote`:
 ckRemote --no-sync REPO=<remote-repo-path> BIN=build/bin/<target> ARCH=gfx942 ckRunProfile
 ```
 
-**Normal docker server (non-Slurm):**
-
-Start the named container once:
-
-```bash
-ssh <remote> '~/bin/dockerRun <image> <container>'
-```
-
-Then pass `CONTAINER` when invoking profile scripts:
+**Normal docker server (non-Slurm):** no setup step needed — every dispatch
+runs in its own fresh, ephemeral `--rm` container (auto-pulled/loaded as
+needed), so there is no persistent container to start or name:
 
 ```bash
-ckRemote --no-sync CONTAINER=<container> REPO=<remote-repo-path> BIN=build/bin/<target> ckRunProfile
+ckRemote --no-sync REPO=<remote-repo-path> BIN=build/bin/<target> ckRunProfile
 ```
 
 **`REPO`** must be the **remote** absolute path to the CK project root — the same
@@ -126,8 +119,8 @@ Run on the remote (auto-detects srun/docker backend):
 ckRemote REPO=<remote-repo-path> TARGET=<target> ARCH=gfx942 ckStaticProfile
 ```
 
-On a docker server, add `CONTAINER=<container>`.
-On Slurm, ensure `ckHold` is running first; the script dispatches via the holder.
+On Slurm, this dispatches as a plain CPU-node `srun` job (no GPU/`ckHold` needed
+— static analysis needs no GPU run).
 
 It builds with the resource-usage remark flag, parses the log (demangling kernel
 names with `c++filt`), and prints a summary; full report + CSV land under the
@@ -151,11 +144,12 @@ worst offenders. The occupancy cliff to watch is **129 effective VGPRs**
    ```
 
    `ckBuild` is incremental by default (reuses `build/`); add `--scratch` only after
-   an arch/toolchain/cmake-option change. `CONTAINER` is not used by `ckBuild`.
+   an arch/toolchain/cmake-option change.
 2. **Profile.** The harness writes per-run CSVs under
    `ck_profile_out/dynamic/raw/<variant>/run_NN/` and is robust to PMC counter-capacity
-   crashes (kills orphaned app processes; cleans the `.rocprofv3/` scratch dir).
-   On Slurm, ensure `ckHold` is running first:
+   crashes (each run dispatches in its own ephemeral `--rm` container, so a
+   crashed run leaves nothing behind to clean up; cleans the `.rocprofv3/`
+   scratch dir). On Slurm, ensure `ckHold` is running first:
 
    ```bash
    ckRemote ckHold --arch gfx942   # keep GPU allocated
@@ -163,8 +157,8 @@ worst offenders. The occupancy cliff to watch is **129 effective VGPRs**
      BASE_ARGS=-v=0 SWEEP_FLAG=<flag> SWEEP_VALS=<v1,v2,...> NRUNS=<n> ckRunProfile
    ```
 
-   On a docker server, replace `ARCH=gfx942` with `CONTAINER=<container>` (arch
-   auto-detected from `rocminfo`). Use `--no-sync` if source is already synced.
+   On a docker server, `ARCH` can be omitted (auto-detected from `rocminfo`).
+   Use `--no-sync` if source is already synced.
 
    Omit `SWEEP_FLAG`/`SWEEP_VALS` for a single variant. A long sweep
    (variants × nruns × passes) takes minutes — run in background.
@@ -203,7 +197,7 @@ ckRemote --no-sync REPO=<remote-repo-path> BIN=build/bin/<target> ARCH=gfx942 \
   BASE_ARGS=-v=0 SWEEP_FLAG=-prec SWEEP_VALS=fp16,bf16 NRUNS=1 PC_SAMPLING=1 ckTraceProfile
 ```
 
-On a docker server, replace `ARCH=gfx942` with `CONTAINER=<container>`.
+On a docker server, `ARCH` can be omitted (auto-detected from `rocminfo`).
 
 Each run writes two views of the same trace under
 `ck_profile_out/trace/raw/<variant>/run_NN/`:
@@ -232,9 +226,9 @@ Per-kernel ISA control-flow graphs as Graphviz DOT (no GPU run):
 ckRemote --no-sync REPO=<remote-repo-path> BIN=build/bin/<target> ARCH=gfx942 ckCfgProfile
 ```
 
-On Slurm, cfg dispatches into the holder with `_CK_EXEC_GPU=0` (no GRES claimed
-in the overlap step, so a running holder is sufficient but no GPU is required).
-On a docker server, add `CONTAINER=<container>`.
+Build-like dispatch (no GPU device passthrough, no `--gres`): on Slurm this
+runs as a plain CPU-node `srun` job, not an overlap into a GPU holder. On a
+docker server, `ARCH` can be omitted (auto-detected from `rocminfo`).
 
 Extracts the amdgcn code object (`roc-obj-ls`/`roc-obj-extract`), disassembles it
 (`/opt/rocm/llvm/bin/llvm-objdump -d`), and writes one `ck_profile_out/cfg/dot/<kernel>.dot`
@@ -266,26 +260,31 @@ ckDepgraph --mode both \
 ## Compute mode
 
 Deep microarchitecture analysis with rocprof-compute (roofline / speed-of-light /
-memory hierarchy). **This is the only mode that modifies the container.**
+memory hierarchy).
 
 ```bash
 ckRemote --no-sync REPO=<remote-repo-path> BIN=build/bin/<target> ARCH=gfx942 BASE_ARGS=-v=0 ckComputeProfile  # slow (multi-pass) — run in background
 ```
 
-On a docker server, add `CONTAINER=<container>`.
+On a docker server, `ARCH` can be omitted (auto-detected from `rocminfo`).
 
-On first use on a **docker server**, it installs the `rocprofiler-compute` apt package
-**as root** (`docker exec -u 0`; the default user's sudo needs a password).
-**On Slurm**, ephemeral `--rm` containers cannot be modified — pre-install
-`rocprofiler-compute` in the image before using compute mode. The apt package
-ships only the launcher; its Python deps (`requirements.txt`) are **not** apt —
-the official install uses pip, and Ubuntu 24.04 blocks system pip (PEP 668), so
-the script installs them into a **persistent venv at
-`$HOME/pyenv/rocprof-compute-py<ver>`** (python version in the name; override with
-`VENV=`; reused across runs, reversible: delete the dir; `uv` is used
-automatically if installed, else stdlib `venv`+`pip`). The venv is built with the
-**container's** python and is **container-only** — the host python differs (e.g.
-3.10 vs 3.12) and the host cannot run rocprof-compute anyway. It profiles into
+Every dispatch runs in a fresh, ephemeral `--rm` container, so nothing
+installed at runtime would persist to the next call. `rocprofiler-compute`
+must therefore already be present in the image — add it via a custom
+Dockerfile layer on top of the base image (a one-time image-build task); the
+script fails fast with a clear error if it is missing, on either backend. The
+apt package ships only the launcher; its Python deps (`requirements.txt`) are
+**not** apt — the official install uses pip, and Ubuntu 24.04 blocks system pip
+(PEP 668), so the script installs them into a **persistent venv at
+`$REPO/ck_profile_out/.venv-rocprof-compute-py<ver>`** (python version in the
+name; override with `VENV=`; reused across runs, reversible: delete the dir;
+`uv` is used automatically if installed, else stdlib `venv`+`pip`). The venv
+lives under `$REPO` specifically because that is the only host directory
+bind-mounted at an identical path in every container — `$HOME` is not
+mounted, so anything written there would vanish with the container. The venv
+is still built with the **container's** python — the host python differs
+(e.g. 3.10 vs 3.12) and the host cannot run rocprof-compute anyway. It
+profiles into
 `ck_profile_out/compute/raw/<wl>`, exports the analysis as per-panel CSVs
 (`analyze --output-format csv`), then `compute_report.py` renders a **styled
 `ck_profile_out/compute/<wl>_report.html` + `<wl>_report.md`** (Speed-of-Light
