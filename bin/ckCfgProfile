@@ -9,7 +9,6 @@ set -euo pipefail
 
 SELF_DIR=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 
-_CK_EXEC_GPU=0 # cfg: disassembly only, no GPU run
 # shellcheck source=bin/ckExec disable=SC1091
 source "$SELF_DIR/ckExec"
 
@@ -18,6 +17,7 @@ ARCH=${ARCH:-}
 BIN=${BIN:-}
 OUTDIR=${OUTDIR:-}
 OBJDUMP=${OBJDUMP:-/opt/rocm/llvm/bin/llvm-objdump}
+MODE=${MODE:-}
 
 usage() {
     cat >&2 <<EOF
@@ -26,7 +26,7 @@ Usage: $(basename "$0") [--arch gfx...] <bin>
   --arch gfx...  GPU arch (e.g. gfx942); used to filter the code object
   <bin>          binary path (relative to REPO root, e.g. build/bin/foo)
 
-Env overrides: REPO=$REPO  ARCH=<gfx...>  CONTAINER=<name>  IMAGE=<image>
+Env overrides: REPO=$REPO  ARCH=<gfx...>  IMAGE=<image>
                OBJDUMP=<path>
 EOF
     exit 1
@@ -60,17 +60,6 @@ done
 }
 [[ "$BIN" == */* ]] || BIN="build/bin/$BIN"
 
-_find_ck_root() {
-    local d="$1"
-    while [ -n "$d" ] && [ "$d" != "/" ]; do
-        [ -e "$d/script/cmake-ck-dev.sh" ] && {
-            printf '%s\n' "$d"
-            return 0
-        }
-        d=$(dirname "$d")
-    done
-    return 1
-}
 if [ ! -e "$REPO/$BIN" ]; then
     alt=$(_find_ck_root "$REPO" || _find_ck_root "$PWD") && REPO="$alt"
 fi
@@ -80,13 +69,18 @@ if [ ! -e "$REPO/$BIN" ]; then
 fi
 
 OUTDIR=${OUTDIR:-$REPO/ck_profile_out/cfg}
-[ -z "$ARCH" ] && ARCH=$(arch_from_container)
+[ -n "$MODE" ] || MODE=$(_detect_backend build) || exit 1
+# cfg: disassembly only, no GPU run needed; arch is only used for labeling, so
+# a failed probe is not fatal here. Silence the probe's own error message
+# (e.g. "srun builds run on CPU nodes...") since it is misleading when the
+# failure is explicitly non-fatal.
+_resolve_arch_or_require "$MODE" 2>/dev/null || true
 
 mkdir -p "$OUTDIR"
 cp "$LIB_DIR/profile_readme.md" "$REPO/ck_profile_out/README.md" 2>/dev/null || true
 bash "$LIB_DIR/git_exclude_outdir.sh" "$REPO" 2>/dev/null || true
 echo "Extracting amdgcn code object from $BIN and disassembling ($ARCH) ..."
-dx "
+REMOTE_PROG="
 set -e
 tmp=\$(mktemp -d); cd \"\$tmp\"
 uri=\$(roc-obj-ls '$REPO/$BIN' 2>/dev/null | grep gfx | awk '{print \$NF}' | head -1)
@@ -97,6 +91,10 @@ co=\$(ls *.co 2>/dev/null | head -1)
 '$OBJDUMP' -d \"\$co\" 2>/dev/null | python3 '$LIB_DIR/cfg_to_dot.py' --out '$OUTDIR' --arch '$ARCH'
 rm -rf \"\$tmp\"
 "
-rc=$?
+if _dispatch_build_like 0 "$REPO" "$REMOTE_PROG"; then
+    rc=0
+else
+    rc=$?
+fi
 [ $rc -eq 0 ] && echo "CFG DOT files in $OUTDIR" || echo "ckCfgProfile failed (exit $rc)"
 exit $rc

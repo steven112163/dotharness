@@ -24,6 +24,8 @@ SWEEP_VALS=${SWEEP_VALS:-}
 NRUNS=${NRUNS:-20}
 COUNTERS=${COUNTERS:-$LIB_DIR/counters.txt}
 OUTDIR=${OUTDIR:-}
+GRES=${GRES:-}
+MODE=${MODE:-}
 
 usage() {
     cat >&2 <<EOF
@@ -36,7 +38,7 @@ Usage: $(basename "$0") [--arch gfx...] [--sweep <flag>=<v1,...>]
   --base-args <args>     args passed every run (default: "-v=0")
   <bin>                  binary path (relative to REPO root, e.g. build/bin/foo)
 
-Env overrides: REPO=$REPO  ARCH=<gfx...>  CONTAINER=<name>  IMAGE=<image>
+Env overrides: REPO=$REPO  ARCH=<gfx...>  IMAGE=<image>
                BIN=  SWEEP_FLAG=  SWEEP_VALS=  NRUNS=  BASE_ARGS=  OUTDIR=
 EOF
     exit 1
@@ -97,17 +99,6 @@ done
 # If BIN has no slash, assume it's a target name and look in build/bin/.
 [[ "$BIN" == */* ]] || BIN="build/bin/$BIN"
 
-_find_ck_root() {
-    local d="$1"
-    while [ -n "$d" ] && [ "$d" != "/" ]; do
-        [ -e "$d/script/cmake-ck-dev.sh" ] && {
-            printf '%s\n' "$d"
-            return 0
-        }
-        d=$(dirname "$d")
-    done
-    return 1
-}
 if [ ! -e "$REPO/$BIN" ]; then
     alt=$(_find_ck_root "$REPO" || _find_ck_root "$PWD") && REPO="$alt"
 fi
@@ -116,10 +107,13 @@ if [ ! -e "$REPO/$BIN" ]; then
     exit 1
 fi
 
-OUTDIR=${OUTDIR:-$REPO/ck_profile_out/dynamic/raw}
+[ -n "$MODE" ] || MODE=$(_detect_backend run) || exit 1
 
-# shellcheck disable=SC2034  # used by kill_orphans in ckExec
-binbase=$(basename "$BIN")
+# srun dispatches from the login node (no GPU to probe), so the arch must be
+# given up front to map the GRES.
+_require_arch_for_srun "$MODE"
+
+OUTDIR=${OUTDIR:-$REPO/ck_profile_out/dynamic/raw}
 
 mkdir -p "$REPO/ck_profile_out"
 cp "$LIB_DIR/profile_readme.md" "$REPO/ck_profile_out/README.md" 2>/dev/null || true

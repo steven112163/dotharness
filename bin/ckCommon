@@ -75,7 +75,7 @@ _ensure_image_tar() {
     if [ -f "$tar" ]; then
         return 0
     fi
-    echo "Saving image to $tar (one-time, ~tens of GB) ..."
+    echo "Saving image to $tar (one-time, ~tens of GB) ..." >&2
     mkdir -p "$IMAGE_DIR"
     # Save to a temp file and mv into place only on success, so an interrupted
     # save never leaves a partial .tar that a later run trusts and docker-loads.
@@ -104,12 +104,19 @@ _docker_static_flags() {
     DOCKER_FLAGS=(
         --rm
         --user "$(id -u):$(id -g)"
+        # $HOME (not just $REPO): dockerRun's old persistent dev container
+        # mounted all of $HOME, and dispatched programs reference absolute
+        # $HOME-relative paths (e.g. $LIB_DIR under ~/lib/ck-profile) that
+        # must resolve identically inside the container.
+        -v "$HOME:$HOME"
         # Same repo path inside and out: CK bakes absolute paths and the repo
         # lives at an identical path on every node (shared home).
         -v "$REPO:$REPO" -w "$workdir"
         -e "HOME=$HOME" -e IN_CONTAINER=1
         # ccache dir lives outside $REPO: bind-mount it and point ccache at it,
-        # overriding the image's unwritable /root/.cache/ccache default.
+        # overriding the image's unwritable /root/.cache/ccache default. Kept
+        # explicit (redundant when CCACHE_DIR is under $HOME) so a
+        # caller-overridden CCACHE_DIR outside $HOME still works.
         -v "$CCACHE_DIR:$CCACHE_DIR" -e "CCACHE_DIR=$CCACHE_DIR"
         --security-opt seccomp=unconfined
     )
@@ -161,7 +168,7 @@ _run_in_container() {
     # '\'' idiom closes the quote, emits an escaped literal quote, then reopens.
     local escaped=${remote_prog//\'/\'\\\'\'}
     cat <<EOF
-docker image inspect "$IMAGE" >/dev/null 2>&1 || docker load -i "$tar"
+docker image inspect "$IMAGE" >/dev/null 2>&1 || docker load -i "$tar" >&2
 IMAGE="$IMAGE"; ACCT_DIR="$ACCT_DIR"; _ACCT_GPU=$gpu
 $_ACCT_SETUP_SH
 docker run $static \$_ACCT_FLAGS "$IMAGE" bash -c '$escaped'
@@ -196,7 +203,7 @@ _srun_overlap_dispatch() {
     local remote_prog="$1" jid
     jid=$(_hold_jobid)
     [ -z "$jid" ] && return 1
-    echo "Dispatching into GPU holder job $jid (srun --overlap) ..."
+    echo "Dispatching into GPU holder job $jid (srun --overlap) ..." >&2
     # shellcheck disable=SC2086
     srun --jobid="$jid" --overlap --cpus-per-task="$CPUS" $SRUN_EXTRA bash -c "$remote_prog"
 }
@@ -227,10 +234,26 @@ _srun_dispatch() {
     for _ in $(seq "$MAX_NODE_RETRIES"); do
         local EX_FLAG=""
         [ -n "$EXCLUDE" ] && EX_FLAG="--exclude=$EXCLUDE"
-        echo "Dispatching via srun (${GRES_FLAG:-no-gpu} ${CON_FLAG:-no-constraint} ${EX_FLAG:+$EX_FLAG }--cpus-per-task=$CPUS --time=$SRUN_TIME) ..."
+        echo "Dispatching via srun (${GRES_FLAG:-no-gpu} ${CON_FLAG:-no-constraint} ${EX_FLAG:+$EX_FLAG }--cpus-per-task=$CPUS --time=$SRUN_TIME) ..." >&2
+        # Only stderr is teed/logged (the retry grep needs it); stdout stays a
+        # clean passthrough for $(...) callers. `wait` lets the tee subshell
+        # flush before we grep $local_log. Bare `wait` blocks on every
+        # background job in this shell, not just the tee substitution ($! is
+        # not set by process substitution); safe today since no caller
+        # backgrounds anything before dispatch, but a future caller that
+        # does would stall here.
+        # ckRun calls _dispatch_run_like as a bare final statement under
+        # set -euo pipefail; an unguarded srun failure here would trip set -e
+        # before `rc=$?` runs, killing the retry loop. The if/else wraps the
+        # command in a conditional (set -e's documented exemption) so rc is
+        # always captured regardless of the caller's shielding.
         # shellcheck disable=SC2086
-        srun $GRES_FLAG $CON_FLAG $EX_FLAG --cpus-per-task="$CPUS" --time="$SRUN_TIME" $SRUN_EXTRA bash -c "$remote_prog" 2>&1 | tee "$local_log"
-        rc=${PIPESTATUS[0]}
+        if srun $GRES_FLAG $CON_FLAG $EX_FLAG --cpus-per-task="$CPUS" --time="$SRUN_TIME" $SRUN_EXTRA bash -c "$remote_prog" 2> >(tee "$local_log" >&2); then
+            rc=0
+        else
+            rc=$?
+        fi
+        wait
         [ "$rc" -ne "$REPO_MISSING_RC" ] && break
         local bad
         bad=$(grep -oE 'repo not visible on [^ ]+' "$local_log" | awk '{print $5}' | head -1)
@@ -240,4 +263,156 @@ _srun_dispatch() {
     done
     rm -f "$local_log"
     return "$rc"
+}
+
+# Dispatch a build-like (no-overlap) program by MODE: direct runs inline, docker
+# runs in a local --rm container, srun ensures the image tarball then dispatches
+# via _srun_dispatch. $1: gpu bit, $2: workdir, $3: the inner program. Reads MODE.
+# Returns the program's rc, or exits 1 on an unknown MODE (matching ckBuild).
+_dispatch_build_like() {
+    local gpu="$1" workdir="$2" remote_prog="$3"
+    case "$MODE" in
+    direct)
+        local workdir_escaped=${workdir//\'/\'\\\'\'}
+        bash -c "cd '$workdir_escaped' || exit 1; $remote_prog"
+        ;;
+    docker)
+        _docker_run_local "$gpu" "$workdir" "$remote_prog"
+        ;;
+    srun)
+        # gpu (container device passthrough) and GPU (node-scheduling/--gres)
+        # are deliberately decoupled here: ckBuild's own GPU-build-node
+        # feature passes gpu=0 (no device passthrough needed to build) while
+        # having already set the global GPU=1 (schedule on a GPU node,
+        # request --gres) before calling this function. Only default GPU
+        # from gpu when the caller has not already set it. local (not a bare
+        # global assignment) so this never leaks a mutated GPU into the
+        # caller's remaining script, symmetric with _dispatch_run_like below.
+        local GPU=${GPU:-$gpu}
+        _ensure_image_tar "$IMAGE" || return 1
+        _srun_dispatch "$(_run_in_container "$gpu" "$workdir" "$remote_prog")"
+        ;;
+    *)
+        echo "ERROR: unknown MODE '$MODE' (want direct|docker|srun)." >&2
+        exit 1
+        ;;
+    esac
+}
+
+# Dispatch a run-like program by MODE: direct runs inline, docker runs in a
+# local --rm container, srun prefers overlapping into a running GPU holder
+# (instant, no queue wait) and falls back to a fresh _srun_dispatch when none is
+# held. $1: gpu bit, $2: workdir, $3: the inner program. Reads MODE. Returns the
+# program's rc, or exits 1 on an unknown MODE (matching ckRun).
+_dispatch_run_like() {
+    local gpu="$1" workdir="$2" remote_prog="$3"
+    case "$MODE" in
+    direct)
+        local workdir_escaped=${workdir//\'/\'\\\'\'}
+        bash -c "cd '$workdir_escaped' || exit 1; $remote_prog"
+        ;;
+    docker)
+        _docker_run_local "$gpu" "$workdir" "$remote_prog"
+        ;;
+    srun)
+        # Unlike build-like, gpu and GPU are the same concept here (real
+        # device passthrough implies scheduling on a GPU node), so the
+        # call-site's gpu argument always wins over any ambient GPU already
+        # set in the shell (e.g. left over from an unrelated ckBuild/ckRun
+        # call), rather than deferring to it.
+        local GPU=$gpu
+        _ensure_image_tar "$IMAGE" || return 1
+        local snippet
+        snippet=$(_run_in_container "$gpu" "$workdir" "$remote_prog")
+        if [ -n "$(_hold_jobid)" ]; then
+            _srun_overlap_dispatch "$snippet"
+        else
+            _srun_dispatch "$snippet"
+        fi
+        ;;
+    *)
+        echo "ERROR: unknown MODE '$MODE' (want direct|docker|srun)." >&2
+        exit 1
+        ;;
+    esac
+}
+
+# The rocminfo one-liner used to auto-detect a GPU's gfx arch. Shared by
+# _resolve_arch_or_require's direct/docker probe below and ckExec's
+# arch_from_container so the two never drift.
+_ARCH_PROBE_CMD="rocminfo 2>/dev/null | grep -m1 -oE 'gfx[0-9a-z]+'"
+
+# Resolve ARCH when empty: srun has no GPU to probe, so it is a hard error;
+# direct sits on a GPU host, so probe rocminfo inline; docker probes rocminfo
+# inside a container (the host running dockerd may have no GPU/rocminfo of its
+# own). $1: MODE. Reads/writes the caller's ARCH variable (bash dynamic
+# scoping, as with _gres_for_arch et al.) and reads REPO for the docker probe.
+# Prints ckBuild's original error wording and returns 1 on failure to resolve;
+# the caller decides whether that is fatal (ckBuild/ckStaticProfile exit on it,
+# ckCfgProfile treats arch as best-effort labeling and does not).
+_resolve_arch_or_require() {
+    local backend="$1"
+    [ -n "$ARCH" ] && return 0
+    case "$backend" in
+    srun)
+        echo "ERROR: srun builds run on CPU nodes (no GPU to probe); pass the" >&2
+        echo "  target arch, e.g. --arch gfx942 or ARCH=gfx942." >&2
+        return 1
+        ;;
+    direct) ARCH=$(eval "$_ARCH_PROBE_CMD" || true) ;;
+    docker)
+        local MODE=docker
+        ARCH=$(_dispatch_run_like 1 "$REPO" "$_ARCH_PROBE_CMD" 2>/dev/null || true)
+        ;;
+    esac
+    [ -z "$ARCH" ] && {
+        echo "ERROR: could not detect GPU arch; pass gfx... or set ARCH=." >&2
+        return 1
+    }
+    return 0
+}
+
+# Require ARCH when dispatching to srun (no GPU to probe from a login node);
+# computes GRES from it. $1: MODE. Exits 1 with a clear message if ARCH is
+# empty on srun. No-op on direct/docker (ARCH/GRES are unused there).
+_require_arch_for_srun() {
+    local backend="$1"
+    [ "$backend" = srun ] || return 0
+    if [ -z "$ARCH" ]; then
+        echo "ERROR: srun runs dispatch from the login node (no GPU to probe);" >&2
+        echo "  pass the arch, e.g. --arch gfx942 or ARCH=gfx942." >&2
+        exit 1
+    fi
+    [ -z "$GRES" ] && GRES=$(_gres_for_arch "$ARCH")
+}
+
+# Walk up from $1 looking for script/cmake-ck-dev.sh, the CK project root marker.
+# Echoes the found directory on success; returns 1 if none is found by /.
+_find_ck_root() {
+    local d=$1
+    while [ "$d" != / ] && [ -n "$d" ]; do
+        [ -e "$d/script/cmake-ck-dev.sh" ] && {
+            printf '%s\n' "$d"
+            return 0
+        }
+        d=$(dirname "$d")
+    done
+    return 1
+}
+
+# Resolve the caller's REPO variable to the CK project root, walking up from
+# REPO then PWD if REPO itself is not already the root. Exits 1 with ckBuild's
+# original error message if neither yields a directory with both
+# CMakeLists.txt and script/cmake-ck-dev.sh.
+_require_ck_root() {
+    if [ ! -e "$REPO/script/cmake-ck-dev.sh" ]; then
+        local alt
+        alt=$(_find_ck_root "$REPO" || _find_ck_root "$PWD") && REPO="$alt"
+    fi
+    if [ ! -e "$REPO/CMakeLists.txt" ] || [ ! -e "$REPO/script/cmake-ck-dev.sh" ]; then
+        echo "ERROR: \$REPO ($REPO) is not the CK project root" >&2
+        echo "  (expected CMakeLists.txt and script/cmake-ck-dev.sh)." >&2
+        echo "  Set REPO, e.g. REPO=\$(git rev-parse --show-toplevel)." >&2
+        exit 1
+    fi
 }

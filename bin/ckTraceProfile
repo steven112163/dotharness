@@ -20,7 +20,11 @@ SWEEP_FLAG=${SWEEP_FLAG:-}
 SWEEP_VALS=${SWEEP_VALS:-}
 NRUNS=${NRUNS:-1}
 PC_SAMPLING=${PC_SAMPLING:-1}
+# 1Mi instructions between PC samples (--pc-sampling-unit instructions).
+PC_SAMPLING_INTERVAL=${PC_SAMPLING_INTERVAL:-1048576}
 OUTDIR=${OUTDIR:-}
+GRES=${GRES:-}
+MODE=${MODE:-}
 
 usage() {
     cat >&2 <<EOF
@@ -34,7 +38,8 @@ Usage: $(basename "$0") [--arch gfx...] [--sweep <flag>=<v1,...>]
   --no-pc-sampling       skip the PC-sampling pass (default: attempt it)
   <bin>                  binary path (relative to REPO root, e.g. build/bin/foo)
 
-Env overrides: REPO=$REPO  ARCH=<gfx...>  CONTAINER=<name>  IMAGE=<image>
+Env overrides: REPO=$REPO  ARCH=<gfx...>  IMAGE=<image>
+               PC_SAMPLING_INTERVAL=<instructions between samples, default: $PC_SAMPLING_INTERVAL>
 EOF
     exit 1
 }
@@ -93,17 +98,6 @@ done
 }
 [[ "$BIN" == */* ]] || BIN="build/bin/$BIN"
 
-_find_ck_root() {
-    local d="$1"
-    while [ -n "$d" ] && [ "$d" != "/" ]; do
-        [ -e "$d/script/cmake-ck-dev.sh" ] && {
-            printf '%s\n' "$d"
-            return 0
-        }
-        d=$(dirname "$d")
-    done
-    return 1
-}
 if [ ! -e "$REPO/$BIN" ]; then
     alt=$(_find_ck_root "$REPO" || _find_ck_root "$PWD") && REPO="$alt"
 fi
@@ -112,10 +106,18 @@ if [ ! -e "$REPO/$BIN" ]; then
     exit 1
 fi
 
-OUTDIR=${OUTDIR:-$REPO/ck_profile_out/trace}
+[ -n "$MODE" ] || MODE=$(_detect_backend run) || exit 1
 
-# shellcheck disable=SC2034  # used by kill_orphans in ckExec
-binbase=$(basename "$BIN")
+# srun dispatches from the login node (no GPU to probe), so the arch must be
+# given up front to map the GRES.
+_require_arch_for_srun "$MODE"
+
+[[ "$PC_SAMPLING_INTERVAL" =~ ^[1-9][0-9]*$ ]] || {
+    echo "ERROR: PC_SAMPLING_INTERVAL must be a positive integer (got '$PC_SAMPLING_INTERVAL')." >&2
+    exit 1
+}
+
+OUTDIR=${OUTDIR:-$REPO/ck_profile_out/trace}
 
 if [ -n "$SWEEP_VALS" ]; then IFS=',' read -ra VARIANTS <<<"$SWEEP_VALS"; else VARIANTS=("default"); fi
 rm -rf "$OUTDIR"
@@ -154,7 +156,7 @@ for v in "${VARIANTS[@]}"; do
         kill_orphans
         pc="skipped"
         if [ "$PC_SAMPLING" = "1" ]; then
-            if dx "rocprofv3 --pc-sampling-beta-enabled --pc-sampling-method stochastic --pc-sampling-unit instructions --pc-sampling-interval 1048576 -f csv -d '$out' -o pc -- ./$BIN $args >'$out/pc.stdout' 2>'$out/pc.stderr'"; then
+            if dx "rocprofv3 --pc-sampling-beta-enabled --pc-sampling-method stochastic --pc-sampling-unit instructions --pc-sampling-interval $PC_SAMPLING_INTERVAL -f csv -d '$out' -o pc -- ./$BIN $args >'$out/pc.stdout' 2>'$out/pc.stderr'"; then
                 pc="ok"
             else
                 pc="unsupported"

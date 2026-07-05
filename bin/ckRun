@@ -91,14 +91,7 @@ echo "Backend: $MODE"
 
 # srun dispatches from the login node (no GPU to probe), so the arch must be given
 # to map the GRES. direct/docker already sit on a GPU host; arch is not needed.
-if [ "$MODE" = srun ] && [ "$GPU" -eq 1 ]; then
-    if [ -z "$ARCH" ]; then
-        echo "ERROR: srun runs dispatch from the login node (no GPU to probe);" >&2
-        echo "  pass the arch, e.g. 'ckRun --arch gfx942 ...' or ARCH=gfx942." >&2
-        exit 1
-    fi
-    [ -z "$GRES" ] && GRES=$(_gres_for_arch "$ARCH")
-fi
+[ "$GPU" -eq 1 ] && _require_arch_for_srun "$MODE"
 
 WORKDIR=${WORKDIR:-$REPO}
 
@@ -120,31 +113,8 @@ $CMD_STR
 EOF
 )
 
-case "$MODE" in
-direct)
-    # Already inside the dev container on a GPU host: run inline, no docker wrap.
-    bash -c "$REMOTE_PROG"
-    ;;
-docker)
-    # --rm container on this host; GPU exposed by default (running binaries needs
-    # the device), CPU-only when GPU=0.
-    _docker_run_local "$GPU" "$WORKDIR" "$REMOTE_PROG"
-    ;;
-srun)
-    _ensure_image_tar "$IMAGE" || exit 1
-    snippet=$(_run_in_container "$GPU" "$WORKDIR" "$REMOTE_PROG")
-    # Prefer a running GPU holder (ckHold): overlap into it for an instant run,
-    # no queue wait. Fall back to a fresh srun allocation when none is held.
-    # Check holder presence explicitly so a non-zero program exit under overlap
-    # is not mistaken for "no holder" and re-run on a fresh allocation.
-    if [ -n "$(_hold_jobid)" ]; then
-        _srun_overlap_dispatch "$snippet"
-    else
-        _srun_dispatch "$snippet"
-    fi
-    ;;
-*)
-    echo "ERROR: unknown MODE '$MODE' (want direct|docker|srun)." >&2
-    exit 1
-    ;;
-esac
+# GPU exposed by default (running binaries needs the device), CPU-only when
+# GPU=0. srun prefers a running GPU holder (ckHold): overlap into it for an
+# instant run, no queue wait. Falls back to a fresh srun allocation when none
+# is held.
+_dispatch_run_like "$GPU" "$WORKDIR" "$REMOTE_PROG"

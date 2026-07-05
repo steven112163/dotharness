@@ -117,26 +117,7 @@ done
 # Resolve REPO to the CK project root even if cwd drifted into a subdir: walk up
 # looking for script/cmake-ck-dev.sh. Fail fast rather than configure in the
 # wrong place.
-_find_ck_root() {
-    local d=$1
-    while [ "$d" != / ] && [ -n "$d" ]; do
-        [ -e "$d/script/cmake-ck-dev.sh" ] && {
-            printf '%s\n' "$d"
-            return 0
-        }
-        d=$(dirname "$d")
-    done
-    return 1
-}
-if [ ! -e "$REPO/script/cmake-ck-dev.sh" ]; then
-    alt=$(_find_ck_root "$REPO" || _find_ck_root "$PWD") && REPO="$alt"
-fi
-if [ ! -e "$REPO/CMakeLists.txt" ] || [ ! -e "$REPO/script/cmake-ck-dev.sh" ]; then
-    echo "ERROR: \$REPO ($REPO) is not the CK project root" >&2
-    echo "  (expected CMakeLists.txt and script/cmake-ck-dev.sh)." >&2
-    echo "  Set REPO, e.g. REPO=\$(git rev-parse --show-toplevel)." >&2
-    exit 1
-fi
+_require_ck_root
 
 # Pick the backend (see _detect_backend in ckCommon for the precedence rule).
 [ -n "$MODE" ] || MODE=$(_detect_backend build) || exit 1
@@ -144,22 +125,7 @@ echo "Backend: $MODE"
 
 # srun builds on CPU nodes (no GPU to probe) require an explicit arch; direct and
 # docker run on a GPU host, so rocminfo can probe it there.
-if [ -z "$ARCH" ]; then
-    case "$MODE" in
-    srun)
-        echo "ERROR: srun builds run on CPU nodes (no GPU to probe); pass the" >&2
-        echo "  target arch, e.g. 'ckBuild gfx942' or ARCH=gfx942." >&2
-        exit 1
-        ;;
-    # direct/docker assume a local GPU host: probe the host's rocminfo. If the
-    # docker host has no local ROCm, pass the arch explicitly.
-    direct | docker) ARCH=$(rocminfo 2>/dev/null | grep -m1 -oE 'gfx[0-9a-z]+' || true) ;;
-    esac
-    [ -z "$ARCH" ] && {
-        echo "ERROR: could not detect GPU arch; pass gfx... or set ARCH=." >&2
-        exit 1
-    }
-fi
+_resolve_arch_or_require "$MODE" || exit 1
 [ "$GPU" -eq 1 ] && [ -z "$GRES" ] && GRES=$(_gres_for_arch "$ARCH")
 
 BUILD_ABS="$REPO/$BUILD_DIR"
@@ -220,23 +186,8 @@ EOF
 )
 
 run_build() {
-    case "$MODE" in
-    direct)
-        bash -c "$REMOTE_PROG"
-        ;;
-    docker)
-        # --rm container on this host; no GPU device needed (CPU cross-compile).
-        _docker_run_local 0 "$BUILD_ABS" "$REMOTE_PROG"
-        ;;
-    srun)
-        _ensure_image_tar "$IMAGE" || return 1
-        _srun_dispatch "$(_run_in_container 0 "$BUILD_ABS" "$REMOTE_PROG")"
-        ;;
-    *)
-        echo "ERROR: unknown MODE '$MODE' (want direct|docker|srun)." >&2
-        exit 1
-        ;;
-    esac
+    # No GPU device needed (CPU cross-compile).
+    _dispatch_build_like 0 "$BUILD_ABS" "$REMOTE_PROG"
 }
 
 # NFS caveat: artifacts written by the container on a compute node take a few
