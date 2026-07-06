@@ -7,6 +7,8 @@ that opens offline anywhere (no CDN, no internet).
 
 import html
 
+from ck_profile_utils import COMPUTE_BOUND_PCT, LATENCY_BOUND_PCT
+
 _CSS = """
 :root {
   --bg:#0a0c10; --card:#12151d; --card2:#161b25;
@@ -206,9 +208,10 @@ def table(headers, rows, num_cols=(), flag_rows=()):
 
 def _fill_color(frac):
     # frac in 0..1 — light teal for low, brighter for high (intensity only, no good/bad).
-    if frac >= 0.60:
+    # Thresholds mirror ck_profile_utils' bound-verdict percentages.
+    if frac >= COMPUTE_BOUND_PCT / 100:
         return "#4cc2ff"
-    if frac >= 0.25:
+    if frac >= LATENCY_BOUND_PCT / 100:
         return "#3a8fbf"
     return "#33566b"
 
