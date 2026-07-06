@@ -23,14 +23,24 @@ import html_report as H  # noqa: E402
 from ck_profile_utils import classify  # noqa: E402
 
 
+# rocprof-compute has renamed panel columns across releases (e.g. "Avg" vs
+# "Value", "Peak" vs "Peak (Empirical)", "Pct of Peak" vs "PoP"). Pick by name,
+# trying aliases in order, instead of a fixed column index that silently reads
+# the wrong field (or 0.0) the moment a release reorders columns.
+def pick(row, *names):
+    for n in names:
+        if n in row:
+            return row[n]
+    return None
+
+
 def read_panel(csvdir, stem):
-    """Find <stem>*.csv (panels are prefixed by id) and return (headers, rows)."""
+    """Find <stem>*.csv (panels are prefixed by id) and return a list of dict rows."""
     hits = glob.glob(os.path.join(csvdir, f"{stem}*.csv"))
     if not hits:
-        return [], []
+        return []
     with open(hits[0], newline="") as f:
-        r = list(csv.reader(f))
-    return (r[0], r[1:]) if r else ([], [])
+        return list(csv.DictReader(f))
 
 
 def fnum(s):
@@ -38,6 +48,22 @@ def fnum(s):
         return float(str(s).replace(",", "").strip())
     except (ValueError, AttributeError):
         return None
+
+
+# Mean/Sum/Median columns are named e.g. "Mean(ns)"/"Mean(us)"/"Mean(ms)" per
+# --time-unit; convert whatever unit is present to microseconds for display.
+_TIME_TO_US = {"ns": 1e-3, "us": 1.0, "µs": 1.0, "ms": 1e3, "s": 1e6}
+
+
+def _mean_col_to_us(row):
+    """Find the Mean(<unit>) column and return its value converted to µs."""
+    col = next((h for h in row if h.startswith("Mean")), None)
+    if col is None:
+        return None
+    m = re.search(r"\(([^)]+)\)", col)
+    unit = m.group(1) if m else "ns"
+    v = fnum(row[col])
+    return None if v is None else v * _TIME_TO_US.get(unit, 1e-3)
 
 
 def short_kernel(name):
@@ -50,13 +76,19 @@ def short_kernel(name):
 
 def sol_rows(csvdir):
     """System Speed-of-Light as list of dicts: metric, avg, unit, peak, pct."""
-    hdr, rows = read_panel(csvdir, "2.1_System_Speed-of-Light")
     out = []
-    for r in rows:
-        if len(r) < 5:
+    for r in read_panel(csvdir, "2.1_System_Speed-of-Light"):
+        metric = pick(r, "Metric")
+        if metric is None:
             continue
         out.append(
-            {"metric": r[0], "avg": r[1], "unit": r[2], "peak": r[3], "pct": fnum(r[4])}
+            {
+                "metric": metric,
+                "avg": pick(r, "Avg", "Value"),
+                "unit": pick(r, "Unit"),
+                "peak": pick(r, "Peak (Empirical)", "Peak"),
+                "pct": fnum(pick(r, "Pct of Peak", "PoP", "Pct")),
+            }
         )
     return out
 
@@ -110,17 +142,18 @@ def build(csvdir, name, arch):
         )
 
     # top kernels: bars by pct + table
-    hdr, rows = read_panel(csvdir, "0.1_Top_Kernels")
+    rows = read_panel(csvdir, "0.1_Top_Kernels")
     if rows:
         items, trows = [], []
         for r in rows:
-            if len(r) < 6:
+            kname = pick(r, "Kernel_Name", "KernelName", "Kernel")
+            if kname is None:
                 continue
-            k = short_kernel(r[0])
-            pct = fnum(r[5]) or 0.0
-            mean_us = (fnum(r[3]) or 0.0) / 1e3
+            k = short_kernel(kname)
+            pct = fnum(pick(r, "Percent", "Pct", "% time")) or 0.0
+            mean_us = _mean_col_to_us(r) or 0.0
             items.append((k, pct, f"{mean_us:.1f} µs ({pct:.1f}%)"))
-            trows.append([k, r[1], f"{mean_us:.2f}", f"{pct:.1f}"])
+            trows.append([k, pick(r, "Count"), f"{mean_us:.2f}", f"{pct:.1f}"])
         parts.append(
             H.section(
                 "Top kernels (by total time)",
@@ -157,9 +190,9 @@ def build(csvdir, name, arch):
         )
 
     # system info
-    hdr, rows = read_panel(csvdir, "1.1_System_Info")
+    rows = read_panel(csvdir, "1.1_System_Info")
     if rows:
-        info = [v[0] for v in rows[:8] if v]
+        info = [next(iter(v.values())) for v in rows[:8] if v]
         parts.append(
             H.section(
                 "System info",
@@ -204,7 +237,7 @@ def build(csvdir, name, arch):
             if r["pct"] is not None
             else f"| {r['metric']} | {r['avg']} | {r['unit']} | {r['peak']} |  |"
         )
-    hdr, rows = read_panel(csvdir, "0.1_Top_Kernels")
+    rows = read_panel(csvdir, "0.1_Top_Kernels")
     if rows:
         md += [
             "",
@@ -214,10 +247,13 @@ def build(csvdir, name, arch):
             "| --- | --- | --- | --- |",
         ]
         for r in rows[:12]:
-            if len(r) < 6:
+            kname = pick(r, "Kernel_Name", "KernelName", "Kernel")
+            if kname is None:
                 continue
+            mean_us = _mean_col_to_us(r) or 0.0
+            pct = pick(r, "Percent", "Pct", "% time")
             md.append(
-                f"| {short_kernel(r[0])} | {r[1]} | {(fnum(r[3]) or 0) / 1e3:.2f} | {r[5]} |"
+                f"| {short_kernel(kname)} | {pick(r, 'Count')} | {mean_us:.2f} | {pct} |"
             )
     return html, "\n".join(md) + "\n"
 
