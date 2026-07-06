@@ -76,6 +76,12 @@ CK_LOCAL_REPO=${CK_LOCAL_REPO:-$(git rev-parse --show-toplevel 2>/dev/null || tr
 # don't overwrite the remote's own agent context.
 CK_RSYNC_EXCLUDES=${CK_RSYNC_EXCLUDES:-ck_profile_out .venv .pytest_cache .ruff_cache .cache .claude .codex}
 CK_SSH_OPTS=${CK_SSH_OPTS:-}
+# Per-server lock dir: serializes this machine's own ckRemote dispatches against a
+# given server (CLI vs. CLI, CLI vs. a future MCP server) so two profiling/run jobs
+# never interleave rocprofv3 traces or GPU work on the same host. Local-machine scope
+# only: a different machine hitting the same shared server is not covered (accepted
+# v1 limitation; see plan notes).
+CK_REMOTE_LOCK_DIR=${CK_REMOTE_LOCK_DIR:-$HOME/.cache/ckremote/locks}
 
 # Mirror the local working directory on the remote: a command run from a subdir of
 # the repo (e.g. projects/composablekernel in a monorepo) executes in that same
@@ -362,6 +368,22 @@ remote_exec() {
         "export PATH=\"\$HOME/bin:\$PATH\"; cd $(printf '%q' "$(_remote_workdir)") || exit 1; $cmd"
 }
 
+# Wrap remote_exec in a per-server flock so a concurrent ckRemote dispatch (another
+# terminal, or a future MCP-spawned job) against the same $SERVER waits instead of
+# interleaving. FD 9 is released (and the lock freed) when this function's subshell
+# exits, whether remote_exec succeeds or fails.
+remote_exec_locked() {
+    mkdir -p "$CK_REMOTE_LOCK_DIR"
+    (
+        exec 9>"$CK_REMOTE_LOCK_DIR/$SERVER.lock"
+        if ! flock -n 9; then
+            echo "Waiting for another ckRemote job on server '$SERVER' to finish..." >&2
+            flock 9
+        fi
+        remote_exec "$@"
+    )
+}
+
 FORCED=""
 ARCH=""
 DO_SYNC=1
@@ -425,6 +447,6 @@ shell)
     if [[ "$1" =~ ^(ckRun|ckRunProfile|ckTraceProfile|ckComputeProfile)$ ]] && [ "${CK_TYPE[$SERVER]:-}" = slurm ]; then
         _ensure_hold "${ARCH:-}"
     fi
-    remote_exec "$@"
+    remote_exec_locked "$@"
     ;;
 esac
