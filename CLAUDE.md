@@ -36,6 +36,12 @@ bats tests/bats/commit-lint.bats
 bin/llm -m gpt-5.5 --thinking "your question"
 ```
 
+CI (`.github/workflows/ci.yml`) runs four jobs: `pre-commit`, `bats`, `pytest`, and `gitleaks`
+(full-history secret scan). `.pre-commit-config.yaml` wires `shellcheck`, `shfmt`, `ruff`/
+`ruff-format`, `typos`, `actionlint` (via docker), `gitleaks`, and the standard
+`pre-commit-hooks` set — run `.venv/bin/pre-commit run --all-files` locally before pushing to
+catch what CI will catch.
+
 ## Architecture
 
 ### Layers and how they reach the host
@@ -66,8 +72,10 @@ Each skill is a directory with a `SKILL.md` (YAML frontmatter: `name`, `descript
 - `multi-review` — up to 8 parallel reviewers (Claude subagents + GPT-5.5 codex calls per lens); consolidator; dedup against existing PR reviews.
 - `research` — four modes (socratic, direct, deep, adversarial) with anti-sycophancy safeguards.
 - `llm` — external LLM gateway wrapper.
+- `create-pr` — creates a pull request following the CK team's PR template.
+- `survey` — academic literature survey, discover/curated modes.
 
-Third-party skills from `third-party/mattpocock-skills/` are linked alongside own skills. Plugins (`superpowers`, `example-skills`, `caveman`, `ponytail`) are installed via the Claude CLI by `setup.sh`.
+Third-party skills from `third-party/mattpocock-skills/` are linked alongside own skills. Plugins (`superpowers`, `example-skills`, `caveman`, `ponytail`, `claude-api`) are installed via the Claude CLI by `setup.sh`.
 
 `caveman` and `ponytail` are always-on plugins activated every session via their own hooks. `setup.sh` prunes the mattpocock `caveman` link to avoid conflict.
 
@@ -77,14 +85,17 @@ Worker roles: researcher, implementer, reviewer, tester, builder, profiler. Usab
 
 ### Hooks (`hooks/`)
 
-Critical hooks:
-
 - `block-dangerous.sh` (PreToolUse) — blocks `rm -rf`, force-push, `DROP TABLE`, writes to `.env`/`/etc`/`/tmp`. Scratch goes in `tmp/` (repo root, gitignored).
 - `commit-lint.sh` (PreToolUse) — enforces conventional commits (`type(scope): subject`, lowercase, ≤72 chars, no trailing period).
+- `auto-approve.sh` (PreToolUse) — auto-approves a configured allowlist of low-risk tool calls.
+- `anti-sycophancy.sh` (PreToolUse/UserPromptSubmit) — nudges against reflexive agreement.
 - `auto-format.sh` (PostToolUse) — runs clang-format, ruff, jq, shfmt after Write/Edit.
 - `security-scan.sh` (PostToolUse) — detects hardcoded secrets after Write/Edit.
 - `session-start.sh` (SessionStart) — injects git branch/status/recent commits; restores saved state after compaction.
+- `session-end.sh` (SessionEnd) — end-of-session cleanup/summary.
 - `context-save.sh` (PreCompact) — saves git state to `.claude/.dotharness/session-state.md`.
+- `notify-stop.sh` / `notify-prompt.sh` (Stop/Notification) — desktop/system notifications on stop or when input is needed.
+- `teams-notify.sh` — posts a Microsoft Teams adaptive card (`teams-adaptive-card.json`) via an incoming webhook; see `hooks/README.md` for setup.
 
 ### Binaries (`bin/`)
 
@@ -106,7 +117,7 @@ Symlinked into `~/lib/` by `setup.sh`. Not on PATH — imported programmatically
 
 ### Tests (`tests/`)
 
-`tests/bats/` — shell tests for hooks and scripts (enforced by CI). `tests/python/` — pytest for ck-profile Python helpers; `conftest.py` puts both `bin/` and `lib/ck-profile/` on `sys.path`. Every `SKILL.md` frontmatter `name` must match its directory name — enforced by `skills-frontmatter.bats`.
+`tests/bats/` — shell tests for hooks and scripts (enforced by CI): `block-dangerous.bats`, `ckCommon.bats`, `commit-lint.bats`, `multi-review.bats`, `skills-frontmatter.bats`. `tests/python/` — pytest for ck-profile Python helpers (`test_aggregate.py`, `test_gpu_specs.py`, `test_parse_resource_usage.py`); `conftest.py` puts both `bin/` and `lib/ck-profile/` on `sys.path`. Every `SKILL.md` frontmatter `name` must match its directory name — enforced by `skills-frontmatter.bats`.
 
 ### Key conventions
 
@@ -114,3 +125,7 @@ Symlinked into `~/lib/` by `setup.sh`. Not on PATH — imported programmatically
 - Skill temp dirs: `mktemp -d "$_repo_root/tmp/<skill>-XXXXXX"` where `_repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)` (council/research use `|| pwd` fallback; multi-review errors if not in a git repo), cleaned up after delivering results.
 - Hook-generated runtime files go under `.claude/.dotharness/` (git root, falling back to cwd).
 - The `caveman` plugin suppresses the mattpocock `caveman` skill link; `setup.sh` prunes any pre-existing link.
+- Non-trivial work follows a plan-first workflow: templates in `template/` (git-tracked) —
+  `plan.md`, `implementation-notes.md`, `test-notes.md`. Real, per-task files go in `plans/` and
+  `notes/` (both gitignored, local-only) as `<date>-<slug>.md`. Plan first and get it reviewed,
+  then log implementation deviations and test notes as work happens, not retroactively.
