@@ -153,4 +153,12 @@ for v in "${VARIANTS[@]}"; do
 done
 find "$REPO/.rocprofv3" -mindepth 1 -delete 2>/dev/null || true
 rmdir "$REPO/.rocprofv3" 2>/dev/null || true
+
+echo "Aggregating into summary.{html,md,csv} ..."
+if [ -n "$ARCH" ]; then
+    python3 "$SELF_DIR/ckAggregate" --raw "$OUTDIR" --arch "$ARCH"
+else
+    python3 "$SELF_DIR/ckAggregate" --raw "$OUTDIR"
+fi
+
 echo "DONE  (raw output in $OUTDIR)"
