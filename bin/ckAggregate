@@ -19,10 +19,15 @@ Usage:
 import argparse
 import csv
 import glob
+import json
 import os
 import re
 import statistics
 import sys
+
+# Bumped whenever summary.json's shape changes; get_summary (branch 3's MCP tool) and
+# branch 2's occupancy-limiter-attribution addition both take a hard dependency on this.
+SUMMARY_SCHEMA_VERSION = 1
 
 _here = os.path.dirname(os.path.abspath(__file__))
 _lib = os.path.join(_here, "..", "lib", "ck-profile")
@@ -129,6 +134,44 @@ def pmc_metrics(run_dir):
     }
 
 
+def build_summary_json(overall, arch, unit, peak):
+    """Structured twin of summary.md/.html: per-variant verdict + metrics as mean/stdev pairs."""
+
+    def ms(pair):
+        mean, sd = pair
+        return {"mean": mean, "stdev": sd}
+
+    return {
+        "schema_version": SUMMARY_SCHEMA_VERSION,
+        "arch": arch,
+        "unit": unit,
+        "peak_mem_gbs": peak,
+        "variants": [
+            {
+                "name": name,
+                "runs": nr,
+                "verdict": verdict,
+                "occ_util_pct": occu,
+                "bw_util_pct": bwu,
+                "gpu_ms": ms(m["gpu_ms"]),
+                "prog_ms": ms(m["prog"]),
+                "l2_hit_pct": ms(m["hr"]),
+                "fetch_mb": ms(m["fmb"]),
+                "write_mb": ms(m["wmb"]),
+                "occupancy": ms(m["occ"]),
+                "valu_pct": ms(m["valu"]),
+                "salu_pct": ms(m["salu"]),
+                "mem_stall_pct": ms(m["memstall"]),
+                "lds_bank_conflicts": ms(m["lds"]),
+                "mfma_busy_cycles": ms(m["mfma_cyc"]),
+                "wavefronts": ms(m["waves"]),
+                "achieved_bw_gbs": ms(m["bw"]),
+            }
+            for name, nr, m, bwu, verdict, occu in overall
+        ],
+    }
+
+
 def write_html(overall, pk_rows, spec, peak, arch, unit, out):
     def sv(x, s=""):
         return f"{x}{s}" if x is not None else "n/a"
@@ -224,8 +267,8 @@ def write_html(overall, pk_rows, spec, peak, arch, unit, out):
 
     parts.append(
         "<p class='foot'>Self-contained report — CSS/SVG bars, no external "
-        "dependencies. Companion files: summary.md, summary_overall.csv, "
-        "per_kernel_*.csv.</p>"
+        "dependencies. Companion files: summary.md, summary.json, "
+        "summary_overall.csv, per_kernel_*.csv.</p>"
     )
     with open(os.path.join(out, "summary.html"), "w") as f:
         f.write(H.page(f"CK dynamic profiling — {arch}", "".join(parts)))
@@ -475,6 +518,10 @@ def main():
 
     write_html(overall, pk_rows, spec, peak, a.arch, unit, out)
 
+    with open(os.path.join(out, "summary.json"), "w") as f:
+        json.dump(build_summary_json(overall, a.arch, unit, peak), f, indent=2)
+        f.write("\n")
+
     if spec:
         print(
             f"arch={a.arch} ({spec['product']})  CUs={sv(spec['cu'])}  wave={sv(spec['wave'])}  "
@@ -493,7 +540,8 @@ def main():
             f"{m['memstall'][0]:7.2f} {bwu:5.1f}  {verdict}"
         )
     print(
-        f"\nwrote {os.path.join(out, 'summary.html')}, summary.md, summary_overall.csv, per_kernel_*.csv"
+        f"\nwrote {os.path.join(out, 'summary.html')}, summary.md, summary.json, "
+        "summary_overall.csv, per_kernel_*.csv"
     )
 
 
