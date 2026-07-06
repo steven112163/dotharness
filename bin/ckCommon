@@ -342,6 +342,14 @@ _dispatch_run_like() {
 # arch_from_container so the two never drift.
 _ARCH_PROBE_CMD="rocminfo 2>/dev/null | grep -m1 -oE 'gfx[0-9a-z]+'"
 
+# Validate --arch before it reaches any remote heredoc interpolation. $1: candidate arch string.
+_validate_arch() {
+    [[ "$1" =~ ^gfx[0-9a-z]+$ ]] || {
+        echo "ERROR: invalid arch '$1' (expected e.g. gfx942)." >&2
+        exit 1
+    }
+}
+
 # Resolve ARCH when empty: srun has no GPU to probe, so it is a hard error;
 # direct sits on a GPU host, so probe rocminfo inline; docker probes rocminfo
 # inside a container (the host running dockerd may have no GPU/rocminfo of its
@@ -352,7 +360,10 @@ _ARCH_PROBE_CMD="rocminfo 2>/dev/null | grep -m1 -oE 'gfx[0-9a-z]+'"
 # ckCfgProfile treats arch as best-effort labeling and does not).
 _resolve_arch_or_require() {
     local backend="$1"
-    [ -n "$ARCH" ] && return 0
+    if [ -n "$ARCH" ]; then
+        _validate_arch "$ARCH"
+        return 0
+    fi
     case "$backend" in
     srun)
         echo "ERROR: srun builds run on CPU nodes (no GPU to probe); pass the" >&2

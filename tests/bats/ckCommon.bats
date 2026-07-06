@@ -428,6 +428,44 @@ EOF
     [[ "$output" == *"could not detect GPU arch"* ]]
 }
 
+# --- _validate_arch / _resolve_arch_or_require: reject malformed --arch input ---
+
+@test "_validate_arch accepts a well-formed gfx arch" {
+    run bash -c "
+        source '$CKCOMMON'
+        _validate_arch gfx942
+    "
+    [ "$status" -eq 0 ]
+}
+
+@test "_validate_arch rejects a shell-metacharacter payload" {
+    run bash -c "
+        source '$CKCOMMON'
+        _validate_arch 'gfx942;touch pwned'
+    "
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"invalid arch"* ]]
+}
+
+@test "_validate_arch rejects a path-traversal payload" {
+    run bash -c "
+        source '$CKCOMMON'
+        _validate_arch '../../etc/passwd'
+    "
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"invalid arch"* ]]
+}
+
+@test "_resolve_arch_or_require rejects an already-set malformed ARCH on srun" {
+    run bash -c "
+        source '$CKCOMMON'
+        ARCH='gfx942;touch pwned'
+        _resolve_arch_or_require srun
+    "
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"invalid arch"* ]]
+}
+
 # --- _require_arch_for_srun: hard-required on srun, no-op elsewhere ---
 
 @test "_require_arch_for_srun exits 1 on srun with no arch" {
