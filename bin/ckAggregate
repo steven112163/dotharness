@@ -2,8 +2,10 @@
 """Aggregate rocprofv3 trace + PMC output produced by ckRunProfile.
 
 Counter-set agnostic: it scans every pmc_*/p_counter_collection.csv, so adding
-or removing lines in counters.txt does not require editing this script. Known
-counters are turned into reported metrics; unknown ones are summed and ignored.
+or removing lines in counters.txt does not require editing this script. Every
+counter must be classified sum/mean/ignore in COUNTER_CLASS below; an
+unclassified counter fails loudly at load time instead of being silently
+summed.
 
 For each variant (sweep value), averaged over all runs:
   runtime (total GPU kernel time, program-reported time), L2 hit ratio,
@@ -29,8 +31,24 @@ from gpu_specs import PEAK_MEM_GBS, get_spec  # noqa: E402
 import html_report as H  # noqa: E402
 from ck_profile_utils import classify, msd, short  # noqa: E402
 
-# Counters reported as a duration-weighted mean (percentages/rates); the rest summed.
-MEAN_COUNTERS = {"VALUBusy", "SALUBusy", "MeanOccupancyPerCU", "MemUnitStalled"}
+# Every counter that can appear in a p_counter_collection.csv (i.e. every pmc line in
+# counters.txt) must be classified here: "sum" for cumulative counters, "mean" for
+# duration-weighted percentages/rates, or "ignore" for ad hoc exploratory counters not
+# wired into any reported metric. A counter with no entry fails loudly in
+# collect_counters rather than being silently summed.
+COUNTER_CLASS = {
+    "TCC_HIT": "sum",
+    "TCC_MISS": "sum",
+    "FETCH_SIZE": "sum",
+    "WRITE_SIZE": "sum",
+    "MeanOccupancyPerCU": "mean",
+    "VALUBusy": "mean",
+    "SALUBusy": "mean",
+    "MemUnitStalled": "mean",
+    "LDSBankConflict": "sum",
+    "SQ_VALU_MFMA_BUSY_CYCLES": "sum",
+    "SQ_WAVES": "sum",
+}
 
 
 def read_csv(p):
@@ -66,11 +84,23 @@ def trace_metrics(run_dir, marker):
 
 
 def collect_counters(run_dir):
-    """Return {counter: sum} and {counter: duration-weighted mean} over all passes."""
+    """Return {counter: sum} and {counter: duration-weighted mean} over all passes.
+
+    Raises SystemExit if a counter appears with no COUNTER_CLASS entry: add it as
+    "sum", "mean", or "ignore" rather than letting it fall through silently.
+    """
     sums, wnum, wden = {}, {}, {}
     for f in glob.glob(os.path.join(run_dir, "pmc_*", "p_counter_collection.csv")):
         for r in read_csv(f):
             name = r["Counter_Name"]
+            cls = COUNTER_CLASS.get(name)
+            if cls is None:
+                sys.exit(
+                    f"ERROR: counter '{name}' has no sum/mean/ignore classification in "
+                    f"ckAggregate's COUNTER_CLASS; add one before re-running."
+                )
+            if cls == "ignore":
+                continue
             val = float(r["Counter_Value"])
             w = float(r["End_Timestamp"]) - float(r["Start_Timestamp"])
             sums[name] = sums.get(name, 0.0) + val
