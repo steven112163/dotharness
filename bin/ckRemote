@@ -103,7 +103,8 @@ Usage: ckRemote [-t <server>] [--arch <gfx>] [--no-sync]
   -a, --arch <gfx>     GPU arch to select a server by (else detected from cmd)
   --no-sync            skip the source rsync (e.g. run an already-built binary)
   push                 rsync source to the chosen server, nothing else
-  pull [path...]       rsync ck_profile_out/ (and any extra paths) from remote to local
+  pull [path...]       rsync ck_profile_out/ (and any extra paths, relative to
+                       the mirrored CK project workdir) from remote to local
   shell                interactive shell in the remote checkout
   targets              list configured servers and their gpus
   select               print which server would be chosen, then exit
@@ -295,17 +296,25 @@ require_local() {
 }
 
 # Pull profiling artifacts from the remote repo back to the local checkout.
-# Default path: ck_profile_out/. Additional paths may be passed as arguments
-# (relative to the remote repo root). Useful after ckRunProfile/ckStaticProfile.
+# Default path: ck_profile_out/. Additional paths may be passed as arguments,
+# relative to the CK project root (ckBuild/ckRun's $REPO) — the same mirrored
+# workdir remote_exec runs commands in, i.e. CK_REMOTE_REPO/CK_REL. This
+# matters in a monorepo: ck*Profile scripts write ck_profile_out under $REPO,
+# which is the CK project subdir, not necessarily the git toplevel. Useful
+# after ckRunProfile/ckStaticProfile.
 pull_artifacts() {
     require_local
     local paths=("$@")
     [ "${#paths[@]}" -eq 0 ] && paths=(ck_profile_out)
+    local local_workdir="$CK_LOCAL_REPO"
+    [ -n "$CK_REL" ] && local_workdir="$CK_LOCAL_REPO/$CK_REL"
     local p
     for p in "${paths[@]}"; do
-        local remote_path="$CK_REMOTE_REPO/$p"
-        local local_path="$CK_LOCAL_REPO/$p"
+        local remote_path
+        remote_path="$(_remote_workdir)/$p"
+        local local_path="$local_workdir/$p"
         echo "Pulling $p <- $SERVER:$remote_path ..."
+        mkdir -p "$local_path"
         # shellcheck disable=SC2086
         rsync -avz --info=progress2 ${CK_SSH_OPTS:+-e "ssh $CK_SSH_OPTS"} \
             "$CK_REMOTE:$remote_path/" "$local_path/"
