@@ -11,6 +11,7 @@
 setup() {
     CKCOMMON="${BATS_TEST_DIRNAME}/../../bin/ckCommon"
     REPO_ROOT=$(cd "${BATS_TEST_DIRNAME}/../.." && pwd)
+    mkdir -p "$REPO_ROOT/tmp"
     TMPDIR_TEST=$(mktemp -d "$REPO_ROOT/tmp/ckCommon-bats-XXXXXX")
 }
 
