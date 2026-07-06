@@ -113,7 +113,7 @@ fi
 # given up front to map the GRES.
 _require_arch_for_srun "$MODE"
 
-OUTDIR=${OUTDIR:-$REPO/ck_profile_out/dynamic/raw}
+MODE_DIR=$REPO/ck_profile_out/dynamic
 
 mkdir -p "$REPO/ck_profile_out"
 cp "$LIB_DIR/profile_readme.md" "$REPO/ck_profile_out/README.md" 2>/dev/null || true
@@ -129,7 +129,20 @@ else
     VARIANTS=("default")
 fi
 
-rm -rf "$OUTDIR"
+# Each run gets its own immutable runs/<id>/ dir (never rm -rf'd), so history and
+# cross-run comparison (branch 2) survive; "latest" always points at the newest one.
+# Skipped when the caller overrides OUTDIR directly (a debug/custom-location escape
+# hatch predating versioning; such runs opt out of the runs/<id>+latest bookkeeping).
+RUNDIR=""
+if [ -z "$OUTDIR" ]; then
+    RUN_ID=$(date -u +%Y%m%dT%H%M%SZ)
+    RUNDIR=$MODE_DIR/runs/$RUN_ID
+    while [ -e "$RUNDIR" ]; do
+        RUN_ID="${RUN_ID}-$$"
+        RUNDIR=$MODE_DIR/runs/$RUN_ID
+    done
+    OUTDIR=$RUNDIR/raw
+fi
 mkdir -p "$OUTDIR"
 
 for v in "${VARIANTS[@]}"; do
@@ -154,11 +167,16 @@ done
 find "$REPO/.rocprofv3" -mindepth 1 -delete 2>/dev/null || true
 rmdir "$REPO/.rocprofv3" 2>/dev/null || true
 
-echo "Aggregating into summary.{html,md,csv} ..."
+echo "Aggregating into summary.{html,md,csv,json} ..."
 if [ -n "$ARCH" ]; then
     python3 "$SELF_DIR/ckAggregate" --raw "$OUTDIR" --arch "$ARCH"
 else
     python3 "$SELF_DIR/ckAggregate" --raw "$OUTDIR"
 fi
 
-echo "DONE  (raw output in $OUTDIR)"
+if [ -n "$RUNDIR" ]; then
+    ln -sfn "runs/$RUN_ID" "$MODE_DIR/latest"
+    echo "DONE  (raw output in $OUTDIR, latest -> $MODE_DIR/latest)"
+else
+    echo "DONE  (raw output in $OUTDIR)"
+fi

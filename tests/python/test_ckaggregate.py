@@ -1,4 +1,4 @@
-"""Tests for bin/ckAggregate's COUNTER_CLASS guard (collect_counters).
+"""Tests for bin/ckAggregate: the COUNTER_CLASS guard and summary.json emission.
 
 ckAggregate has no .py extension (it's a bin/ CLI, per conftest.py), so it is loaded here via
 importlib rather than a plain `import`.
@@ -7,6 +7,7 @@ importlib rather than a plain `import`.
 import csv
 import importlib.machinery
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -59,3 +60,51 @@ def test_collect_counters_fails_loudly_on_unclassified_counter(tmp_path):
     )
     with pytest.raises(SystemExit, match="SOME_NEW_COUNTER_NOBODY_CLASSIFIED"):
         ckAggregate.collect_counters(str(tmp_path))
+
+
+def _fake_overall_row(name="default"):
+    m = {
+        "gpu_ms": (1.5, 0.1),
+        "prog": (2.0, 0.2),
+        "hr": (90.0, 1.0),
+        "fmb": (10.0, 0.5),
+        "wmb": (5.0, 0.3),
+        "occ": (4.0, 0.1),
+        "valu": (70.0, 2.0),
+        "salu": (10.0, 1.0),
+        "mfma_cyc": (1000.0, 50.0),
+        "memstall": (5.0, 0.5),
+        "lds": (2.0, 0.1),
+        "waves": (64.0, 1.0),
+        "bw": (1000.0, 20.0),
+    }
+    return (name, 20, m, 45.0, "compute-bound (VALU/MFMA)", 80.0)
+
+
+def test_build_summary_json_shape_and_schema_version():
+    out = ckAggregate.build_summary_json(
+        [_fake_overall_row()], arch="gfx942", unit="per-run", peak=5300.0
+    )
+    assert out["schema_version"] == ckAggregate.SUMMARY_SCHEMA_VERSION == 1
+    assert out["arch"] == "gfx942"
+    assert out["unit"] == "per-run"
+    assert out["peak_mem_gbs"] == 5300.0
+    assert len(out["variants"]) == 1
+    v = out["variants"][0]
+    assert v["name"] == "default"
+    assert v["runs"] == 20
+    assert v["verdict"] == "compute-bound (VALU/MFMA)"
+    assert v["occ_util_pct"] == 80.0
+    assert v["bw_util_pct"] == 45.0
+    assert v["gpu_ms"] == {"mean": 1.5, "stdev": 0.1}
+
+
+def test_build_summary_json_is_json_serializable():
+    out = ckAggregate.build_summary_json(
+        [_fake_overall_row("a"), _fake_overall_row("b")],
+        arch="gfx942",
+        unit="per-run",
+        peak=5300.0,
+    )
+    dumped = json.dumps(out)
+    assert json.loads(dumped)["variants"][1]["name"] == "b"
