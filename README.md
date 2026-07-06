@@ -32,9 +32,15 @@ lib/                   → internal libraries, symlinked to ~/lib/
 tests/                 → bats + pytest suites                              (tests/README.md)
 third-party/
   mattpocock-skills/   → git submodule (engineering + productivity skills)
+template/              → templates for plan/implementation-notes/test-notes docs
 statusline.sh          → compact status line, symlinked to ~/.claude/
 setup.sh               → symlinks, hooks, output style, plugins, pre-commit provisioning
 ```
+
+Non-trivial work in this repo follows a plan-first workflow: copy `template/plan.md` into
+`plans/<date>-<slug>.md`, get it reviewed, then log implementation deviations and test notes into
+`notes/<date>-<slug>-implementation.md` / `-test.md` (templates in `template/`) as work happens.
+`plans/` and `notes/` are gitignored — local-only, not committed.
 
 ## Setup
 
