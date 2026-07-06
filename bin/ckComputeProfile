@@ -104,6 +104,7 @@ if [ "$MODE" = srun ]; then
 else
     [ -z "$ARCH" ] && ARCH=$(arch_from_container)
 fi
+[ -n "$ARCH" ] && _validate_arch "$ARCH"
 mkdir -p "$OUTDIR"
 cp "$LIB_DIR/profile_readme.md" "$REPO/ck_profile_out/README.md" 2>/dev/null || true
 bash "$LIB_DIR/git_exclude_outdir.sh" "$REPO" 2>/dev/null || true
