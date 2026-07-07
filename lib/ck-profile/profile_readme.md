@@ -1,28 +1,35 @@
 # ck-profile output
 
-Each profiling mode writes its own folder here. Inside every folder: the
-**report files** at the top, and a **subfolder** (`raw/`, `build/`, or `dot/`)
-holding everything else (raw data / large artifacts). Start at each folder's
-`index.md` or `*_summary.md` — they include a "How to read" section.
+Each profiling mode writes its own folder here. Inside every folder, each run
+gets its own `runs/<UTC-timestamp>/` (report files + raw data together), and
+`latest` is a symlink repointed at the newest run after it finishes. Start at
+`latest/index.md` or `latest/*_report.*` — they include a "How to read"
+section. `depgraph/` is the one exception: it is not versioned (see its row
+below).
 
 | folder | mode | start here | raw/large data |
 |--------|------|-----------|----------------|
-| `static/` | compile-time resource usage | `build_report.html` / `.md` | `build/` (instrumented build tree) |
-| `dynamic/` | rocprofv3 counters + verdict | `latest/summary.html` / `.md` / `.json` | `latest/raw/` (per-run CSVs); prior runs under `runs/<timestamp>/` |
-| `trace/` | rocprofv3 dispatch timeline | `raw/<variant>/run_NN/timeline.html` (+ `index.md`) | `raw/.../*.pftrace`, CSVs |
-| `cfg/` | per-kernel ISA control-flow graphs | `index.md` | `dot/*.dot` |
+| `static/` | compile-time resource usage | `latest/build_report.html` / `.md` | `static/build/` (instrumented build tree, reused across runs, not versioned) |
+| `dynamic/` | rocprofv3 counters + verdict | `latest/summary.html` / `.md` / `.json` | `latest/raw/` (per-run CSVs) |
+| `trace/` | rocprofv3 dispatch timeline | `latest/index.md` | `latest/raw/<variant>/run_NN/*.pftrace`, CSVs |
+| `cfg/` | per-kernel ISA control-flow graphs | `latest/*.dot` | (DOT files only; no separate raw subfolder) |
 | `depgraph/` | data + runtime dependency graphs | `index.md` | `dot/*.dot` |
-| `compute/` | rocprof-compute roofline / SoL | `<target>_report.html` / `.md` | `raw/` (CSV panels, workload, text dump, log) |
+| `compute/` | rocprof-compute roofline / SoL | `latest/<target>_report.html` / `.md` | `latest/raw/` (CSV panels, workload, text dump, log) |
 
-## `dynamic/` run history
+## Run history
 
-`ckRunProfile` never overwrites a previous run: each invocation writes to its own
-`dynamic/runs/<UTC-timestamp>/` (report files + `raw/` together), and `dynamic/latest`
-is a symlink repointed at the newest one after the run finishes. Old runs stay on
-disk indefinitely (no pruning yet) — a `ckRemote pull` fetches the whole `runs/`
-tree, so `dynamic/runs/*/summary.json` from any past run is available to diff or
-script against locally. `summary.json` carries a `schema_version` field (currently
-`1`) for anything parsing it programmatically.
+Every mode above except `depgraph/` never overwrites a previous run: each
+invocation writes to its own `<mode>/runs/<UTC-timestamp>/`, and `<mode>/latest`
+is a symlink repointed at the newest one after the run finishes. Old runs stay
+on disk indefinitely (no pruning yet) — a `ckRemote pull` fetches the whole
+`runs/` tree, so any past run's output is available to diff or script against
+locally. Two artifacts are intentionally kept outside `runs/`, reused across
+invocations rather than versioned, since they are not run history: `static/build/`
+(the incremental CMake/Ninja tree) and `.venv-rocprof-compute-py*` at the
+`ck_profile_out/` root (the one-time rocprof-compute install).
+
+`dynamic/runs/*/summary.json` additionally carries a `schema_version` field
+(currently `1`) for anything parsing it programmatically.
 
 `ckAggregate` (the tool behind `dynamic/*/summary.*`) is counter-set agnostic but
 requires every counter in `counters.txt` to be classified `sum`, `mean`, or `ignore`
