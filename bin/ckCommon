@@ -403,6 +403,22 @@ _require_arch_for_srun() {
     [ -z "$GRES" ] && GRES=$(_gres_for_arch "$ARCH")
 }
 
+# Create $1/runs/<id> atomically (never rm -rf'd) and echo the new <id>.
+# `mkdir` (not `[ -e ]` then mkdir) makes the collision check atomic, closing
+# a TOCTOU window between two runs starting in the same second.
+_new_run_dir() {
+    local mode_dir=$1
+    mkdir -p "$mode_dir/runs"
+    local run_id run_dir
+    run_id=$(date -u +%Y%m%dT%H%M%SZ)
+    run_dir="$mode_dir/runs/$run_id"
+    until mkdir "$run_dir" 2>/dev/null; do
+        run_id="${run_id}-$$"
+        run_dir="$mode_dir/runs/$run_id"
+    done
+    printf '%s\n' "$run_id"
+}
+
 # Walk up from $1 looking for script/cmake-ck-dev.sh, the CK project root marker.
 # Echoes the found directory on success; returns 1 if none is found by /.
 _find_ck_root() {
