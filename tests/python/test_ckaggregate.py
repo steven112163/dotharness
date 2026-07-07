@@ -125,3 +125,13 @@ def test_build_summary_json_normalizes_nan_to_null(tmp_path):
         json.dump(
             out, f, allow_nan=False
         )  # raises if any bare NaN/Infinity slipped through
+
+
+def test_build_summary_json_normalizes_nan_peak(tmp_path):
+    row = _fake_overall_row()
+    out = ckAggregate.build_summary_json(
+        [row], arch="gfx942", unit="per-run", peak=float("nan")
+    )
+    assert out["peak_mem_gbs"] is None
+    with open(tmp_path / "summary.json", "w") as f:
+        json.dump(out, f, allow_nan=False)
