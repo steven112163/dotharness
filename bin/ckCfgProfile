@@ -68,7 +68,7 @@ if [ ! -e "$REPO/$BIN" ]; then
     exit 1
 fi
 
-OUTDIR=${OUTDIR:-$REPO/ck_profile_out/cfg}
+MODE_DIR=$REPO/ck_profile_out/cfg
 [ -n "$MODE" ] || MODE=$(_detect_backend build) || exit 1
 # cfg: disassembly only, no GPU run needed; arch is only used for labeling, so
 # a failed probe is not fatal here. Silence the probe's own error message
@@ -76,6 +76,14 @@ OUTDIR=${OUTDIR:-$REPO/ck_profile_out/cfg}
 # failure is explicitly non-fatal.
 _resolve_arch_or_require "$MODE" 2>/dev/null || true
 
+# Each run gets its own immutable runs/<id>/ dir (never rm -rf'd); "latest"
+# always points at the newest one. Skipped when the caller overrides OUTDIR
+# directly (a debug/custom-location escape hatch).
+RUN_ID=""
+if [ -z "$OUTDIR" ]; then
+    RUN_ID=$(_new_run_dir "$MODE_DIR")
+    OUTDIR=$MODE_DIR/runs/$RUN_ID
+fi
 mkdir -p "$OUTDIR"
 cp "$LIB_DIR/profile_readme.md" "$REPO/ck_profile_out/README.md" 2>/dev/null || true
 bash "$LIB_DIR/git_exclude_outdir.sh" "$REPO" 2>/dev/null || true
@@ -96,5 +104,14 @@ if _dispatch_build_like 0 "$REPO" "$REMOTE_PROG"; then
 else
     rc=$?
 fi
-[ $rc -eq 0 ] && echo "CFG DOT files in $OUTDIR" || echo "ckCfgProfile failed (exit $rc)"
+if [ $rc -eq 0 ]; then
+    if [ -n "$RUN_ID" ]; then
+        ln -sfn "runs/$RUN_ID" "$MODE_DIR/latest"
+        echo "CFG DOT files in $OUTDIR (latest -> $MODE_DIR/latest)"
+    else
+        echo "CFG DOT files in $OUTDIR"
+    fi
+else
+    echo "ckCfgProfile failed (exit $rc)"
+fi
 exit $rc
