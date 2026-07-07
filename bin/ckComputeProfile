@@ -92,7 +92,7 @@ if [ ! -e "$REPO/$BIN" ]; then
 fi
 
 WORKLOAD=${WORKLOAD:-$(basename "$BIN")}
-OUTDIR=${OUTDIR:-$REPO/ck_profile_out/compute}
+MODE_DIR=$REPO/ck_profile_out/compute
 
 [ -n "$MODE" ] || MODE=$(_detect_backend run) || exit 1
 
@@ -104,6 +104,17 @@ if [ "$MODE" = srun ]; then
 else
     [ -z "$ARCH" ] && ARCH=$(arch_from_container)
     [ -n "$ARCH" ] && { _validate_arch "$ARCH" || exit 1; }
+fi
+
+# Each run gets its own immutable runs/<id>/ dir (never rm -rf'd), so past
+# workload profiles/reports survive; "latest" always points at the newest
+# one. The rocprof-compute venv (installed once, reused across runs) stays
+# at the ck_profile_out root, outside both MODE_DIR and runs/. Skipped when
+# the caller overrides OUTDIR directly (a debug/custom-location escape hatch).
+RUN_ID=""
+if [ -z "$OUTDIR" ]; then
+    RUN_ID=$(_new_run_dir "$MODE_DIR")
+    OUTDIR=$MODE_DIR/runs/$RUN_ID
 fi
 mkdir -p "$OUTDIR"
 cp "$LIB_DIR/profile_readme.md" "$REPO/ck_profile_out/README.md" 2>/dev/null || true
@@ -171,6 +182,7 @@ echo "Rendering HTML + Markdown report ..."
 if dx "python3 '$LIB_DIR/compute_report.py' --csv '$csvdir' --out '$OUTDIR' --name '$WORKLOAD' --arch '$ARCH'"; then re=0; else re=$?; fi
 find "$REPO/.rocprofv3" -mindepth 1 -delete 2>/dev/null || true
 rmdir "$REPO/.rocprofv3" 2>/dev/null || true
+[ -n "$RUN_ID" ] && ln -sfn "runs/$RUN_ID" "$MODE_DIR/latest"
 echo "DONE  (profile=$pe analyze=$ae report=$re)"
 echo "  report: $OUTDIR/${WORKLOAD}_report.html / .md"
 [ $pe -eq 0 ] && [ $ae -eq 0 ] && [ $re -eq 0 ]
