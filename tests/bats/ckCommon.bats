@@ -611,6 +611,7 @@ EOF
 
 @test "_new_run_dir suffixes with PID on a same-second collision" {
     run bash -c "
+        set -e
         source '$CKCOMMON'
         date() { echo 20260707T000000Z; }
         run_id=\$(_new_run_dir '$TMPDIR_TEST/mode')
