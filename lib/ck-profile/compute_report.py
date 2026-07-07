@@ -68,6 +68,10 @@ def _mean_col_to_us(row):
     return None if v is None else v * _TIME_TO_US[m.group(1)]
 
 
+def _fmt_us(mean_us, fmt):
+    return "n/a" if mean_us is None else format(mean_us, fmt)
+
+
 def short_kernel(name):
     s = " ".join(str(name).split())  # collapse the wrapped multi-line cell
     s = re.sub(r"^void\s+", "", s)
@@ -87,7 +91,7 @@ def _top_kernel_rows(csvdir):
             {
                 "kernel": short_kernel(kname),
                 "count": pick(r, "Count"),
-                "mean_us": _mean_col_to_us(r) or 0.0,
+                "mean_us": _mean_col_to_us(r),
                 "pct": fnum(pick(r, "Percent", "Pct", "% time")) or 0.0,
             }
         )
@@ -165,11 +169,15 @@ def build(csvdir, name, arch):
     tk = _top_kernel_rows(csvdir)
     if tk:
         items = [
-            (r["kernel"], r["pct"], f"{r['mean_us']:.1f} µs ({r['pct']:.1f}%)")
+            (
+                r["kernel"],
+                r["pct"],
+                f"{_fmt_us(r['mean_us'], '.1f')} µs ({r['pct']:.1f}%)",
+            )
             for r in tk
         ]
         trows = [
-            [r["kernel"], r["count"], f"{r['mean_us']:.2f}", f"{r['pct']:.1f}"]
+            [r["kernel"], r["count"], _fmt_us(r["mean_us"], ".2f"), f"{r['pct']:.1f}"]
             for r in tk
         ]
         parts.append(
@@ -265,7 +273,7 @@ def build(csvdir, name, arch):
         ]
         for r in tk[:12]:
             md.append(
-                f"| {r['kernel']} | {r['count']} | {r['mean_us']:.2f} | {r['pct']:.1f} |"
+                f"| {r['kernel']} | {r['count']} | {_fmt_us(r['mean_us'], '.2f')} | {r['pct']:.1f} |"
             )
     return html, "\n".join(md) + "\n"
 
