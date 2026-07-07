@@ -25,8 +25,8 @@ import re
 import statistics
 import sys
 
-# Bumped whenever summary.json's shape changes; get_summary (branch 3's MCP tool) and
-# branch 2's occupancy-limiter-attribution addition both take a hard dependency on this.
+# Bumped whenever summary.json's shape changes; any consumer that parses it by
+# field name takes a hard dependency on this value.
 SUMMARY_SCHEMA_VERSION = 1
 
 _here = os.path.dirname(os.path.abspath(__file__))
@@ -101,8 +101,8 @@ def collect_counters(run_dir):
             cls = COUNTER_CLASS.get(name)
             if cls is None:
                 sys.exit(
-                    f"ERROR: counter '{name}' has no sum/mean/ignore classification in "
-                    f"ckAggregate's COUNTER_CLASS; add one before re-running."
+                    f"ERROR: counter '{name}' (from {f}) has no sum/mean/ignore "
+                    f"classification in ckAggregate's COUNTER_CLASS; add one before re-running."
                 )
             if cls == "ignore":
                 continue
@@ -134,12 +134,19 @@ def pmc_metrics(run_dir):
     }
 
 
+def _json_num(x):
+    """NaN/inf -> None: json.dump emits bare NaN/Infinity, invalid per RFC 8259."""
+    if isinstance(x, float) and (x != x or abs(x) == float("inf")):
+        return None
+    return x
+
+
 def build_summary_json(overall, arch, unit, peak):
     """Structured twin of summary.md/.html: per-variant verdict + metrics as mean/stdev pairs."""
 
     def ms(pair):
         mean, sd = pair
-        return {"mean": mean, "stdev": sd}
+        return {"mean": _json_num(mean), "stdev": _json_num(sd)}
 
     return {
         "schema_version": SUMMARY_SCHEMA_VERSION,
@@ -151,8 +158,8 @@ def build_summary_json(overall, arch, unit, peak):
                 "name": name,
                 "runs": nr,
                 "verdict": verdict,
-                "occ_util_pct": occu,
-                "bw_util_pct": bwu,
+                "occ_util_pct": _json_num(occu),
+                "bw_util_pct": _json_num(bwu),
                 "gpu_ms": ms(m["gpu_ms"]),
                 "prog_ms": ms(m["prog"]),
                 "l2_hit_pct": ms(m["hr"]),
@@ -519,7 +526,12 @@ def main():
     write_html(overall, pk_rows, spec, peak, a.arch, unit, out)
 
     with open(os.path.join(out, "summary.json"), "w") as f:
-        json.dump(build_summary_json(overall, a.arch, unit, peak), f, indent=2)
+        json.dump(
+            build_summary_json(overall, a.arch, unit, peak),
+            f,
+            indent=2,
+            allow_nan=False,
+        )
         f.write("\n")
 
     if spec:

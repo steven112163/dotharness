@@ -108,3 +108,20 @@ def test_build_summary_json_is_json_serializable():
     )
     dumped = json.dumps(out)
     assert json.loads(dumped)["variants"][1]["name"] == "b"
+
+
+def test_build_summary_json_normalizes_nan_to_null(tmp_path):
+    name, nr, m, bwu, verdict, occu = _fake_overall_row()
+    m = dict(m, prog=(float("nan"), float("nan")))
+    row = (name, nr, m, float("nan"), verdict, float("nan"))
+    out = ckAggregate.build_summary_json(
+        [row], arch="gfx_unknown", unit="per-run", peak=0.0
+    )
+    v = out["variants"][0]
+    assert v["occ_util_pct"] is None
+    assert v["bw_util_pct"] is None
+    assert v["prog_ms"] == {"mean": None, "stdev": None}
+    with open(tmp_path / "summary.json", "w") as f:
+        json.dump(
+            out, f, allow_nan=False
+        )  # raises if any bare NaN/Infinity slipped through
