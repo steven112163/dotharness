@@ -56,14 +56,16 @@ _TIME_TO_US = {"ns": 1e-3, "us": 1.0, "µs": 1.0, "ms": 1e3, "s": 1e6}
 
 
 def _mean_col_to_us(row):
-    """Find the Mean(<unit>) column and return its value converted to µs."""
+    """Find the Mean(<unit>) column and return its value converted to µs, or
+    None if the column is absent or its unit is unrecognized (never guess)."""
     col = next((h for h in row if h.startswith("Mean")), None)
     if col is None:
         return None
     m = re.search(r"\(([^)]+)\)", col)
-    unit = m.group(1) if m else "ns"
+    if m is None or m.group(1) not in _TIME_TO_US:
+        return None
     v = fnum(row[col])
-    return None if v is None else v * _TIME_TO_US.get(unit, 1e-3)
+    return None if v is None else v * _TIME_TO_US[m.group(1)]
 
 
 def short_kernel(name):
@@ -72,6 +74,24 @@ def short_kernel(name):
     s = s.split("(")[0].split("<")[0]
     s = s.split("::")[-1].strip()
     return s[:34] if s else "kernel"
+
+
+def _top_kernel_rows(csvdir):
+    """Top-Kernels panel decoded once (name/unit aliasing) for both HTML and Markdown."""
+    out = []
+    for r in read_panel(csvdir, "0.1_Top_Kernels"):
+        kname = pick(r, "Kernel_Name", "KernelName", "Kernel")
+        if kname is None:
+            continue
+        out.append(
+            {
+                "kernel": short_kernel(kname),
+                "count": pick(r, "Count"),
+                "mean_us": _mean_col_to_us(r) or 0.0,
+                "pct": fnum(pick(r, "Percent", "Pct", "% time")) or 0.0,
+            }
+        )
+    return out
 
 
 def sol_rows(csvdir):
@@ -142,18 +162,16 @@ def build(csvdir, name, arch):
         )
 
     # top kernels: bars by pct + table
-    rows = read_panel(csvdir, "0.1_Top_Kernels")
-    if rows:
-        items, trows = [], []
-        for r in rows:
-            kname = pick(r, "Kernel_Name", "KernelName", "Kernel")
-            if kname is None:
-                continue
-            k = short_kernel(kname)
-            pct = fnum(pick(r, "Percent", "Pct", "% time")) or 0.0
-            mean_us = _mean_col_to_us(r) or 0.0
-            items.append((k, pct, f"{mean_us:.1f} µs ({pct:.1f}%)"))
-            trows.append([k, pick(r, "Count"), f"{mean_us:.2f}", f"{pct:.1f}"])
+    tk = _top_kernel_rows(csvdir)
+    if tk:
+        items = [
+            (r["kernel"], r["pct"], f"{r['mean_us']:.1f} µs ({r['pct']:.1f}%)")
+            for r in tk
+        ]
+        trows = [
+            [r["kernel"], r["count"], f"{r['mean_us']:.2f}", f"{r['pct']:.1f}"]
+            for r in tk
+        ]
         parts.append(
             H.section(
                 "Top kernels (by total time)",
@@ -237,8 +255,7 @@ def build(csvdir, name, arch):
             if r["pct"] is not None
             else f"| {r['metric']} | {r['avg']} | {r['unit']} | {r['peak']} |  |"
         )
-    rows = read_panel(csvdir, "0.1_Top_Kernels")
-    if rows:
+    if tk:
         md += [
             "",
             "## Top kernels",
@@ -246,14 +263,9 @@ def build(csvdir, name, arch):
             "| kernel | count | mean µs | % time |",
             "| --- | --- | --- | --- |",
         ]
-        for r in rows[:12]:
-            kname = pick(r, "Kernel_Name", "KernelName", "Kernel")
-            if kname is None:
-                continue
-            mean_us = _mean_col_to_us(r) or 0.0
-            pct = pick(r, "Percent", "Pct", "% time")
+        for r in tk[:12]:
             md.append(
-                f"| {short_kernel(kname)} | {pick(r, 'Count')} | {mean_us:.2f} | {pct} |"
+                f"| {r['kernel']} | {r['count']} | {r['mean_us']:.2f} | {r['pct']:.1f} |"
             )
     return html, "\n".join(md) + "\n"
 
