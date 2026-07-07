@@ -77,6 +77,22 @@ def test_mean_col_to_us_returns_none_on_unrecognized_or_missing_unit():
     assert cr._mean_col_to_us({"Mean(fortnights)": "2.0"}) is None
 
 
+def test_fmt_us_renders_na_instead_of_zero_for_none():
+    # A None mean_us must not collapse to "0.00", which reads as a real near-zero time.
+    assert cr._fmt_us(None, ".2f") == "n/a"
+    assert cr._fmt_us(2.0, ".2f") == "2.00"
+
+
+def test_top_kernel_rows_keeps_none_mean_us_for_unrecognized_unit(tmp_path):
+    _write_csv(
+        tmp_path / "0.1_Top_Kernels.csv",
+        ["Kernel_Name", "Count", "Mean(fortnights)", "Percent"],
+        [["k1", "3", "2.0", "10.0"]],
+    )
+    rows = cr._top_kernel_rows(tmp_path)
+    assert rows[0]["mean_us"] is None
+
+
 def test_build_top_kernels_uses_header_names_not_positions(tmp_path):
     _write_csv(
         tmp_path / "0.1_Top_Kernels.csv",
