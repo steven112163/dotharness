@@ -117,10 +117,22 @@ _require_arch_for_srun "$MODE"
     exit 1
 }
 
-OUTDIR=${OUTDIR:-$REPO/ck_profile_out/trace}
+MODE_DIR=$REPO/ck_profile_out/trace
 
 if [ -n "$SWEEP_VALS" ]; then IFS=',' read -ra VARIANTS <<<"$SWEEP_VALS"; else VARIANTS=("default"); fi
-rm -rf "$OUTDIR"
+
+# Each run gets its own immutable runs/<id>/ dir (never rm -rf'd), so trace
+# history survives; "latest" always points at the newest one. Skipped when the
+# caller overrides OUTDIR directly (a debug/custom-location escape hatch);
+# that path is cleaned instead, so stale variant dirs from a prior run don't
+# leak in.
+RUN_ID=""
+if [ -z "$OUTDIR" ]; then
+    RUN_ID=$(_new_run_dir "$MODE_DIR")
+    OUTDIR=$MODE_DIR/runs/$RUN_ID
+else
+    rm -rf "$OUTDIR"
+fi
 mkdir -p "$OUTDIR"
 cp "$LIB_DIR/profile_readme.md" "$REPO/ck_profile_out/README.md" 2>/dev/null || true
 bash "$LIB_DIR/git_exclude_outdir.sh" "$REPO" 2>/dev/null || true
@@ -175,4 +187,9 @@ for v in "${VARIANTS[@]}"; do
 done
 find "$REPO/.rocprofv3" -mindepth 1 -delete 2>/dev/null || true
 rmdir "$REPO/.rocprofv3" 2>/dev/null || true
-echo "DONE  (traces in $OUTDIR; see index.md)"
+if [ -n "$RUN_ID" ]; then
+    ln -sfn "runs/$RUN_ID" "$MODE_DIR/latest"
+    echo "DONE  (traces in $OUTDIR; see index.md; latest -> $MODE_DIR/latest)"
+else
+    echo "DONE  (traces in $OUTDIR; see index.md)"
+fi
