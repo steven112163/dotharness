@@ -70,6 +70,13 @@ def test_mean_col_to_us_converts_by_declared_unit():
     assert cr._mean_col_to_us({"Kernel_Name": "k"}) is None
 
 
+def test_mean_col_to_us_returns_none_on_unrecognized_or_missing_unit():
+    # No parenthesized unit at all: must not guess ns (a bare-µs release would be off 1000x).
+    assert cr._mean_col_to_us({"Mean": "2.0"}) is None
+    # Unit present but not one of the known ones.
+    assert cr._mean_col_to_us({"Mean(fortnights)": "2.0"}) is None
+
+
 def test_build_top_kernels_uses_header_names_not_positions(tmp_path):
     _write_csv(
         tmp_path / "0.1_Top_Kernels.csv",
