@@ -368,20 +368,28 @@ remote_exec() {
         "export PATH=\"\$HOME/bin:\$PATH\"; cd $(printf '%q' "$(_remote_workdir)") || exit 1; $cmd"
 }
 
-# Wrap remote_exec in a per-server flock so a concurrent ckRemote dispatch (another
-# terminal, or a future MCP-spawned job) against the same $SERVER waits instead of
-# interleaving. FD 9 is released (and the lock freed) when this function's subshell
-# exits, whether remote_exec succeeds or fails.
-remote_exec_locked() {
+# Run $@ under a per-server flock, so a concurrent ckRemote dispatch against the
+# same $SERVER waits instead of interleaving. Must wrap sync_source/_ensure_hold
+# too, not just remote_exec, or their un-locked syncs can still interleave.
+with_server_lock() {
     mkdir -p "$CK_REMOTE_LOCK_DIR"
     (
-        exec 9>"$CK_REMOTE_LOCK_DIR/$SERVER.lock"
-        if ! flock -n 9; then
+        exec {lock_fd}>"$CK_REMOTE_LOCK_DIR/$SERVER.lock"
+        if ! flock -n "$lock_fd"; then
             echo "Waiting for another ckRemote job on server '$SERVER' to finish..." >&2
-            flock 9
+            flock "$lock_fd"
         fi
-        remote_exec "$@"
+        "$@"
     )
+}
+
+# Default-dispatch critical section: sync, ensure a GPU holder (slurm), then run.
+_dispatch_default() {
+    [ "$DO_SYNC" -eq 1 ] && sync_source
+    if [[ "$1" =~ ^(ckRun|ckRunProfile|ckTraceProfile|ckComputeProfile)$ ]] && [ "${CK_TYPE[$SERVER]:-}" = slurm ]; then
+        _ensure_hold "${ARCH:-}"
+    fi
+    remote_exec "$@"
 }
 
 FORCED=""
@@ -441,12 +449,6 @@ shell)
     ssh $CK_SSH_OPTS -t "$CK_REMOTE" "cd $(printf '%q' "$(_remote_workdir)") 2>/dev/null; exec \$SHELL -l"
     ;;
 *)
-    [ "$DO_SYNC" -eq 1 ] && sync_source
-    # For ckRun on a slurm server, ensure a GPU holder is running so the run
-    # dispatches via overlap (instant) instead of waiting for a fresh allocation.
-    if [[ "$1" =~ ^(ckRun|ckRunProfile|ckTraceProfile|ckComputeProfile)$ ]] && [ "${CK_TYPE[$SERVER]:-}" = slurm ]; then
-        _ensure_hold "${ARCH:-}"
-    fi
-    remote_exec_locked "$@"
+    with_server_lock _dispatch_default "$@"
     ;;
 esac
