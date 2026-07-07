@@ -477,6 +477,17 @@ EOF
     [[ "$output" == *"survived"* ]]
 }
 
+@test "_resolve_arch_or_require clears ARCH on a malformed value so best-effort callers can't leak it" {
+    run bash -c "
+        source '$CKCOMMON'
+        ARCH='gfx942;touch pwned'
+        _resolve_arch_or_require srun 2>/dev/null || true
+        echo \"ARCH=[\$ARCH]\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ARCH=[]"* ]]
+}
+
 # --- _require_arch_for_srun: hard-required on srun, no-op elsewhere ---
 
 @test "_require_arch_for_srun exits 1 on srun with no arch" {
