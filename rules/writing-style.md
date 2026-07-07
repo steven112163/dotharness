@@ -29,7 +29,7 @@
 - Keep related words together. Do not split subject from verb with long parentheticals.
 - Put the most important information at the end of the sentence.
 - Vary sentence length. A wall of long sentences is as bad as a wall of short ones.
-- Keep code comments concise and compact: one short line, no multi-paragraph blocks.
+- Keep code comments concise and compact: a short line or two, never a multi-paragraph block.
 
 ## Meta-Principle
 
