@@ -100,11 +100,11 @@ OUTDIR=${OUTDIR:-$REPO/ck_profile_out/compute}
 # given up front to map the GRES. direct/docker sit on a GPU host: fall back to
 # probing the container when --arch is not given.
 if [ "$MODE" = srun ]; then
-    _require_arch_for_srun "$MODE"
+    _require_arch_for_srun "$MODE" # already validates ARCH
 else
     [ -z "$ARCH" ] && ARCH=$(arch_from_container)
+    [ -n "$ARCH" ] && { _validate_arch "$ARCH" || exit 1; }
 fi
-[ -n "$ARCH" ] && { _validate_arch "$ARCH" || exit 1; }
 mkdir -p "$OUTDIR"
 cp "$LIB_DIR/profile_readme.md" "$REPO/ck_profile_out/README.md" 2>/dev/null || true
 bash "$LIB_DIR/git_exclude_outdir.sh" "$REPO" 2>/dev/null || true
