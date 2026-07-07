@@ -342,11 +342,12 @@ _dispatch_run_like() {
 # arch_from_container so the two never drift.
 _ARCH_PROBE_CMD="rocminfo 2>/dev/null | grep -m1 -oE 'gfx[0-9a-z]+'"
 
-# Validate --arch before it reaches any remote heredoc interpolation. $1: candidate arch string.
+# Validate --arch before it reaches any remote heredoc interpolation. Returns
+# (not exits) so a non-fatal caller (e.g. ckCfgProfile) can fall through. $1: arch.
 _validate_arch() {
-    [[ "$1" =~ ^gfx[0-9a-z]+$ ]] || {
+    [[ "$1" =~ ^gfx[0-9a-z]{1,16}$ ]] || {
         echo "ERROR: invalid arch '$1' (expected e.g. gfx942)." >&2
-        exit 1
+        return 1
     }
 }
 
@@ -361,7 +362,7 @@ _validate_arch() {
 _resolve_arch_or_require() {
     local backend="$1"
     if [ -n "$ARCH" ]; then
-        _validate_arch "$ARCH"
+        _validate_arch "$ARCH" || return 1
         return 0
     fi
     case "$backend" in
@@ -394,6 +395,7 @@ _require_arch_for_srun() {
         echo "  pass the arch, e.g. --arch gfx942 or ARCH=gfx942." >&2
         exit 1
     fi
+    _validate_arch "$ARCH" || exit 1
     [ -z "$GRES" ] && GRES=$(_gres_for_arch "$ARCH")
 }
 
