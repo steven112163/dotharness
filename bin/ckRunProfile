@@ -130,20 +130,14 @@ else
 fi
 
 # Each run gets its own immutable runs/<id>/ dir (never rm -rf'd), so run history
-# survives; "latest" always points at the newest one. `mkdir` (not `[ -e ]` then
-# mkdir) makes the collision check atomic, closing a TOCTOU window between two
-# runs starting in the same second. Skipped when the caller overrides OUTDIR
-# directly (a debug/custom-location escape hatch predating versioning); that
-# path is cleaned instead, so stale variant dirs from a prior run don't leak in.
+# survives; "latest" always points at the newest one. Skipped when the caller
+# overrides OUTDIR directly (a debug/custom-location escape hatch predating
+# versioning); that path is cleaned instead, so stale variant dirs from a prior
+# run don't leak in.
 RUNDIR=""
 if [ -z "$OUTDIR" ]; then
-    mkdir -p "$MODE_DIR/runs"
-    RUN_ID=$(date -u +%Y%m%dT%H%M%SZ)
+    RUN_ID=$(_new_run_dir "$MODE_DIR")
     RUNDIR=$MODE_DIR/runs/$RUN_ID
-    until mkdir "$RUNDIR" 2>/dev/null; do
-        RUN_ID="${RUN_ID}-$$"
-        RUNDIR=$MODE_DIR/runs/$RUN_ID
-    done
     OUTDIR=$RUNDIR/raw
 else
     rm -rf "$OUTDIR"

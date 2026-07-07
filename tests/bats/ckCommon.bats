@@ -595,3 +595,29 @@ EOF
     [ "$status" -eq 1 ]
     [[ "$output" == *"is not the CK project root"* ]]
 }
+
+# --- _new_run_dir: runs/<id> collision-avoidance ---
+
+@test "_new_run_dir creates runs/<id> and echoes the id" {
+    run bash -c "
+        source '$CKCOMMON'
+        run_id=\$(_new_run_dir '$TMPDIR_TEST/mode')
+        [ -d \"$TMPDIR_TEST/mode/runs/\$run_id\" ]
+        echo \"\$run_id\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ ^[0-9]{8}T[0-9]{6}Z$ ]]
+}
+
+@test "_new_run_dir suffixes with PID on a same-second collision" {
+    run bash -c "
+        source '$CKCOMMON'
+        date() { echo 20260707T000000Z; }
+        run_id=\$(_new_run_dir '$TMPDIR_TEST/mode')
+        [ \"\$run_id\" = 20260707T000000Z ]
+        run_id2=\$(_new_run_dir '$TMPDIR_TEST/mode')
+        [ \"\$run_id2\" = \"20260707T000000Z-\$\$\" ]
+        [ -d \"$TMPDIR_TEST/mode/runs/\$run_id2\" ]
+    "
+    [ "$status" -eq 0 ]
+}
