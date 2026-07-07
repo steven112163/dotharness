@@ -71,9 +71,14 @@ _resolve_arch_or_require "$MODE" || exit 1
 
 # Keep the heavy CMake/Ninja tree out of the reports dir: editor tooling
 # activates on a build tree and would cause Live Preview to reload repeatedly.
-REPORTDIR=$REPO/ck_profile_out/static
-BUILD=$REPORTDIR/build
-LOG=$BUILD/build.log
+# BUILD is reused across runs (not versioned) since it's an incremental build
+# tree, not a report artifact; only the report + log move into runs/<id>/, so
+# "latest" always points at the newest report without duplicating the build.
+MODE_DIR=$REPO/ck_profile_out/static
+BUILD=$MODE_DIR/build
+RUN_ID=$(_new_run_dir "$MODE_DIR")
+REPORTDIR=$MODE_DIR/runs/$RUN_ID
+LOG=$REPORTDIR/build.log
 mkdir -p "$BUILD" "$REPORTDIR"
 cp "$LIB_DIR/profile_readme.md" "$REPO/ck_profile_out/README.md" 2>/dev/null || true
 bash "$LIB_DIR/git_exclude_outdir.sh" "$REPO" 2>/dev/null || true
@@ -102,5 +107,6 @@ if _dispatch_build_like 0 "$REPO" "$REMOTE_PROG"; then
 else
     build_rc=$?
 fi
-echo "Reports: $REPORTDIR/build_report.{md,csv,html}"
+ln -sfn "runs/$RUN_ID" "$MODE_DIR/latest"
+echo "Reports: $REPORTDIR/build_report.{md,csv,html} (latest -> $MODE_DIR/latest)"
 exit "$build_rc"
