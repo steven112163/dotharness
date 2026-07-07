@@ -438,7 +438,7 @@ case "$1" in
 select) echo "Would run in: $CK_REMOTE:$(_remote_workdir)" ;;
 push)
     [ $# -eq 1 ] || die "push takes no arguments."
-    sync_source
+    with_server_lock sync_source
     ;;
 pull)
     shift
