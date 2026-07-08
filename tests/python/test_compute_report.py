@@ -111,6 +111,15 @@ def test_pick_returns_first_present_alias():
     assert cr.pick({"a": "1"}, "missing") is None
 
 
+def test_fnum_normalizes_nan_and_inf_to_none():
+    # A literal "nan"/"inf" CSV cell must not survive as a float that a
+    # naive `x is not None` display check would render verbatim.
+    assert cr.fnum("nan") is None
+    assert cr.fnum("inf") is None
+    assert cr.fnum("-inf") is None
+    assert cr.fnum("1.5") == 1.5
+
+
 def test_launch_stats_rows_parses_by_header_name(tmp_path):
     _write_csv(
         tmp_path / "7.1_Launch_Stats.csv",

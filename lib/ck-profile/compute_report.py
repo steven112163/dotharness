@@ -14,6 +14,7 @@ raw/ for power users.
 import argparse
 import csv
 import glob
+import math
 import os
 import re
 import sys
@@ -45,10 +46,13 @@ def read_panel(csvdir, stem):
 
 
 def fnum(s):
+    """Parse a CSV cell to float, or None if missing/non-numeric/non-finite
+    (NaN/Inf CSV cells shouldn't render as literal "nan"/"inf")."""
     try:
-        return float(str(s).replace(",", "").strip())
+        v = float(str(s).replace(",", "").strip())
     except (ValueError, AttributeError):
         return None
+    return v if math.isfinite(v) else None
 
 
 # Mean/Sum/Median columns are named e.g. "Mean(ns)"/"Mean(us)"/"Mean(ms)" per
@@ -154,6 +158,11 @@ def sol_rows(csvdir):
 
 
 def build(csvdir, name, arch):
+    spec = get_spec(arch)
+
+    def sv(x, suffix=""):
+        return f"{x}{suffix}" if x is not None else "n/a"
+
     sol = sol_rows(csvdir)
     flops = [
         r["pct"]
@@ -232,11 +241,6 @@ def build(csvdir, name, arch):
     # hardware ceiling.
     ls_row = top_launch_stats_row(csvdir)
     if ls_row:
-        spec = get_spec(arch)
-
-        def sv(x, suffix=""):
-            return f"{x}{suffix}" if x is not None else "n/a"
-
         parts.append(
             H.section(
                 f"Measured occupancy inputs — {H.esc(ls_row['kernel'])}",

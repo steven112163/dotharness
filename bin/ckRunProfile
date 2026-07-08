@@ -176,11 +176,12 @@ AGG_ARGS=(--raw "$OUTDIR" --out "$SUMMARY_DIR")
 WORKLOAD=$(basename "$BIN")
 AGG_ARGS+=(--workload "$WORKLOAD")
 [ -d "$REPO/ck_profile_out/compute/latest" ] && AGG_ARGS+=(--compute-dir "$REPO/ck_profile_out/compute/latest")
-python3 "$SELF_DIR/ckAggregate" "${AGG_ARGS[@]}"
+if python3 "$SELF_DIR/ckAggregate" "${AGG_ARGS[@]}"; then agg_rc=0; else agg_rc=$?; fi
 
-if [ -n "$RUNDIR" ]; then
+if [ -n "$RUNDIR" ] && [ "$agg_rc" -eq 0 ]; then
     ln -sfn "runs/$RUN_ID" "$MODE_DIR/latest"
     echo "DONE  (raw output in $OUTDIR, latest -> $MODE_DIR/latest)"
 else
     echo "DONE  (raw output in $OUTDIR)"
 fi
+exit "$agg_rc"

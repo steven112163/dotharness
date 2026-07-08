@@ -414,8 +414,13 @@ _new_run_dir() {
     run_id=$base_id
     run_dir="$mode_dir/runs/$run_id"
     local n=0
-    until mkdir "$run_dir" 2>/dev/null; do
+    while ! mkdir "$run_dir" 2>/dev/null; do
+        # Only retry on an actual same-second collision (dir already exists);
+        # any other mkdir failure (permissions, quota, read-only fs) must not
+        # spin forever, so it's returned to the caller instead.
+        [ -d "$run_dir" ] || return 1
         n=$((n + 1))
+        [ "$n" -gt 100 ] && return 1
         run_id="${base_id}-$$-${n}"
         run_dir="$mode_dir/runs/$run_id"
     done
