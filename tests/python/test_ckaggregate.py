@@ -176,6 +176,36 @@ def test_build_summary_json_includes_occ_sample_when_given():
     }
 
 
+def test_write_html_renders_occ_sample_with_max_waves_cu(tmp_path):
+    # Regression: write_html indexes occ_sample['max_waves_cu'] directly (it
+    # doesn't take a separate max_waves param like build_summary_json), so
+    # the caller (main()) must have already merged max_waves into the dict —
+    # a bare occ_sample from _find_occ_sample has no such key and this call
+    # used to raise KeyError.
+    sample = {
+        "kernel": "my_kernel",
+        "vgprs": 64.0,
+        "agprs": 0.0,
+        "sgprs": 16.0,
+        "lds_bytes": 8192.0,
+        "wavefronts": 128.0,
+        "max_waves_cu": 32,
+    }
+    ckAggregate.write_html(
+        [_fake_overall_row()],
+        pk_rows={},
+        spec=None,
+        peak=5300.0,
+        arch="gfx942",
+        unit="per-run",
+        out=str(tmp_path),
+        occ_sample=sample,
+    )
+    html = (tmp_path / "summary.html").read_text()
+    assert "my_kernel" in html
+    assert "max waves/CU (ceiling): <b>32</b>" in html
+
+
 def test_find_occ_sample_none_without_compute_dir_or_workload():
     assert ckAggregate._find_occ_sample("", "my_workload") is None
     assert ckAggregate._find_occ_sample("/some/dir", "") is None

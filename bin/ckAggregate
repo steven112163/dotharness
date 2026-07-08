@@ -373,6 +373,8 @@ def main():
     spec = get_spec(a.arch)
     max_waves = spec["max_waves_cu"] if spec else None
     occ_sample = _find_occ_sample(a.compute_dir, a.workload)
+    if occ_sample:
+        occ_sample["max_waves_cu"] = max_waves
 
     variants = sorted(
         d for d in glob.glob(os.path.join(a.raw, "*")) if os.path.isdir(d)

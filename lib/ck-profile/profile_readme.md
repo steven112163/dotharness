@@ -34,7 +34,9 @@ added two things: `lds_bank_conflicts_per_wavefront`/`mfma_busy_cycles_per_wavef
 per variant — the raw `lds_bank_conflicts`/`mfma_busy_cycles` sums scale with
 `--nruns`/`--iters`, so these per-wavefront rates (both counters divided by
 the same run's `SQ_WAVES` count) are the ones comparable across differently
-configured runs — and the top-level `occ_sample` key (see below).
+configured runs — and the top-level `occ_sample` key (see below). A run with
+zero `SQ_WAVES` contributes no sample to either per-wavefront rate, so their
+mean/stdev may be computed over fewer runs than the variant's `runs` count.
 
 `ckAggregate` (the tool behind `dynamic/*/summary.*`) is counter-set agnostic but
 requires every counter in `counters.txt` to be classified `sum`, `mean`, or `ignore`

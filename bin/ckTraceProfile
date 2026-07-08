@@ -152,6 +152,7 @@ index="$OUTDIR/index.md"
     echo
 } >"$index"
 
+trace_ok=1
 for v in "${VARIANTS[@]}"; do
     if [ "$v" = "default" ] || [ -z "$SWEEP_FLAG" ]; then
         args="$BASE_ARGS"
@@ -165,6 +166,7 @@ for v in "${VARIANTS[@]}"; do
         out="$OUTDIR/raw/$vlabel/run_$rid"
         mkdir -p "$out"
         if dx "rocprofv3 --sys-trace -f pftrace csv -d '$out' -o trace -- ./$BIN $args >'$out/trace.stdout' 2>'$out/trace.stderr'"; then te=0; else te=$?; fi
+        [ "$te" -eq 0 ] || trace_ok=0
         kill_orphans
         pc="skipped"
         if [ "$PC_SAMPLING" = "1" ]; then
@@ -187,9 +189,10 @@ for v in "${VARIANTS[@]}"; do
 done
 find "$REPO/.rocprofv3" -mindepth 1 -delete 2>/dev/null || true
 rmdir "$REPO/.rocprofv3" 2>/dev/null || true
-if [ -n "$RUN_ID" ]; then
+if [ -n "$RUN_ID" ] && [ "$trace_ok" -eq 1 ]; then
     ln -sfn "runs/$RUN_ID" "$MODE_DIR/latest"
     echo "DONE  (traces in $OUTDIR; see index.md; latest -> $MODE_DIR/latest)"
 else
     echo "DONE  (traces in $OUTDIR; see index.md)"
 fi
+[ "$trace_ok" -eq 1 ]

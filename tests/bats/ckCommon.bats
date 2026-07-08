@@ -636,3 +636,16 @@ EOF
     chmod 755 "$TMPDIR_TEST/blocked"
     [ "$status" -ne 0 ]
 }
+
+@test "_new_run_dir returns nonzero instead of looping when runs/ exists but is unwritable" {
+    [ "$(id -u)" -eq 0 ] && skip "root bypasses directory permissions"
+    mkdir -p "$TMPDIR_TEST/mode/runs"
+    chmod 555 "$TMPDIR_TEST/mode/runs"
+    run timeout 5 bash -c "
+        source '$CKCOMMON'
+        _new_run_dir '$TMPDIR_TEST/mode'
+    "
+    chmod 755 "$TMPDIR_TEST/mode/runs"
+    [ "$status" -ne 0 ]
+    [ "$status" -ne 124 ]
+}
