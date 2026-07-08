@@ -82,3 +82,10 @@ run produces, rather than rendering wrong data.
 `.html` reports (including the trace `timeline.html`) are self-contained and open
 offline in Live Preview; `.dot` files open in VS Code's Graphviz extension; the
 `.pftrace` opens at <https://ui.perfetto.dev> for perfetto-only deep dives.
+
+## Agent access via MCP
+
+An agent can start and poll these runs directly through the `ck-profile` MCP
+server (`lib/ck-profile-mcp/server.py`, registered by `setup.sh`) instead of a
+human running the CLI — see `skills/ck-profile/REFERENCE.md`'s "MCP server"
+section for the tool surface.

@@ -618,6 +618,33 @@ dynamic roofline-lite). A plain-text `analyze` dump is also kept in
 `raw/<wl>_analyze.txt`. `--gui` serves the interactive dashboard. Use this for the
 MFMA/roofline attribution that the dynamic mode's single `VALUBusy` cannot give.
 
+## MCP server
+
+`lib/ck-profile-mcp/server.py` exposes the CLI modes as agent-callable tools —
+registered at user scope (`setup.sh` runs `claude mcp add -s user ck-profile ...`),
+so it is available from any CK checkout, not just this repo. It runs locally and
+shells out to `ckRemote` exactly as a human would; no remote-side changes.
+
+Tools:
+
+- `run_profile(mode, arch, target, repo, server?)` — starts one of `ckStaticProfile`
+  `ckRunProfile`, `ckTraceProfile`, `ckCfgProfile`, `ckComputeProfile` as a background
+  job and returns a `job_id`. `repo` must be a CK project root (has
+  `script/cmake-ck-dev.sh`); `server`, if omitted, is auto-selected the same way
+  `ckRemote` would. Rejected outright (no queue) if the chosen server already has a
+  job in flight.
+- `get_job_status(job_id)` — state machine: `running -> pulling -> done | failed |
+  pull_failed | timeout`. `failed` means the remote command itself exited non-zero;
+  `pull_failed` means it succeeded but `ckRemote pull` failed; `timeout` is
+  mode-aware (10 min for static/cfg, 1 hour for run/trace/compute).
+- `get_summary(job_id)` — reads `summary.json` for a finished job. Only
+  `ckRunProfile` (dynamic mode) currently emits one; other modes raise, pointing at
+  the HTML/MD report to read instead.
+
+`compare_runs`/`list_runs` are not implemented yet — read successive `runs/<id>/`
+directories directly (see `lib/ck-profile/profile_readme.md`'s "Run history"
+section) until those land.
+
 ## Known gotchas
 
 - `--truncate-kernels` (long form) can trip "dangerous command" shell guards
