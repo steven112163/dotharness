@@ -42,6 +42,31 @@ in its `COUNTER_CLASS` map — adding a pmc line without a matching classificati
 makes the next run fail loudly (rather than aggregating it incorrectly) until one is
 added.
 
+## Measured occupancy sample (`dynamic/*/summary.json`'s `occ_sample`)
+
+`ckRunProfile` joins its own run with a sibling `compute/latest/` run (if one exists
+for the same binary, matched by basename) and adds an `occ_sample` block to
+`summary.{json,html,md}`: the *top kernel by time*'s measured VGPR/AGPR/SGPR/LDS/
+wavefronts from rocprof-compute's Launch Stats panel, next to the arch's
+`max_waves_cu` ceiling. `occ_sample` is `null`/omitted whenever compute mode hasn't
+been run yet for this binary, or the panel isn't found.
+
+This is a measured input sample, **not** an automated limiter classification —
+nothing in this repo independently derives which single resource (VGPR/AGPR/LDS/
+wave-slot) binds occupancy; that would need a per-resource waves-ceiling formula
+this codebase doesn't have (see `lib/ck-profile/compute_report.py`'s
+`top_launch_stats_row()`). It is also not a full per-kernel join between dynamic
+mode's own kernel breakdown and rocprof-compute's — the two tools' kernel-name
+strings are not guaranteed to match verbatim, so this always reports compute mode's
+own top kernel, which may not be the same kernel dynamic mode's own per-kernel
+table highlights.
+
+The exact Launch Stats panel filename/columns (`7.1_Launch_Stats*.csv`) are a
+best-effort guess from AMD's published rocprof-compute panel numbering, unconfirmed
+against a live run — `top_launch_stats_row()` returns `None` (and `occ_sample`
+disappears) if the guess doesn't match what a real `analyze --output-format csv`
+run produces, rather than rendering wrong data.
+
 ## Quick reading order
 
 1. **static** + **dynamic** together: dynamic's *verdict* says compute- /
