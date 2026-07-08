@@ -30,11 +30,11 @@ invocations rather than versioned, since they are not run history: `static/build
 
 `dynamic/runs/*/summary.json` additionally carries a `schema_version` field
 (currently `2`) for anything parsing it programmatically. `schema_version` `2`
-added `lds_bank_conflicts_per_wavefront`/`mfma_busy_cycles_per_wavefront` per
-variant — the raw `lds_bank_conflicts`/`mfma_busy_cycles` sums scale with
+added two things: `lds_bank_conflicts_per_wavefront`/`mfma_busy_cycles_per_wavefront`
+per variant — the raw `lds_bank_conflicts`/`mfma_busy_cycles` sums scale with
 `--nruns`/`--iters`, so these per-wavefront rates (both counters divided by
 the same run's `SQ_WAVES` count) are the ones comparable across differently
-configured runs.
+configured runs — and the top-level `occ_sample` key (see below).
 
 `ckAggregate` (the tool behind `dynamic/*/summary.*`) is counter-set agnostic but
 requires every counter in `counters.txt` to be classified `sum`, `mean`, or `ignore`

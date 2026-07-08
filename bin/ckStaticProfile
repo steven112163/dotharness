@@ -107,6 +107,10 @@ if _dispatch_build_like 0 "$REPO" "$REMOTE_PROG"; then
 else
     build_rc=$?
 fi
-ln -sfn "runs/$RUN_ID" "$MODE_DIR/latest"
-echo "Reports: $REPORTDIR/build_report.{md,csv,html} (latest -> $MODE_DIR/latest)"
+if [ "$build_rc" -eq 0 ]; then
+    ln -sfn "runs/$RUN_ID" "$MODE_DIR/latest"
+    echo "Reports: $REPORTDIR/build_report.{md,csv,html} (latest -> $MODE_DIR/latest)"
+else
+    echo "Reports (build failed): $REPORTDIR/build_report.{md,csv,html}"
+fi
 exit "$build_rc"

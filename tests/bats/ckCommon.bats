@@ -617,8 +617,22 @@ EOF
         run_id=\$(_new_run_dir '$TMPDIR_TEST/mode')
         [ \"\$run_id\" = 20260707T000000Z ]
         run_id2=\$(_new_run_dir '$TMPDIR_TEST/mode')
-        [ \"\$run_id2\" = \"20260707T000000Z-\$\$\" ]
+        [ \"\$run_id2\" = \"20260707T000000Z-\$\$-1\" ]
         [ -d \"$TMPDIR_TEST/mode/runs/\$run_id2\" ]
+        run_id3=\$(_new_run_dir '$TMPDIR_TEST/mode')
+        [ \"\$run_id3\" = \"20260707T000000Z-\$\$-2\" ]
     "
     [ "$status" -eq 0 ]
+}
+
+@test "_new_run_dir returns nonzero when runs/ cannot be created" {
+    [ "$(id -u)" -eq 0 ] && skip "root bypasses directory permissions"
+    run bash -c "
+        source '$CKCOMMON'
+        mkdir -p '$TMPDIR_TEST/blocked'
+        chmod 000 '$TMPDIR_TEST/blocked'
+        _new_run_dir '$TMPDIR_TEST/blocked/mode'
+    "
+    chmod 755 "$TMPDIR_TEST/blocked"
+    [ "$status" -ne 0 ]
 }
