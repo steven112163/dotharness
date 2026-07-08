@@ -123,15 +123,15 @@ def launch_stats_rows(csvdir):
 
 
 def top_launch_stats_row(csvdir):
-    """Launch Stats row for the top kernel by time, or the first row on no
-    name match (the two panels may format kernel names differently). None if
-    the Launch Stats panel isn't present."""
+    """Launch Stats row for the top kernel by time. None if the Launch Stats
+    panel isn't present or its top-kernel name doesn't match Top Kernels'
+    (the two panels may format kernel names differently) — never guess."""
     ls = launch_stats_rows(csvdir)
     if not ls:
         return None
     tk = _top_kernel_rows(csvdir)
     top_name = tk[0]["kernel"] if tk else None
-    return next((r for r in ls if r["kernel"] == top_name), ls[0])
+    return next((r for r in ls if r["kernel"] == top_name), None)
 
 
 def sol_rows(csvdir):

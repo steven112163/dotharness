@@ -167,7 +167,7 @@ def test_top_launch_stats_row_matches_top_kernel_by_name(tmp_path):
     assert row["vgprs"] == 64.0
 
 
-def test_top_launch_stats_row_falls_back_to_first_row_on_no_match(tmp_path):
+def test_top_launch_stats_row_none_on_no_name_match(tmp_path):
     _write_csv(
         tmp_path / "0.1_Top_Kernels.csv",
         ["Kernel_Name", "Count", "Mean(ns)", "Percent"],
@@ -185,8 +185,7 @@ def test_top_launch_stats_row_falls_back_to_first_row_on_no_match(tmp_path):
         ],
         [["other_kernel", "32", "0", "8", "0", "64"]],
     )
-    row = cr.top_launch_stats_row(str(tmp_path))
-    assert row["kernel"] == "other_kernel"
+    assert cr.top_launch_stats_row(str(tmp_path)) is None
 
 
 def test_top_launch_stats_row_none_when_panel_absent(tmp_path):

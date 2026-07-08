@@ -14,6 +14,7 @@ For each variant (sweep value), averaged over all runs:
 
 Usage:
   ckAggregate --raw DIR [--arch gfx942] [--iters N | --marker SUBSTR] [--out DIR]
+    [--workload NAME --compute-dir DIR]
 """
 
 import argparse
@@ -143,6 +144,11 @@ def _json_num(x):
     return x
 
 
+def _fnum(x, fmt):
+    """Format a float, or "n/a" for NaN (e.g. a per-wavefront rate with 0 waves)."""
+    return "n/a" if isinstance(x, float) and math.isnan(x) else format(x, fmt)
+
+
 def build_summary_json(overall, arch, unit, peak, occ_sample=None, max_waves=None):
     """Structured twin of summary.md/.html: per-variant verdict + metrics as mean/stdev pairs.
 
@@ -162,12 +168,12 @@ def build_summary_json(overall, arch, unit, peak, occ_sample=None, max_waves=Non
         "occ_sample": (
             {
                 "kernel": occ_sample["kernel"],
-                "vgprs": occ_sample["vgprs"],
-                "agprs": occ_sample["agprs"],
-                "sgprs": occ_sample["sgprs"],
-                "lds_bytes": occ_sample["lds_bytes"],
-                "wavefronts": occ_sample["wavefronts"],
-                "max_waves_cu": max_waves,
+                "vgprs": _json_num(occ_sample["vgprs"]),
+                "agprs": _json_num(occ_sample["agprs"]),
+                "sgprs": _json_num(occ_sample["sgprs"]),
+                "lds_bytes": _json_num(occ_sample["lds_bytes"]),
+                "wavefronts": _json_num(occ_sample["wavefronts"]),
+                "max_waves_cu": _json_num(max_waves),
             }
             if occ_sample
             else None
@@ -292,8 +298,8 @@ def write_html(overall, pk_rows, spec, peak, arch, unit, out, occ_sample=None):
             + f"<div>occupancy: <b>{m['occ'][0]:.2f}</b> waves/CU</div>"
             + f"<div>achieved BW: <b>{m['bw'][0]:.1f}</b> GB/s</div>"
             + f"<div>fetch / write: <b>{m['fmb'][0]:.2f}</b> / <b>{m['wmb'][0]:.2f}</b> MB</div>"
-            + f"<div>LDS bank conflicts / wavefront: <b>{m['lds_per_wave'][0]:.3f}</b></div>"
-            + f"<div>MFMA busy cycles / wavefront: <b>{m['mfma_per_wave'][0]:.1f}</b></div>"
+            + f"<div>LDS bank conflicts / wavefront: <b>{_fnum(m['lds_per_wave'][0], '.3f')}</b></div>"
+            + f"<div>MFMA busy cycles / wavefront: <b>{_fnum(m['mfma_per_wave'][0], '.1f')}</b></div>"
             + "</div>"
         )
         cards.append(
@@ -526,9 +532,9 @@ def main():
                     f"{m['salu'][0]:.2f}",
                     f"{m['memstall'][0]:.2f}",
                     f"{m['lds'][0]:.0f}",
-                    f"{m['lds_per_wave'][0]:.3f}",
+                    _fnum(m["lds_per_wave"][0], ".3f"),
                     f"{m['mfma_cyc'][0]:.0f}",
-                    f"{m['mfma_per_wave'][0]:.1f}",
+                    _fnum(m["mfma_per_wave"][0], ".1f"),
                     f"{m['waves'][0]:.0f}",
                     f"{m['bw'][0]:.1f}",
                     f"{bwu:.1f}",
@@ -617,7 +623,8 @@ def main():
     ]
     for name, _, m, *_ in overall:
         md.append(
-            f"| {name} | {m['lds_per_wave'][0]:.3f} | {m['mfma_per_wave'][0]:.1f} |"
+            f"| {name} | {_fnum(m['lds_per_wave'][0], '.3f')} | "
+            f"{_fnum(m['mfma_per_wave'][0], '.1f')} |"
         )
     for name, *_ in overall:
         md += [
