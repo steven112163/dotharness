@@ -139,3 +139,73 @@ def test_build_summary_json_normalizes_nan_peak(tmp_path):
     assert out["peak_mem_gbs"] is None
     with open(tmp_path / "summary.json", "w") as f:
         json.dump(out, f, allow_nan=False)
+
+
+def test_build_summary_json_occ_sample_defaults_to_none():
+    out = ckAggregate.build_summary_json(
+        [_fake_overall_row()], arch="gfx942", unit="per-run", peak=5300.0
+    )
+    assert out["occ_sample"] is None
+
+
+def test_build_summary_json_includes_occ_sample_when_given():
+    sample = {
+        "kernel": "my_kernel",
+        "vgprs": 64.0,
+        "agprs": 0.0,
+        "sgprs": 16.0,
+        "lds_bytes": 8192.0,
+        "wavefronts": 128.0,
+    }
+    out = ckAggregate.build_summary_json(
+        [_fake_overall_row()],
+        arch="gfx942",
+        unit="per-run",
+        peak=5300.0,
+        occ_sample=sample,
+        max_waves=32,
+    )
+    assert out["occ_sample"] == {
+        "kernel": "my_kernel",
+        "vgprs": 64.0,
+        "agprs": 0.0,
+        "sgprs": 16.0,
+        "lds_bytes": 8192.0,
+        "wavefronts": 128.0,
+        "max_waves_cu": 32,
+    }
+
+
+def test_find_occ_sample_none_without_compute_dir_or_workload():
+    assert ckAggregate._find_occ_sample("", "my_workload") is None
+    assert ckAggregate._find_occ_sample("/some/dir", "") is None
+
+
+def test_find_occ_sample_none_when_workload_csv_dir_missing(tmp_path):
+    (tmp_path / "raw").mkdir()
+    assert ckAggregate._find_occ_sample(str(tmp_path), "my_workload") is None
+
+
+def test_find_occ_sample_joins_by_workload_basename(tmp_path):
+    csvdir = tmp_path / "raw" / "my_workload_csv"
+    csvdir.mkdir(parents=True)
+    with open(csvdir / "0.1_Top_Kernels.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["Kernel_Name", "Count", "Mean(ns)", "Percent"])
+        w.writerow(["my_kernel", "4", "1500", "37.5"])
+    with open(csvdir / "7.1_Launch_Stats.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(
+            [
+                "Kernel_Name",
+                "VGPRs",
+                "AGPRs",
+                "SGPRs",
+                "LDS Allocation",
+                "Total Wavefronts",
+            ]
+        )
+        w.writerow(["my_kernel", "64", "0", "16", "8192", "128"])
+    sample = ckAggregate._find_occ_sample(str(tmp_path), "my_workload")
+    assert sample["kernel"] == "my_kernel"
+    assert sample["vgprs"] == 64.0
