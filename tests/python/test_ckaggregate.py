@@ -75,6 +75,8 @@ def _fake_overall_row(name="default"):
         "mfma_cyc": (1000.0, 50.0),
         "memstall": (5.0, 0.5),
         "lds": (2.0, 0.1),
+        "lds_per_wave": (0.03, 0.005),
+        "mfma_per_wave": (15.6, 1.2),
         "waves": (64.0, 1.0),
         "bw": (1000.0, 20.0),
     }
@@ -85,7 +87,7 @@ def test_build_summary_json_shape_and_schema_version():
     out = ckAggregate.build_summary_json(
         [_fake_overall_row()], arch="gfx942", unit="per-run", peak=5300.0
     )
-    assert out["schema_version"] == ckAggregate.SUMMARY_SCHEMA_VERSION == 1
+    assert out["schema_version"] == ckAggregate.SUMMARY_SCHEMA_VERSION == 2
     assert out["arch"] == "gfx942"
     assert out["unit"] == "per-run"
     assert out["peak_mem_gbs"] == 5300.0
@@ -97,6 +99,8 @@ def test_build_summary_json_shape_and_schema_version():
     assert v["occ_util_pct"] == 80.0
     assert v["bw_util_pct"] == 45.0
     assert v["gpu_ms"] == {"mean": 1.5, "stdev": 0.1}
+    assert v["lds_bank_conflicts_per_wavefront"] == {"mean": 0.03, "stdev": 0.005}
+    assert v["mfma_busy_cycles_per_wavefront"] == {"mean": 15.6, "stdev": 1.2}
 
 
 def test_build_summary_json_is_json_serializable():

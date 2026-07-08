@@ -28,7 +28,7 @@ import sys
 
 # Bumped whenever summary.json's shape changes; any consumer that parses it by
 # field name takes a hard dependency on this value.
-SUMMARY_SCHEMA_VERSION = 1
+SUMMARY_SCHEMA_VERSION = 2
 
 _here = os.path.dirname(os.path.abspath(__file__))
 _lib = os.path.join(_here, "..", "lib", "ck-profile")
@@ -171,7 +171,9 @@ def build_summary_json(overall, arch, unit, peak):
                 "salu_pct": ms(m["salu"]),
                 "mem_stall_pct": ms(m["memstall"]),
                 "lds_bank_conflicts": ms(m["lds"]),
+                "lds_bank_conflicts_per_wavefront": ms(m["lds_per_wave"]),
                 "mfma_busy_cycles": ms(m["mfma_cyc"]),
+                "mfma_busy_cycles_per_wavefront": ms(m["mfma_per_wave"]),
                 "wavefronts": ms(m["waves"]),
                 "achieved_bw_gbs": ms(m["bw"]),
             }
@@ -253,6 +255,8 @@ def write_html(overall, pk_rows, spec, peak, arch, unit, out):
             + f"<div>occupancy: <b>{m['occ'][0]:.2f}</b> waves/CU</div>"
             + f"<div>achieved BW: <b>{m['bw'][0]:.1f}</b> GB/s</div>"
             + f"<div>fetch / write: <b>{m['fmb'][0]:.2f}</b> / <b>{m['wmb'][0]:.2f}</b> MB</div>"
+            + f"<div>LDS bank conflicts / wavefront: <b>{m['lds_per_wave'][0]:.3f}</b></div>"
+            + f"<div>MFMA busy cycles / wavefront: <b>{m['mfma_per_wave'][0]:.1f}</b></div>"
             + "</div>"
         )
         cards.append(
@@ -326,6 +330,8 @@ def main():
                 "mfma_cyc",
                 "memstall",
                 "lds",
+                "lds_per_wave",
+                "mfma_per_wave",
                 "waves",
                 "bw",
             ]
@@ -349,6 +355,14 @@ def main():
             acc["mfma_cyc"].append(p["mfma_cyc"] / div)
             acc["memstall"].append(p["memstall"])
             acc["lds"].append(p["lds_conf"] / div)
+            # Per-wavefront rate (div cancels: both sides are per-run raw sums),
+            # so it stays comparable across runs with different --nruns/--iters.
+            acc["lds_per_wave"].append(
+                p["lds_conf"] / p["waves"] if p["waves"] else float("nan")
+            )
+            acc["mfma_per_wave"].append(
+                p["mfma_cyc"] / p["waves"] if p["waves"] else float("nan")
+            )
             acc["waves"].append(p["waves"] / div)
             acc["bw"].append(
                 (p["fetch_kb"] + p["write_kb"]) * 1024.0 / (total_ns / 1e9) / 1e9
@@ -424,7 +438,9 @@ def main():
                 "salu_pct",
                 "mem_stall_pct",
                 "lds_bank_conflicts",
+                "lds_bank_conflicts_per_wavefront",
                 "mfma_busy_cycles",
+                "mfma_busy_cycles_per_wavefront",
                 "wavefronts",
                 "achieved_BW_GBs",
                 "BW_util_pct",
@@ -448,7 +464,9 @@ def main():
                     f"{m['salu'][0]:.2f}",
                     f"{m['memstall'][0]:.2f}",
                     f"{m['lds'][0]:.0f}",
+                    f"{m['lds_per_wave'][0]:.3f}",
                     f"{m['mfma_cyc'][0]:.0f}",
+                    f"{m['mfma_per_wave'][0]:.1f}",
                     f"{m['waves'][0]:.0f}",
                     f"{m['bw'][0]:.1f}",
                     f"{bwu:.1f}",
@@ -510,6 +528,20 @@ def main():
             f"{m['hr'][0]:.1f} | {m['fmb'][0]:.2f} | {m['wmb'][0]:.2f} | {m['occ'][0]:.2f} | "
             f"{occu:.1f} | {m['valu'][0]:.2f} | {m['salu'][0]:.2f} | {m['memstall'][0]:.2f} | "
             f"{m['bw'][0]:.1f} | {bwu:.1f} | **{verdict}** |"
+        )
+    md += [
+        "",
+        "## Per-wavefront rates",
+        "",
+        "Raw `lds_bank_conflicts`/`mfma_busy_cycles` sums scale with `--nruns`/`--iters`; "
+        "these per-wavefront rates stay comparable across runs with different settings.",
+        "",
+        "| variant | LDS bank conflicts / wavefront | MFMA busy cycles / wavefront |",
+        "| --- | --- | --- |",
+    ]
+    for name, _, m, *_ in overall:
+        md.append(
+            f"| {name} | {m['lds_per_wave'][0]:.3f} | {m['mfma_per_wave'][0]:.1f} |"
         )
     for name, *_ in overall:
         md += [

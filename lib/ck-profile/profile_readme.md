@@ -29,7 +29,12 @@ invocations rather than versioned, since they are not run history: `static/build
 `ck_profile_out/` root (the one-time rocprof-compute install).
 
 `dynamic/runs/*/summary.json` additionally carries a `schema_version` field
-(currently `1`) for anything parsing it programmatically.
+(currently `2`) for anything parsing it programmatically. `schema_version` `2`
+added `lds_bank_conflicts_per_wavefront`/`mfma_busy_cycles_per_wavefront` per
+variant — the raw `lds_bank_conflicts`/`mfma_busy_cycles` sums scale with
+`--nruns`/`--iters`, so these per-wavefront rates (both counters divided by
+the same run's `SQ_WAVES` count) are the ones comparable across differently
+configured runs.
 
 `ckAggregate` (the tool behind `dynamic/*/summary.*`) is counter-set agnostic but
 requires every counter in `counters.txt` to be classified `sum`, `mean`, or `ignore`
