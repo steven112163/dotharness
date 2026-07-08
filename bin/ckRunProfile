@@ -168,11 +168,15 @@ rmdir "$REPO/.rocprofv3" 2>/dev/null || true
 
 echo "Aggregating into summary.{html,md,csv,json} ..."
 SUMMARY_DIR=$(dirname "$OUTDIR")
-if [ -n "$ARCH" ]; then
-    python3 "$SELF_DIR/ckAggregate" --raw "$OUTDIR" --out "$SUMMARY_DIR" --arch "$ARCH"
-else
-    python3 "$SELF_DIR/ckAggregate" --raw "$OUTDIR" --out "$SUMMARY_DIR"
-fi
+AGG_ARGS=(--raw "$OUTDIR" --out "$SUMMARY_DIR")
+[ -n "$ARCH" ] && AGG_ARGS+=(--arch "$ARCH")
+# Joins a sibling ckComputeProfile run by binary basename, for a measured
+# occupancy sample in summary.json; silently skipped if compute mode hasn't
+# been run for this repo yet (see profile_readme.md).
+WORKLOAD=$(basename "$BIN")
+AGG_ARGS+=(--workload "$WORKLOAD")
+[ -d "$REPO/ck_profile_out/compute/latest" ] && AGG_ARGS+=(--compute-dir "$REPO/ck_profile_out/compute/latest")
+python3 "$SELF_DIR/ckAggregate" "${AGG_ARGS[@]}"
 
 if [ -n "$RUNDIR" ]; then
     ln -sfn "runs/$RUN_ID" "$MODE_DIR/latest"
