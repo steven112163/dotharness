@@ -21,6 +21,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import html_report as H  # noqa: E402
 from ck_profile_utils import classify  # noqa: E402
+from gpu_specs import get_spec  # noqa: E402
 
 
 # rocprof-compute has renamed panel columns across releases (e.g. "Avg" vs
@@ -93,6 +94,29 @@ def _top_kernel_rows(csvdir):
                 "count": pick(r, "Count"),
                 "mean_us": _mean_col_to_us(r),
                 "pct": fnum(pick(r, "Percent", "Pct", "% time")) or 0.0,
+            }
+        )
+    return out
+
+
+def launch_stats_rows(csvdir):
+    """Per-kernel VGPR/AGPR/SGPR/LDS/wavefronts from the Launch Stats panel.
+    [] if not found (unverified panel name/columns; see profile_readme.md)."""
+    out = []
+    for r in read_panel(csvdir, "7.1_Launch_Stats"):
+        kname = pick(r, "Kernel_Name", "KernelName", "Kernel")
+        if kname is None:
+            continue
+        out.append(
+            {
+                "kernel": short_kernel(kname),
+                "vgprs": fnum(pick(r, "VGPRs", "VGPR")),
+                "agprs": fnum(pick(r, "AGPRs", "AGPR")),
+                "sgprs": fnum(pick(r, "SGPRs", "SGPR")),
+                "lds_bytes": fnum(pick(r, "LDS Allocation", "LDS_Allocation", "LDS")),
+                "wavefronts": fnum(
+                    pick(r, "Total Wavefronts", "Total_Wavefronts", "Wavefronts")
+                ),
             }
         )
     return out
@@ -192,6 +216,36 @@ def build(csvdir, name, arch):
             )
         )
 
+    # Measured VGPR/AGPR/SGPR/LDS/wavefronts for the top kernel, next to the
+    # hardware ceiling. Falls back to the first Launch Stats row on no name
+    # match — rocprof-compute's two panels may format names differently.
+    ls = launch_stats_rows(csvdir)
+    if ls:
+        top_name = tk[0]["kernel"] if tk else None
+        ls_row = next((r for r in ls if r["kernel"] == top_name), ls[0])
+        spec = get_spec(arch)
+
+        def sv(x, suffix=""):
+            return f"{x}{suffix}" if x is not None else "n/a"
+
+        parts.append(
+            H.section(
+                f"Measured occupancy inputs — {H.esc(ls_row['kernel'])}",
+                "<div class='card'><div class='grid2'>"
+                f"<div>VGPRs: <b>{sv(ls_row['vgprs'])}</b></div>"
+                f"<div>AGPRs: <b>{sv(ls_row['agprs'])}</b></div>"
+                f"<div>SGPRs: <b>{sv(ls_row['sgprs'])}</b></div>"
+                f"<div>LDS allocation: <b>{sv(ls_row['lds_bytes'], ' B')}</b></div>"
+                f"<div>Total wavefronts: <b>{sv(ls_row['wavefronts'])}</b></div>"
+                f"<div>max waves/CU (ceiling): <b>{sv(spec['max_waves_cu'] if spec else None)}</b></div>"
+                "</div><p class='sub'>Measured, not estimated — pair with the static "
+                "report's compile-time ceiling to see if this run actually reached "
+                "it. Not a formal limiter classification; compare each value "
+                "against the arch's VGPR/AGPR/LDS caps in the static report's "
+                "device-spec table to judge which one is tightest.</p></div>",
+            )
+        )
+
     # full SoL table
     if sol:
         trows = [
@@ -275,6 +329,20 @@ def build(csvdir, name, arch):
             md.append(
                 f"| {r['kernel']} | {r['count']} | {_fmt_us(r['mean_us'], '.2f')} | {r['pct']:.1f} |"
             )
+    if ls:
+        md += [
+            "",
+            f"## Measured occupancy inputs — {ls_row['kernel']}",
+            "",
+            "Measured, not estimated — pair with the static report's compile-time "
+            "ceiling. Not a formal limiter classification.",
+            "",
+            "| VGPRs | AGPRs | SGPRs | LDS allocation (B) | total wavefronts | max waves/CU |",
+            "| --- | --- | --- | --- | --- | --- |",
+            f"| {sv(ls_row['vgprs'])} | {sv(ls_row['agprs'])} | {sv(ls_row['sgprs'])} | "
+            f"{sv(ls_row['lds_bytes'])} | {sv(ls_row['wavefronts'])} | "
+            f"{sv(spec['max_waves_cu'] if spec else None)} |",
+        ]
     return html, "\n".join(md) + "\n"
 
 

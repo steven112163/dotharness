@@ -109,3 +109,72 @@ def test_build_top_kernels_uses_header_names_not_positions(tmp_path):
 def test_pick_returns_first_present_alias():
     assert cr.pick({"a": "1", "b": "2"}, "missing", "b", "a") == "2"
     assert cr.pick({"a": "1"}, "missing") is None
+
+
+def test_launch_stats_rows_parses_by_header_name(tmp_path):
+    _write_csv(
+        tmp_path / "7.1_Launch_Stats.csv",
+        [
+            "Kernel_Name",
+            "VGPRs",
+            "AGPRs",
+            "SGPRs",
+            "LDS Allocation",
+            "Total Wavefronts",
+        ],
+        [["my_kernel", "64", "0", "16", "8192", "128"]],
+    )
+    rows = cr.launch_stats_rows(str(tmp_path))
+    assert rows == [
+        {
+            "kernel": "my_kernel",
+            "vgprs": 64.0,
+            "agprs": 0.0,
+            "sgprs": 16.0,
+            "lds_bytes": 8192.0,
+            "wavefronts": 128.0,
+        }
+    ]
+
+
+def test_launch_stats_rows_missing_panel_returns_empty(tmp_path):
+    assert cr.launch_stats_rows(str(tmp_path)) == []
+
+
+def test_build_omits_occupancy_section_when_launch_stats_panel_absent(tmp_path):
+    _write_csv(
+        tmp_path / "0.1_Top_Kernels.csv",
+        ["Kernel_Name", "Count", "Mean(ns)", "Percent"],
+        [["my_kernel", "4", "1500", "37.5"]],
+    )
+    html, md = cr.build(str(tmp_path), "wl", "gfx942")
+    assert "Measured occupancy inputs" not in html
+    assert "Measured occupancy inputs" not in md
+
+
+def test_build_includes_occupancy_section_matched_to_top_kernel(tmp_path):
+    _write_csv(
+        tmp_path / "0.1_Top_Kernels.csv",
+        ["Kernel_Name", "Count", "Mean(ns)", "Percent"],
+        [["my_kernel", "4", "1500", "37.5"]],
+    )
+    _write_csv(
+        tmp_path / "7.1_Launch_Stats.csv",
+        [
+            "Kernel_Name",
+            "VGPRs",
+            "AGPRs",
+            "SGPRs",
+            "LDS Allocation",
+            "Total Wavefronts",
+        ],
+        [
+            ["other_kernel", "32", "0", "8", "0", "64"],
+            ["my_kernel", "64", "0", "16", "8192", "128"],
+        ],
+    )
+    html, md = cr.build(str(tmp_path), "wl", "gfx942")
+    assert "Measured occupancy inputs — my_kernel" in html
+    assert "Measured occupancy inputs — my_kernel" in md
+    assert "VGPRs: <b>64.0</b>" in html  # my_kernel's, not other_kernel's 32.0
+    assert "max waves/CU (ceiling): <b>32</b>" in html  # gfx942 spec
