@@ -141,6 +141,58 @@ def test_launch_stats_rows_missing_panel_returns_empty(tmp_path):
     assert cr.launch_stats_rows(str(tmp_path)) == []
 
 
+def test_top_launch_stats_row_matches_top_kernel_by_name(tmp_path):
+    _write_csv(
+        tmp_path / "0.1_Top_Kernels.csv",
+        ["Kernel_Name", "Count", "Mean(ns)", "Percent"],
+        [["my_kernel", "4", "1500", "37.5"]],
+    )
+    _write_csv(
+        tmp_path / "7.1_Launch_Stats.csv",
+        [
+            "Kernel_Name",
+            "VGPRs",
+            "AGPRs",
+            "SGPRs",
+            "LDS Allocation",
+            "Total Wavefronts",
+        ],
+        [
+            ["other_kernel", "32", "0", "8", "0", "64"],
+            ["my_kernel", "64", "0", "16", "8192", "128"],
+        ],
+    )
+    row = cr.top_launch_stats_row(str(tmp_path))
+    assert row["kernel"] == "my_kernel"
+    assert row["vgprs"] == 64.0
+
+
+def test_top_launch_stats_row_falls_back_to_first_row_on_no_match(tmp_path):
+    _write_csv(
+        tmp_path / "0.1_Top_Kernels.csv",
+        ["Kernel_Name", "Count", "Mean(ns)", "Percent"],
+        [["unrelated_kernel", "4", "1500", "37.5"]],
+    )
+    _write_csv(
+        tmp_path / "7.1_Launch_Stats.csv",
+        [
+            "Kernel_Name",
+            "VGPRs",
+            "AGPRs",
+            "SGPRs",
+            "LDS Allocation",
+            "Total Wavefronts",
+        ],
+        [["other_kernel", "32", "0", "8", "0", "64"]],
+    )
+    row = cr.top_launch_stats_row(str(tmp_path))
+    assert row["kernel"] == "other_kernel"
+
+
+def test_top_launch_stats_row_none_when_panel_absent(tmp_path):
+    assert cr.top_launch_stats_row(str(tmp_path)) is None
+
+
 def test_build_omits_occupancy_section_when_launch_stats_panel_absent(tmp_path):
     _write_csv(
         tmp_path / "0.1_Top_Kernels.csv",

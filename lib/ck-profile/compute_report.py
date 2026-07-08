@@ -122,6 +122,18 @@ def launch_stats_rows(csvdir):
     return out
 
 
+def top_launch_stats_row(csvdir):
+    """Launch Stats row for the top kernel by time, or the first row on no
+    name match (the two panels may format kernel names differently). None if
+    the Launch Stats panel isn't present."""
+    ls = launch_stats_rows(csvdir)
+    if not ls:
+        return None
+    tk = _top_kernel_rows(csvdir)
+    top_name = tk[0]["kernel"] if tk else None
+    return next((r for r in ls if r["kernel"] == top_name), ls[0])
+
+
 def sol_rows(csvdir):
     """System Speed-of-Light as list of dicts: metric, avg, unit, peak, pct."""
     out = []
@@ -217,12 +229,9 @@ def build(csvdir, name, arch):
         )
 
     # Measured VGPR/AGPR/SGPR/LDS/wavefronts for the top kernel, next to the
-    # hardware ceiling. Falls back to the first Launch Stats row on no name
-    # match — rocprof-compute's two panels may format names differently.
-    ls = launch_stats_rows(csvdir)
-    if ls:
-        top_name = tk[0]["kernel"] if tk else None
-        ls_row = next((r for r in ls if r["kernel"] == top_name), ls[0])
+    # hardware ceiling.
+    ls_row = top_launch_stats_row(csvdir)
+    if ls_row:
         spec = get_spec(arch)
 
         def sv(x, suffix=""):
@@ -329,7 +338,7 @@ def build(csvdir, name, arch):
             md.append(
                 f"| {r['kernel']} | {r['count']} | {_fmt_us(r['mean_us'], '.2f')} | {r['pct']:.1f} |"
             )
-    if ls:
+    if ls_row:
         md += [
             "",
             f"## Measured occupancy inputs — {ls_row['kernel']}",
