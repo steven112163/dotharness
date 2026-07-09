@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import signal
+import sys
 import tempfile
 import time
 import uuid
@@ -211,6 +212,11 @@ class JobStore:
             try:
                 os.link(tmp, exit_path)
             except FileExistsError:
+                print(
+                    f"ck-profile-mcp: write_exit for job {job_id} raced with an "
+                    "existing exit.json; keeping the existing one",
+                    file=sys.stderr,
+                )
                 return
         finally:
             try:
@@ -236,45 +242,35 @@ class JobStore:
             return
         kill_process_group(pid)
 
-    def _reconcile(self, job_id):
-        # Assumes a single writer per job_id (unverified against FastMCP's
-        # threading model); atomic writes bound the damage if that's wrong.
-        status = self._read_status(job_id)
-
-        # Fast path: nothing left to sync or guess for an already-synced
-        # terminal job, so skip re-parsing exit.json on every poll.
-        if status["state"] in TERMINAL_STATES and status.get("_synced_from_exit"):
-            return status
-
-        # Checked before the terminal short-circuit below: a fallback branch
-        # (dead-PID, timeout-by-created_at) may have already guessed a
-        # terminal state before the real exit.json landed. Always sync the
-        # real result in when it shows up, rather than freezing the guess.
+    def _sync_exit_if_present(self, job_id, status):
+        """Merge exit.json into status if it has landed. A corrupt exit.json
+        (crash predating the hardlink write path, filesystem damage, or a
+        restart across an old job store) is unlinked so it can't permanently
+        block a later write_exit's os.link from a fallback branch below."""
         exit_path = self._exit_path(job_id)
-        if exit_path.exists():
-            try:
-                with open(exit_path) as f:
-                    exit_data = json.load(f)
-            except json.JSONDecodeError:
-                exit_data = None
-            if exit_data is not None:
-                if not status.get("_synced_from_exit"):
-                    status["state"] = self._terminal_state_from_exit(exit_data)
-                    status["remote_rc"] = exit_data.get("remote_rc")
-                    status["pull_rc"] = exit_data.get("pull_rc")
-                    status["note"] = exit_data.get("note")
-                    status["summary_path"] = exit_data.get("summary_path")
-                    status["finished_at"] = exit_data.get("finished_at")
-                    status["_synced_from_exit"] = True
-                    self._write_status(job_id, status)
-                return status
-            # exit.json exists but is corrupt (should be unreachable now that
-            # write_exit only ever hardlinks a fully-written file into place);
-            # fall through to the fallback logic below instead of wedging.
-
-        if status["state"] in TERMINAL_STATES:
+        if not exit_path.exists():
             return status
+        try:
+            with open(exit_path) as f:
+                exit_data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            try:
+                os.unlink(exit_path)
+            except OSError:
+                pass
+            return status
+        if not status.get("_synced_from_exit"):
+            status["state"] = self._terminal_state_from_exit(exit_data)
+            status["remote_rc"] = exit_data.get("remote_rc")
+            status["pull_rc"] = exit_data.get("pull_rc")
+            status["note"] = exit_data.get("note")
+            status["summary_path"] = exit_data.get("summary_path")
+            status["finished_at"] = exit_data.get("finished_at")
+            status["_synced_from_exit"] = True
+            self._write_status(job_id, status)
+        return status
 
+    def _guess_terminal_fallback(self, job_id, status):
         # Owned jobs skip every fallback below: the owning task's own
         # write_exit call can race ahead of a concurrent reconciler here, and
         # must be allowed to land the real result instead of a guess.
@@ -310,6 +306,26 @@ class JobStore:
             return status
 
         return status
+
+    def _reconcile(self, job_id):
+        # Assumes a single writer per job_id (unverified against FastMCP's
+        # threading model); atomic writes bound the damage if that's wrong.
+        status = self._read_status(job_id)
+
+        # Fast path: nothing left to sync or guess for an already-synced
+        # terminal job, so skip re-parsing exit.json on every poll.
+        if status["state"] in TERMINAL_STATES and status.get("_synced_from_exit"):
+            return status
+
+        # Checked before the terminal short-circuit below: a fallback branch
+        # (dead-PID, timeout-by-created_at) may have already guessed a
+        # terminal state before the real exit.json landed. Always sync the
+        # real result in when it shows up, rather than freezing the guess.
+        status = self._sync_exit_if_present(job_id, status)
+        if status["state"] in TERMINAL_STATES:
+            return status
+
+        return self._guess_terminal_fallback(job_id, status)
 
     def get_status(self, job_id):
         return self._reconcile(job_id)
