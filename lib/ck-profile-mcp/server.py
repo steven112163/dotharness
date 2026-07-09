@@ -42,7 +42,10 @@ async def _resolve_server(arch, forced_server):
         argv += ["-t", forced_server]
     argv += ["-a", arch, "select"]
     proc = await asyncio.create_subprocess_exec(
-        *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        *argv,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,
     )
     try:
         stdout, stderr = await asyncio.wait_for(
@@ -112,7 +115,8 @@ async def _wait_for_exit(proc, timeout_s):
 
 async def _run_job_body(job_id, mode, arch, target, repo, server):
     log_path = _store.log_path(job_id)
-    timeout_s = job_store.MODES[mode]["timeout_s"]
+    mode_info = job_store.MODES[mode]
+    timeout_s = mode_info["timeout_s"]
     # arch is passed twice: -a picks the ckRemote server, --arch is forwarded
     # to the inner ck<Mode>Profile invocation that runs on that server.
     argv = ["ckRemote", "-t", server, "-a", arch, mode, "--arch", arch, target]
@@ -145,7 +149,7 @@ async def _run_job_body(job_id, mode, arch, target, repo, server):
         "-t",
         server,
         "pull",
-        f"ck_profile_out/{job_store.MODES[mode]['output_dir']}",
+        f"ck_profile_out/{mode_info['output_dir']}",
     ]
     with open(log_path, "ab") as log_file:
         pull_proc = await asyncio.create_subprocess_exec(
@@ -169,7 +173,6 @@ async def _run_job_body(job_id, mode, arch, target, repo, server):
         return
 
     summary_path = None
-    mode_info = job_store.MODES[mode]
     if mode_info["emits_summary"] and pull_rc == 0:
         # Freeze the resolved path now: "latest" is a shared symlink that a
         # later job on the same repo/mode can repoint before get_summary runs.
@@ -223,7 +226,9 @@ def get_job_status(job_id: str) -> dict:
     validation.validate_job_id(job_id)
     status = _store.get_status(job_id)
     _store.prune()
-    return status
+    # Drop leading-underscore fields; those are store-internal bookkeeping,
+    # not part of the agent-facing contract.
+    return {k: v for k, v in status.items() if not k.startswith("_")}
 
 
 @mcp.tool()

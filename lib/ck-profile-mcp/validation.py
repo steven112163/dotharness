@@ -80,6 +80,9 @@ def validate_server(server):
 
 
 def validate_job_id(job_id):
+    # uuid.UUID(..., version=4) doesn't reject a non-v4 UUID by itself — it
+    # forces the version/variant bits into the parsed value regardless of
+    # input. The string round-trip is what actually catches a mismatch.
     try:
         parsed = uuid.UUID(job_id, version=4)
     except (ValueError, AttributeError, TypeError):
