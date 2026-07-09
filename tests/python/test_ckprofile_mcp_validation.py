@@ -31,6 +31,7 @@ def test_validate_arch_rejects_bad_input(arch):
 def test_validate_repo_accepts_ck_project_root(tmp_path):
     (tmp_path / "script").mkdir()
     (tmp_path / "script" / "cmake-ck-dev.sh").write_text("")
+    (tmp_path / "CMakeLists.txt").write_text("")
     assert validation.validate_repo(str(tmp_path)) == str(tmp_path.resolve())
 
 
@@ -44,10 +45,18 @@ def test_validate_repo_rejects_non_ck_dir(tmp_path):
         validation.validate_repo(str(tmp_path))
 
 
+def test_validate_repo_rejects_missing_cmakelists(tmp_path):
+    (tmp_path / "script").mkdir()
+    (tmp_path / "script" / "cmake-ck-dev.sh").write_text("")
+    with pytest.raises(ValueError, match="not a CK project root"):
+        validation.validate_repo(str(tmp_path))
+
+
 @pytest.fixture
 def ck_repo(tmp_path):
     (tmp_path / "script").mkdir()
     (tmp_path / "script" / "cmake-ck-dev.sh").write_text("")
+    (tmp_path / "CMakeLists.txt").write_text("")
     (tmp_path / "build").mkdir()
     (tmp_path / "build" / "some_target").write_text("")
     return tmp_path
@@ -75,6 +84,24 @@ def test_validate_target_rejects_traversal_outside_repo(ck_repo):
 def test_validate_target_rejects_absolute_path_outside_repo(ck_repo):
     with pytest.raises(ValueError, match="outside repo root"):
         validation.validate_target("/etc/passwd", str(ck_repo))
+
+
+def test_validate_target_normalizes_absolute_path_inside_repo(ck_repo):
+    absolute = str(ck_repo / "build" / "some_target")
+    assert validation.validate_target(absolute, str(ck_repo)) == "build/some_target"
+
+
+def test_validate_server_accepts_none():
+    assert validation.validate_server(None) is None
+
+
+def test_validate_server_accepts_hostname():
+    assert validation.validate_server("gpu-host-01") == "gpu-host-01"
+
+
+def test_validate_server_rejects_bad_input():
+    with pytest.raises(ValueError, match="invalid server"):
+        validation.validate_server("gpu; rm -rf /")
 
 
 def test_validate_job_id_accepts_uuid4():

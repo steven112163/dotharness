@@ -4,6 +4,7 @@ real ckRemote/SSH (unavailable in CI)."""
 
 import asyncio
 import os
+import shlex
 import signal
 import time
 
@@ -12,19 +13,19 @@ async def _spawn_detached(marker_path):
     proc = await asyncio.create_subprocess_exec(
         "bash",
         "-c",
-        f"sleep 0.3 && touch {marker_path}",
+        f"sleep 0.3 && touch {shlex.quote(str(marker_path))}",
         start_new_session=True,
     )
     return proc.pid
 
 
-def test_detached_child_survives_parent_death(tmp_path):
+def test_detached_child_keeps_running_after_being_untracked(tmp_path):
+    # Doesn't simulate an actual parent process death (SIGTERM to the child's
+    # own process group would kill it too); it only confirms the child isn't
+    # tied to this test process's lifetime by not waitpid()-ing it early.
     marker = tmp_path / "done"
     pid = asyncio.run(_spawn_detached(marker))
 
-    # Simulate the "server restarted" case: send SIGTERM to the child's
-    # process group leader would kill it too, so instead we just stop tracking
-    # it here (no waitpid) and confirm it still completes on its own.
     assert not marker.exists()
     for _ in range(50):
         if marker.exists():
