@@ -263,6 +263,8 @@ class JobStore:
         """Persist exit_data straight into status.json, bypassing exit.json
         entirely, so a result is never lost to its hardlink race."""
         status = self._read_status(job_id)
+        if status.get("_synced_from_exit"):
+            return
         self._apply_exit_data(status, exit_data)
         self._write_status(job_id, status)
 

@@ -330,6 +330,51 @@ def test_write_exit_forces_result_into_status_when_existing_exit_json_unreadable
     assert status["summary_path"] == "/repo/summary.json"
 
 
+def test_force_exit_into_status_does_not_clobber_synced_result(store, monkeypatch):
+    # Regression (suggestion #4, round 10): _force_exit_into_status lacked the
+    # _synced_from_exit guard its sibling _sync_exit_if_present has, so a genuine
+    # second write_exit call could clobber an already-landed result.
+    job_id = _create(store)
+    exit_path = store._exit_path(job_id)
+    exit_path.write_text(json.dumps({"remote_rc": 1, "pull_rc": 1}))
+    real_open = open
+
+    def failing_open(path, *args, **kwargs):
+        if Path(path) == exit_path:
+            raise PermissionError("simulated permission denied")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", failing_open)
+    store.write_exit(job_id, remote_rc=0, pull_rc=0, summary_path="/repo/first.json")
+    store.write_exit(job_id, remote_rc=1, pull_rc=1, note="should not land")
+    monkeypatch.undo()
+
+    status = store.get_status(job_id)
+    assert status["state"] == "done"
+    assert status["summary_path"] == "/repo/first.json"
+
+
+def test_write_exit_forces_result_when_link_retry_still_races(store, monkeypatch):
+    # Regression (suggestion #11, round 10): the "corrupt exit.json, retry link,
+    # race persists" branch shares _force_exit_into_status with the unreadable-
+    # file branch but had no dedicated coverage.
+    job_id = _create(store)
+    exit_path = store._exit_path(job_id)
+    exit_path.write_text("not valid json")
+    real_link = os.link
+
+    def always_racing_link(src, dst, *args, **kwargs):
+        raise FileExistsError(dst)
+
+    monkeypatch.setattr(os, "link", always_racing_link)
+    store.write_exit(job_id, remote_rc=0, pull_rc=0, summary_path="/repo/summary.json")
+    monkeypatch.setattr(os, "link", real_link)
+
+    status = store.get_status(job_id)
+    assert status["state"] == "done"
+    assert status["summary_path"] == "/repo/summary.json"
+
+
 def test_write_exit_first_writer_wins(store):
     job_id = _create(store)
     store.write_exit(job_id, remote_rc=0, pull_rc=0)
