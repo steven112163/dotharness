@@ -212,18 +212,69 @@ class JobStore:
             try:
                 os.link(tmp, exit_path)
             except FileExistsError:
-                print(
-                    f"ck-profile-mcp: write_exit for job {job_id} raced with an "
-                    "existing exit.json; keeping the existing one",
-                    file=sys.stderr,
-                )
-                return
+                if not self._discard_or_replace_stale_exit(job_id, exit_path, tmp):
+                    return
         finally:
             try:
                 os.unlink(tmp)
             except OSError:
                 pass
         self._reconcile(job_id)
+
+    def _discard_or_replace_stale_exit(self, job_id, exit_path, tmp):
+        """Handle os.link losing the race to an existing exit.json. A valid
+        existing file wins (true first-writer-wins); a corrupt/gone one is
+        cleared so this call's real result can be linked in instead. Returns
+        True if tmp was linked into exit_path, False if the caller should
+        give up (its data is left in tmp for the finally block to clean up)."""
+        try:
+            existing = self._load_exit_if_valid(exit_path)
+        except OSError as e:
+            print(
+                f"ck-profile-mcp: write_exit for job {job_id} found an unreadable "
+                f"existing exit.json ({e}); leaving it in place",
+                file=sys.stderr,
+            )
+            return False
+        if existing is not None:
+            print(
+                f"ck-profile-mcp: write_exit for job {job_id} raced with an "
+                "existing valid exit.json; keeping it",
+                file=sys.stderr,
+            )
+            return False
+        self._unlink_logged(job_id, exit_path, "corrupt/stale exit.json before retry")
+        try:
+            os.link(tmp, exit_path)
+        except FileExistsError:
+            print(
+                f"ck-profile-mcp: write_exit for job {job_id} exit.json race "
+                "persisted after cleanup retry; giving up",
+                file=sys.stderr,
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _load_exit_if_valid(exit_path):
+        """Parsed exit.json, or None if missing/corrupt (safe to discard).
+        Other OSErrors (permission, I/O) propagate: those don't mean the
+        content is bad, so callers must not treat them as safe to unlink."""
+        try:
+            with open(exit_path) as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return None
+
+    @staticmethod
+    def _unlink_logged(job_id, path, reason):
+        try:
+            os.unlink(path)
+        except OSError as e:
+            print(
+                f"ck-profile-mcp: job {job_id} failed to unlink {reason} ({path}): {e}",
+                file=sys.stderr,
+            )
 
     def _terminal_state_from_exit(self, exit_data):
         if exit_data.get("timed_out"):
@@ -243,21 +294,26 @@ class JobStore:
         kill_process_group(pid)
 
     def _sync_exit_if_present(self, job_id, status):
-        """Merge exit.json into status if it has landed. A corrupt exit.json
-        (crash predating the hardlink write path, filesystem damage, or a
-        restart across an old job store) is unlinked so it can't permanently
-        block a later write_exit's os.link from a fallback branch below."""
+        """Merge exit.json into status once it lands. A corrupt or vanished
+        exit.json (crash predating the hardlink write path, filesystem
+        damage, or a TOCTOU race with prune()) is unlinked so it can't
+        permanently block a later write_exit's os.link from a fallback below.
+        Other read failures (permission, I/O) don't mean the content is bad,
+        so they're logged and left in place rather than discarded."""
         exit_path = self._exit_path(job_id)
         if not exit_path.exists():
             return status
         try:
-            with open(exit_path) as f:
-                exit_data = json.load(f)
-        except (OSError, json.JSONDecodeError):
-            try:
-                os.unlink(exit_path)
-            except OSError:
-                pass
+            exit_data = self._load_exit_if_valid(exit_path)
+        except OSError as e:
+            print(
+                f"ck-profile-mcp: job {job_id} exit.json unreadable ({e}); "
+                "leaving it in place",
+                file=sys.stderr,
+            )
+            return status
+        if exit_data is None:
+            self._unlink_logged(job_id, exit_path, "corrupt/gone exit.json")
             return status
         if not status.get("_synced_from_exit"):
             status["state"] = self._terminal_state_from_exit(exit_data)
