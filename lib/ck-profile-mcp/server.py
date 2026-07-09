@@ -9,7 +9,6 @@ import asyncio
 import json
 import os
 import re
-import signal
 import sys
 from pathlib import Path
 
@@ -18,15 +17,6 @@ from mcp.server.fastmcp import FastMCP
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import job_store  # noqa: E402
 import validation  # noqa: E402
-
-# Output subdir per mode under ck_profile_out/, for `ckRemote pull`.
-MODE_OUTPUT_DIR = {
-    "ckStaticProfile": "static",
-    "ckRunProfile": "dynamic",
-    "ckTraceProfile": "trace",
-    "ckCfgProfile": "cfg",
-    "ckComputeProfile": "compute",
-}
 
 _JOBS_DIR = Path(
     os.environ.get(
@@ -67,12 +57,50 @@ async def _run_job(job_id, mode, arch, target, repo, server):
     _owned_jobs.add(job_id)
     try:
         await _run_job_body(job_id, mode, arch, target, repo, server)
+    except asyncio.CancelledError:
+        _write_exit_best_effort(job_id, remote_rc=-1, note="cancelled")
+        raise
+    except Exception as exc:
+        # Any failure here must still reach a terminal state, or the job
+        # stays "running" forever and is_server_busy never releases the server.
+        _write_exit_best_effort(job_id, remote_rc=-1, note=f"exception: {exc}")
     finally:
         _owned_jobs.discard(job_id)
 
 
+def _write_exit_best_effort(job_id, **kwargs):
+    # Runs from a fire-and-forget task; if write_exit itself raises, log it
+    # instead of silently leaving the job non-terminal forever.
+    try:
+        _store.write_exit(job_id, **kwargs)
+    except Exception as exc:
+        print(
+            f"ck-profile-mcp: failed to write exit for job {job_id}: {exc}",
+            file=sys.stderr,
+        )
+
+
+async def _wait_for_exit(proc, timeout_s):
+    """Wait for proc, guaranteeing it's dead (killed and reaped) on any exit
+    path. Returns (rc, timed_out)."""
+    try:
+        rc = await asyncio.wait_for(proc.wait(), timeout=timeout_s)
+        return rc, False
+    except asyncio.TimeoutError:
+        job_store.kill_process_group(proc.pid)
+        await proc.wait()
+        return None, True
+    finally:
+        if proc.returncode is None:
+            job_store.kill_process_group(proc.pid)
+            await proc.wait()
+
+
 async def _run_job_body(job_id, mode, arch, target, repo, server):
     log_path = _store.log_path(job_id)
+    timeout_s = job_store.MODES[mode]["timeout_s"]
+    # arch is passed twice: -a picks the ckRemote server, --arch is forwarded
+    # to the inner ck<Mode>Profile invocation that runs on that server.
     argv = ["ckRemote", "-t", server, "-a", arch, mode, "--arch", arch, target]
     env = dict(os.environ, CK_LOCAL_REPO=repo)
     with open(log_path, "wb") as log_file:
@@ -84,33 +112,51 @@ async def _run_job_body(job_id, mode, arch, target, repo, server):
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
         )
-        _store.set_running(job_id, proc.pid)
-        timeout_s = job_store.MODE_TIMEOUTS_S[mode]
         try:
-            remote_rc = await asyncio.wait_for(proc.wait(), timeout=timeout_s)
-        except asyncio.TimeoutError:
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
-            await proc.wait()
-            _store.write_exit(job_id, remote_rc=None, note="timeout")
-            return
+            _store.set_running(job_id, proc.pid)
+            remote_rc, timed_out = await _wait_for_exit(proc, timeout_s)
+        finally:
+            # Covers set_running raising before _wait_for_exit's own cleanup runs.
+            if proc.returncode is None:
+                job_store.kill_process_group(proc.pid)
+                await proc.wait()
 
+    if timed_out:
+        _store.write_exit(job_id, remote_rc=None, timed_out=True)
+        return
     if remote_rc != 0:
         _store.write_exit(job_id, remote_rc=remote_rc, pull_rc=None)
         return
 
-    _store.set_state(job_id, "pulling")
     pull_argv = [
         "ckRemote",
         "-t",
         server,
         "pull",
-        f"ck_profile_out/{MODE_OUTPUT_DIR[mode]}",
+        f"ck_profile_out/{job_store.MODES[mode]['output_dir']}",
     ]
-    pull_proc = await asyncio.create_subprocess_exec(*pull_argv, cwd=repo, env=env)
-    pull_rc = await pull_proc.wait()
+    with open(log_path, "ab") as log_file:
+        pull_proc = await asyncio.create_subprocess_exec(
+            *pull_argv,
+            cwd=repo,
+            env=env,
+            stdout=log_file,
+            stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            # Resets started_at so the reconciler uses this phase's own
+            # budget (worst case 2 * timeout_s across both phases).
+            _store.set_pulling(job_id, pull_proc.pid)
+            pull_rc, timed_out = await _wait_for_exit(pull_proc, timeout_s)
+        finally:
+            if pull_proc.returncode is None:
+                job_store.kill_process_group(pull_proc.pid)
+                await pull_proc.wait()
+
+    if timed_out:
+        _store.write_exit(job_id, remote_rc=remote_rc, pull_rc=None, timed_out=True)
+        return
     _store.write_exit(job_id, remote_rc=remote_rc, pull_rc=pull_rc)
 
 
@@ -124,9 +170,11 @@ async def run_profile(
     repo = validation.validate_repo(repo)
     validation.validate_target(target, repo)
 
+    # Resolution is a read-only network round-trip; only the busy-check +
+    # create need to be atomic, so the lock is held for just that section.
+    resolved_server = await _resolve_server(arch, server)
     async with _dispatch_lock:
         _store.prune()
-        resolved_server = await _resolve_server(arch, server)
         if _store.is_server_busy(resolved_server):
             raise ValueError(
                 f"server '{resolved_server}' already has a job in flight; rejected (no queue)"
@@ -141,7 +189,9 @@ async def run_profile(
 def get_job_status(job_id: str) -> dict:
     """Poll a job: running -> pulling -> done | failed | pull_failed | timeout."""
     validation.validate_job_id(job_id)
-    return _store.get_status(job_id)
+    status = _store.get_status(job_id)
+    _store.prune()
+    return status
 
 
 @mcp.tool()
@@ -149,7 +199,14 @@ def get_summary(job_id: str) -> dict:
     """Read summary.json for a finished job. Only ckRunProfile emits one; other modes raise."""
     validation.validate_job_id(job_id)
     status = _store.get_status(job_id)
-    mode_dir = Path(status["repo"]) / "ck_profile_out" / MODE_OUTPUT_DIR[status["mode"]]
+    mode_info = job_store.MODES[status["mode"]]
+    if not mode_info["emits_summary"]:
+        raise ValueError(f"mode '{status['mode']}' does not emit a summary.json")
+    if status["state"] != "done":
+        raise ValueError(
+            f"job '{job_id}' has state '{status['state']}', not 'done'; no summary available"
+        )
+    mode_dir = Path(status["repo"]) / "ck_profile_out" / mode_info["output_dir"]
     summary_path = mode_dir / "latest" / "summary.json"
     if not summary_path.exists():
         raise ValueError(

@@ -5,7 +5,10 @@ import os
 import time
 
 import pytest
-from job_store import JobStore
+from job_store import JobStore, _pid_alive
+
+# A PID that (almost certainly) does not exist on this system.
+_DEAD_PID = 999999
 
 
 @pytest.fixture
@@ -24,6 +27,24 @@ def test_create_writes_running_state_with_no_pid(store):
     assert status["pid"] is None
     assert status["mode"] == "ckRunProfile"
     assert status["timeout_s"] == 60 * 60
+
+
+def test_create_raises_value_error_on_job_id_collision(store, monkeypatch):
+    import uuid as uuid_module
+
+    fixed = uuid_module.uuid4()
+    monkeypatch.setattr(uuid_module, "uuid4", lambda: fixed)
+
+    _create(store)
+    with pytest.raises(ValueError, match="collision"):
+        _create(store)
+
+
+def test_modes_mapping_is_read_only():
+    from job_store import MODES
+
+    with pytest.raises(TypeError):
+        MODES["new_mode"] = {"timeout_s": 1, "output_dir": "x", "emits_summary": False}
 
 
 def test_is_server_busy_true_while_non_terminal(store):
@@ -56,25 +77,47 @@ def test_write_exit_pull_failure_marks_pull_failed(store):
     assert store.get_status(job_id)["state"] == "pull_failed"
 
 
-def test_write_exit_timeout_note_marks_timeout(store):
+def test_write_exit_timed_out_marks_timeout(store):
     job_id = _create(store)
-    store.write_exit(job_id, remote_rc=None, note="timeout")
+    store.write_exit(job_id, remote_rc=None, timed_out=True)
     assert store.get_status(job_id)["state"] == "timeout"
 
 
-def test_set_state_pulling_is_not_terminal_and_still_busy(store):
+def test_terminal_state_from_exit_legacy_timeout_note(store):
+    # Back-compat: exit.json sentinels written before the timed_out field
+    # existed used note == "timeout" instead.
+    assert store._terminal_state_from_exit({"note": "timeout"}) == "timeout"
+
+
+def test_set_pulling_resets_timeout_budget_for_pull_phase(store):
+    job_id = _create(store, mode="ckStaticProfile")
+    status = store._read_status(job_id)
+    # Simulate the run phase having already exhausted its own budget.
+    # pid stays None so a misfiring timeout branch can't send a real signal
+    # to this test process — a mutant set_pulling that ignores its `pid`
+    # argument would leave this None untouched.
+    status["started_at"] = time.time() - (status["timeout_s"] + 1)
+    store._write_status(job_id, status)
+
+    store.set_pulling(job_id, os.getpid())
+
+    # If the pull phase reused the run phase's stale started_at, this
+    # reconcile would misfire the job into "timeout" immediately.
+    reconciled = store.get_status(job_id)
+    assert reconciled["state"] == "pulling"
+
+
+def test_set_pulling_is_not_terminal_and_still_busy(store):
     job_id = _create(store, server="shared")
-    store.set_state(job_id, "pulling")
+    store.set_pulling(job_id, None)
     assert store.get_status(job_id)["state"] == "pulling"
     assert store.is_server_busy("shared") is True
 
 
 def test_dead_pid_without_exit_sentinel_marks_failed(store):
     job_id = _create(store)
-    # A PID that (almost certainly) does not exist on this system.
-    dead_pid = 999999
     status = store._read_status(job_id)
-    status["pid"] = dead_pid
+    status["pid"] = _DEAD_PID
     status["proc_start_ticks"] = "123"
     status["started_at"] = time.time()
     store._write_status(job_id, status)
@@ -90,6 +133,28 @@ def test_live_pid_without_exit_sentinel_stays_running(store):
     assert store.get_status(job_id)["state"] == "running"
 
 
+def test_pid_alive_fails_closed_without_recorded_start_ticks():
+    # Without a recorded baseline, PID reuse can't be ruled out — must not
+    # treat a live PID as "our job" just because recorded_start_ticks is None.
+    assert _pid_alive(os.getpid(), None) is False
+
+
+def test_owned_job_with_dead_pid_stays_running(tmp_path):
+    owned = set()
+    store = JobStore(tmp_path / "mcp-jobs", is_owned=lambda job_id: job_id in owned)
+    job_id = _create(store)
+    owned.add(job_id)
+    status = store._read_status(job_id)
+    status["pid"] = _DEAD_PID
+    status["proc_start_ticks"] = "123"
+    status["started_at"] = time.time()
+    store._write_status(job_id, status)
+
+    # is_owned=True means an in-process task still owns this job, so the
+    # dead-PID fallback must not fire even though the PID looks dead.
+    assert store.get_status(job_id)["state"] == "running"
+
+
 def test_timeout_elapsed_kills_and_marks_timeout(store):
     job_id = _create(store, mode="ckStaticProfile")
     store.set_running(job_id, os.getpid())
@@ -100,6 +165,25 @@ def test_timeout_elapsed_kills_and_marks_timeout(store):
 
     reconciled = store.get_status(job_id)
     assert reconciled["state"] == "timeout"
+
+
+def test_timeout_kill_skips_reused_pid(store, monkeypatch):
+    # Regression test: _kill_job must not signal a PID whose start-time ticks
+    # no longer match what was recorded (i.e. the original process is gone
+    # and the PID was reused by something else).
+    job_id = _create(store, mode="ckStaticProfile")
+    store.set_running(job_id, os.getpid())
+    status = store._read_status(job_id)
+    status["started_at"] = time.time() - (status["timeout_s"] + 1)
+    status["proc_start_ticks"] = "not-the-real-ticks"
+    store._write_status(job_id, status)
+
+    calls = []
+    monkeypatch.setattr(os, "killpg", lambda pid, sig: calls.append((pid, sig)))
+
+    reconciled = store.get_status(job_id)
+    assert reconciled["state"] == "timeout"
+    assert calls == []
 
 
 def test_exit_json_written_atomically_via_rename(store, tmp_path, monkeypatch):
@@ -155,12 +239,15 @@ def test_prune_caps_terminal_entries_to_retention_max(store, monkeypatch):
     import job_store as job_store_module
 
     monkeypatch.setattr(job_store_module, "RETENTION_MAX_TERMINAL", 2)
+    fake_now = [1_000_000.0]
+    monkeypatch.setattr(job_store_module.time, "time", lambda: fake_now[0])
+
     ids = []
     for _ in range(4):
         job_id = _create(store)
         store.write_exit(job_id, remote_rc=0, pull_rc=0)
         ids.append(job_id)
-        time.sleep(0.01)
+        fake_now[0] += 1
 
     store.prune()
     remaining = [j for j in ids if store._job_dir(j).exists()]

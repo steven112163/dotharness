@@ -8,23 +8,48 @@ recovers correctly across a server restart.
 
 import json
 import os
+import shutil
 import signal
 import tempfile
 import time
 import uuid
 from pathlib import Path
+from types import MappingProxyType
 
-TERMINAL_STATES = frozenset({"done", "failed", "pull_failed", "timeout", "rejected"})
+TERMINAL_STATES = frozenset({"done", "failed", "pull_failed", "timeout"})
 
-# Mode-aware timeouts: static/cfg are fast local build/disassemble steps; the
-# rest can legitimately run long on a slurm-queued shared server.
-MODE_TIMEOUTS_S = {
-    "ckStaticProfile": 10 * 60,
-    "ckCfgProfile": 10 * 60,
-    "ckRunProfile": 60 * 60,
-    "ckTraceProfile": 60 * 60,
-    "ckComputeProfile": 60 * 60,
-}
+# Single source of truth for mode-aware timeouts, pull output dirs, and
+# summary-emitting capability. Wrapped read-only so nothing can add/remove a
+# mode entry; per-mode dicts stay plain (tests tweak e.g. timeout_s for speed).
+MODES = MappingProxyType(
+    {
+        "ckStaticProfile": {
+            "timeout_s": 10 * 60,
+            "output_dir": "static",
+            "emits_summary": False,
+        },
+        "ckCfgProfile": {
+            "timeout_s": 10 * 60,
+            "output_dir": "cfg",
+            "emits_summary": False,
+        },
+        "ckRunProfile": {
+            "timeout_s": 60 * 60,
+            "output_dir": "dynamic",
+            "emits_summary": True,
+        },
+        "ckTraceProfile": {
+            "timeout_s": 60 * 60,
+            "output_dir": "trace",
+            "emits_summary": False,
+        },
+        "ckComputeProfile": {
+            "timeout_s": 60 * 60,
+            "output_dir": "compute",
+            "emits_summary": False,
+        },
+    }
+)
 
 RETENTION_AGE_S = 24 * 60 * 60
 RETENTION_MAX_TERMINAL = 50
@@ -58,14 +83,23 @@ def _proc_start_ticks(pid):
 
 
 def _pid_alive(pid, recorded_start_ticks):
-    if pid is None:
+    # A None baseline (e.g. a race at spawn) also fails closed: this leaks a
+    # process rather than risk killing an unrelated one that reused the PID.
+    if pid is None or recorded_start_ticks is None:
         return False
     ticks = _proc_start_ticks(pid)
     if ticks is None:
         return False
-    if recorded_start_ticks is not None and ticks != recorded_start_ticks:
+    if ticks != recorded_start_ticks:
         return False  # PID reused by an unrelated process
     return True
+
+
+def kill_process_group(pid):
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
 
 
 class JobStore:
@@ -90,8 +124,11 @@ class JobStore:
         return self._job_dir(job_id) / "log"
 
     def _read_status(self, job_id):
-        with open(self._status_path(job_id)) as f:
-            return json.load(f)
+        try:
+            with open(self._status_path(job_id)) as f:
+                return json.load(f)
+        except FileNotFoundError:
+            raise ValueError(f"unknown job_id '{job_id}'") from None
 
     def _write_status(self, job_id, data):
         _atomic_write_json(self._status_path(job_id), data)
@@ -101,7 +138,11 @@ class JobStore:
         # inside the same lock that guards this call.
         job_id = str(uuid.uuid4())
         job_dir = self._job_dir(job_id)
-        job_dir.mkdir(parents=True)
+        try:
+            # no exist_ok: a uuid4 collision should raise, not silently merge
+            job_dir.mkdir(parents=True)
+        except FileExistsError:
+            raise ValueError(f"job_id collision for '{job_id}'; retry") from None
         status = {
             "job_id": job_id,
             "mode": mode,
@@ -113,7 +154,7 @@ class JobStore:
             "pid": None,
             "proc_start_ticks": None,
             "started_at": None,
-            "timeout_s": MODE_TIMEOUTS_S[mode],
+            "timeout_s": MODES[mode]["timeout_s"],
         }
         self._write_status(job_id, status)
         return job_id
@@ -125,24 +166,36 @@ class JobStore:
         status["started_at"] = time.time()
         self._write_status(job_id, status)
 
-    def set_state(self, job_id, state, **extra):
+    def set_pulling(self, job_id, pid):
+        # Resets started_at so the timeout reconciler checks the pull phase's
+        # own budget, not the run phase's already-elapsed one.
         status = self._read_status(job_id)
-        status["state"] = state
-        status.update(extra)
+        status["state"] = "pulling"
+        status["pid"] = pid
+        status["proc_start_ticks"] = _proc_start_ticks(pid)
+        status["started_at"] = time.time()
         self._write_status(job_id, status)
 
-    def write_exit(self, job_id, remote_rc, pull_rc=None, note=None):
+    def write_exit(self, job_id, remote_rc, pull_rc=None, note=None, timed_out=False):
+        # No-op if already terminal, so a second caller (e.g. an exception
+        # handler racing a successful first write) can't clobber it with a
+        # misleading state.
+        if self._read_status(job_id)["state"] in TERMINAL_STATES:
+            return
         exit_data = {
             "remote_rc": remote_rc,
             "pull_rc": pull_rc,
             "note": note,
+            "timed_out": timed_out,
             "finished_at": time.time(),
         }
         _atomic_write_json(self._exit_path(job_id), exit_data)
         self._reconcile(job_id)
 
     def _terminal_state_from_exit(self, exit_data):
-        if exit_data.get("note") == "timeout":
+        # note == "timeout" is back-compat for sentinels predating timed_out;
+        # safe to delete once RETENTION_AGE_S has passed since that field shipped.
+        if exit_data.get("timed_out") or exit_data.get("note") == "timeout":
             return "timeout"
         if exit_data.get("remote_rc") not in (0, None):
             return "failed"
@@ -150,17 +203,17 @@ class JobStore:
             return "pull_failed"
         return "done"
 
-    def _kill_job(self, job_id, status):
+    def _kill_job(self, status):
+        # Guard against PID reuse: only signal if this is still the same
+        # process we launched, not an unrelated process that reused the PID.
         pid = status.get("pid")
-        if pid is not None:
-            try:
-                os.killpg(pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            except PermissionError:
-                pass
+        if pid is None or not _pid_alive(pid, status.get("proc_start_ticks")):
+            return
+        kill_process_group(pid)
 
     def _reconcile(self, job_id):
+        # Assumes a single writer per job_id (unverified against FastMCP's
+        # threading model); atomic writes bound the damage if that's wrong.
         status = self._read_status(job_id)
         if status["state"] in TERMINAL_STATES:
             return status
@@ -179,8 +232,8 @@ class JobStore:
 
         started_at = status.get("started_at")
         if started_at is not None and time.time() - started_at > status["timeout_s"]:
-            self._kill_job(job_id, status)
-            self.write_exit(job_id, remote_rc=None, note="timeout")
+            self._kill_job(status)
+            self.write_exit(job_id, remote_rc=None, timed_out=True)
             return self._read_status(job_id)
 
         if (
@@ -198,11 +251,14 @@ class JobStore:
     def get_status(self, job_id):
         return self._reconcile(job_id)
 
-    def is_server_busy(self, server):
+    def _iter_reconciled(self):
         for job_dir in self.base_dir.iterdir():
             if not job_dir.is_dir():
                 continue
-            status = self._reconcile(job_dir.name)
+            yield job_dir, self._reconcile(job_dir.name)
+
+    def is_server_busy(self, server):
+        for _, status in self._iter_reconciled():
             if status["server"] == server and status["state"] not in TERMINAL_STATES:
                 return True
         return False
@@ -210,15 +266,11 @@ class JobStore:
     def prune(self):
         # Drop terminal entries older than RETENTION_AGE_S, then cap to the
         # RETENTION_MAX_TERMINAL most recent. Non-terminal jobs are never pruned.
-        import shutil
-
-        terminal = []
-        for job_dir in self.base_dir.iterdir():
-            if not job_dir.is_dir():
-                continue
-            status = self._reconcile(job_dir.name)
-            if status["state"] in TERMINAL_STATES:
-                terminal.append((job_dir, status))
+        terminal = [
+            (job_dir, status)
+            for job_dir, status in self._iter_reconciled()
+            if status["state"] in TERMINAL_STATES
+        ]
 
         now = time.time()
         kept = []
