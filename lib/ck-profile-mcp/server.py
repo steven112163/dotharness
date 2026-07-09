@@ -107,7 +107,6 @@ async def _wait_for_exit(proc, timeout_s):
         rc = await asyncio.wait_for(proc.wait(), timeout=timeout_s)
         return rc, False
     except asyncio.TimeoutError:
-        await _ensure_dead(proc)
         return None, True
     finally:
         await _ensure_dead(proc)

@@ -183,6 +183,14 @@ def test_resolve_server_timeout_kills_hung_select(server, monkeypatch):
     # the wrong process group and silently no-ops, hanging past the timeout.
     monkeypatch.setenv("STUB_CKREMOTE_SELECT_SLEEP_S", "5")
     monkeypatch.setattr(server, "_SELECT_TIMEOUT_S", 0.1)
+    real_kill = server.job_store.kill_process_group
+    killed = []
+
+    def spy_kill(pid):
+        killed.append(pid)
+        real_kill(pid)
+
+    monkeypatch.setattr(server.job_store, "kill_process_group", spy_kill)
 
     async def run():
         with pytest.raises(ValueError, match="timed out"):
@@ -191,6 +199,11 @@ def test_resolve_server_timeout_kills_hung_select(server, monkeypatch):
     start = time.monotonic()
     asyncio.run(run())
     assert time.monotonic() - start < 4
+    # Confirms the process was actually reachable and killed, not just that
+    # asyncio.wait_for's own timeout fired while the stub kept running.
+    assert len(killed) == 1
+    with pytest.raises(ProcessLookupError):
+        os.kill(killed[0], 0)
 
 
 def test_run_profile_normalizes_path_target_in_dispatch_argv(

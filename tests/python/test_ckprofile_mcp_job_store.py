@@ -3,6 +3,7 @@
 import json
 import os
 import time
+from pathlib import Path
 
 import pytest
 from job_store import JobStore, _pid_alive
@@ -180,6 +181,44 @@ def test_timeout_kill_skips_reused_pid(store, monkeypatch):
     assert calls == []
 
 
+def test_corrupt_exit_json_does_not_wedge_a_timed_out_job(store):
+    # Regression: a corrupt exit.json (crash, filesystem damage, or leftover
+    # from a restart) used to permanently block write_exit's os.link inside
+    # the timeout fallback, wedging the job in "running" forever.
+    job_id = _create(store, mode="ckStaticProfile")
+    store.set_running(job_id, os.getpid())
+    status = store._read_status(job_id)
+    status["started_at"] = time.time() - (status["timeout_s"] + 1)
+    status["pid"] = None  # avoid sending a real signal to this test process
+    store._write_status(job_id, status)
+    store._exit_path(job_id).write_text("not valid json")
+
+    reconciled = store.get_status(job_id)
+    assert reconciled["state"] == "timeout"
+
+
+def test_exit_json_read_race_falls_through_instead_of_raising(store, monkeypatch):
+    # Regression: exit_path.exists() then open() is a TOCTOU race with
+    # prune() removing the file in between; open() raises FileNotFoundError,
+    # an OSError, not the json.JSONDecodeError the old code caught.
+    job_id = _create(store, mode="ckStaticProfile")
+    store.set_running(job_id, os.getpid())
+    status = store._read_status(job_id)
+    status["started_at"] = time.time() - (status["timeout_s"] + 1)
+    status["pid"] = None
+    store._write_status(job_id, status)
+    exit_path = store._exit_path(job_id)
+    real_exists = Path.exists
+
+    def fake_exists(self):
+        return True if self == exit_path else real_exists(self)
+
+    monkeypatch.setattr(Path, "exists", fake_exists)  # exit_path never actually exists
+
+    reconciled = store.get_status(job_id)
+    assert reconciled["state"] == "timeout"
+
+
 def test_owned_job_past_timeout_is_not_reconciled_as_timeout(tmp_path):
     # Regression for the race where a concurrent reconcile could time out a
     # job microseconds before the owning task's own write_exit call landed.
@@ -242,24 +281,40 @@ def test_write_exit_after_dead_pid_guess_overwrites_it(store):
     assert store.get_status(job_id)["state"] == "done"
 
 
-def test_exit_json_written_atomically_via_rename(store, tmp_path, monkeypatch):
+def test_exit_json_written_atomically_via_hardlink(store, monkeypatch):
     job_id = _create(store)
-    seen_tmp_files = []
-    real_replace = os.replace
-
-    def spy_replace(src, dst):
-        seen_tmp_files.append(src)
-        real_replace(src, dst)
-
-    monkeypatch.setattr(os, "replace", spy_replace)
-    store.write_exit(job_id, remote_rc=0, pull_rc=0)
-    assert len(seen_tmp_files) >= 1
-    for tmp in seen_tmp_files:
-        assert not os.path.exists(tmp)  # renamed away, not left behind
     exit_path = store._exit_path(job_id)
+    seen_links = []
+    real_link = os.link
+
+    def spy_link(src, dst):
+        seen_links.append((src, dst))
+        real_link(src, dst)
+
+    monkeypatch.setattr(os, "link", spy_link)
+    store.write_exit(job_id, remote_rc=0, pull_rc=0)
+    matches = [(src, dst) for src, dst in seen_links if Path(dst) == exit_path]
+    assert matches
+    for src, _ in matches:
+        assert not os.path.exists(src)  # temp file cleaned up after linking
     with open(exit_path) as f:
         data = json.load(f)
     assert data["remote_rc"] == 0
+
+
+def test_write_exit_never_leaves_a_partial_file(store, monkeypatch):
+    job_id = _create(store)
+    exit_path = store._exit_path(job_id)
+    real_dump = json.dump
+
+    def failing_dump(*args, **kwargs):
+        real_dump(*args, **kwargs)
+        raise RuntimeError("simulated crash mid-write")
+
+    monkeypatch.setattr(json, "dump", failing_dump)
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        store.write_exit(job_id, remote_rc=0, pull_rc=0)
+    assert not exit_path.exists()  # never hardlinked; no partial file visible
 
 
 def test_prune_removes_old_terminal_entries(store):
