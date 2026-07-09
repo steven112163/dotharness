@@ -8,22 +8,21 @@ import re
 import uuid
 from pathlib import Path
 
+import job_store
+
 # Same regex as ckCommon::_validate_arch, kept in sync manually (bash vs. Python).
 _ARCH_RE = re.compile(r"^gfx[0-9a-z]{1,16}$")
 _TARGET_CHARS_RE = re.compile(r"^[A-Za-z0-9_./:+-]+$")
 
-MODES = (
-    "ckStaticProfile",
-    "ckRunProfile",
-    "ckTraceProfile",
-    "ckCfgProfile",
-    "ckComputeProfile",
-)
+# Sourced from job_store.MODES so mode names stay in sync with timeouts/output dirs.
+MODE_NAMES = tuple(job_store.MODES.keys())
 
 
 def validate_mode(mode):
-    if mode not in MODES:
-        raise ValueError(f"invalid mode '{mode}' (want one of: {', '.join(MODES)})")
+    if mode not in MODE_NAMES:
+        raise ValueError(
+            f"invalid mode '{mode}' (want one of: {', '.join(MODE_NAMES)})"
+        )
     return mode
 
 

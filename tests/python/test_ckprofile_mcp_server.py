@@ -21,6 +21,7 @@ STUB_CKREMOTE = """#!/usr/bin/env python3
 import json
 import os
 import sys
+import time
 
 log_path = os.environ["STUB_CKREMOTE_LOG"]
 with open(log_path, "a") as f:
@@ -31,8 +32,12 @@ if "select" in sys.argv:
     sys.exit(0)
 
 if "pull" in sys.argv:
+    time.sleep(float(os.environ.get("STUB_CKREMOTE_PULL_SLEEP_S", "0")))
+    print("pull-phase-stdout-marker")
     sys.exit(int(os.environ.get("STUB_CKREMOTE_PULL_RC", "0")))
 
+time.sleep(float(os.environ.get("STUB_CKREMOTE_RUN_SLEEP_S", "0")))
+print("run-phase-stdout-marker")
 sys.exit(int(os.environ.get("STUB_CKREMOTE_RUN_RC", "0")))
 """
 
@@ -76,14 +81,23 @@ def _read_calls(log_path):
     return [json.loads(line) for line in log_path.read_text().splitlines()]
 
 
+_POLL_MAX_ITERS = 200
+_POLL_INTERVAL_S = 0.02
+
+
+async def _wait_for_terminal_job(server, job_id):
+    for _ in range(_POLL_MAX_ITERS):
+        status = server.get_job_status(job_id)
+        if status["state"] not in ("running", "pulling"):
+            return status
+        await asyncio.sleep(_POLL_INTERVAL_S)
+    raise AssertionError("job did not finish in time")
+
+
 async def _run_and_wait(server, mode, target, repo):
     result = await server.run_profile(mode, "gfx942", target, str(repo))
-    for _ in range(200):
-        status = server.get_job_status(result["job_id"])
-        if status["state"] not in ("running", "pulling"):
-            return result, status
-        await asyncio.sleep(0.02)
-    raise AssertionError("job did not finish in time")
+    status = await _wait_for_terminal_job(server, result["job_id"])
+    return result, status
 
 
 def test_run_profile_happy_path_reaches_done(server, ck_repo, monkeypatch):
@@ -113,6 +127,20 @@ def test_run_profile_happy_path_reaches_done(server, ck_repo, monkeypatch):
     assert pull_argv == ["-t", "stubserver", "pull", "ck_profile_out/dynamic"]
 
 
+def test_run_and_pull_stdout_redirected_to_job_log(server, ck_repo, monkeypatch):
+    monkeypatch.delenv("STUB_CKREMOTE_RUN_RC", raising=False)
+    monkeypatch.delenv("STUB_CKREMOTE_PULL_RC", raising=False)
+
+    result, status = asyncio.run(
+        _run_and_wait(server, "ckRunProfile", "test_gemm", ck_repo)
+    )
+    assert status["state"] == "done"
+
+    log_contents = server._store.log_path(result["job_id"]).read_text()
+    assert "run-phase-stdout-marker" in log_contents
+    assert "pull-phase-stdout-marker" in log_contents
+
+
 def test_run_profile_dispatch_failure_marks_failed(server, ck_repo, monkeypatch):
     monkeypatch.setenv("STUB_CKREMOTE_RUN_RC", "1")
 
@@ -127,6 +155,99 @@ def test_run_profile_pull_failure_marks_pull_failed(server, ck_repo, monkeypatch
 
     _, status = asyncio.run(_run_and_wait(server, "ckRunProfile", "test_gemm", ck_repo))
     assert status["state"] == "pull_failed"
+
+
+def test_pull_phase_timeout_kills_and_marks_timeout(server, ck_repo, monkeypatch):
+    # A hanging pull phase must reach "timeout". The active wait_for and the
+    # lazy reconciler share status.timeout_s, so either may catch it first —
+    # intentional defense in depth, not a test-isolation gap.
+    monkeypatch.setenv("STUB_CKREMOTE_PULL_SLEEP_S", "5")
+
+    async def run():
+        result = await server.run_profile(
+            "ckStaticProfile", "gfx942", "test_gemm", str(ck_repo)
+        )
+        # Shrink this job's own budget rather than the shared MODES entry,
+        # which other concurrent/later tests also read.
+        status = server._store._read_status(result["job_id"])
+        status["timeout_s"] = 0.1
+        server._store._write_status(result["job_id"], status)
+        return await _wait_for_terminal_job(server, result["job_id"])
+
+    status = asyncio.run(run())
+    assert status["state"] == "timeout"
+
+
+def test_cancelled_task_kills_subprocess_and_marks_terminal(
+    server, ck_repo, monkeypatch
+):
+    monkeypatch.setenv("STUB_CKREMOTE_RUN_SLEEP_S", "5")
+    real_kill = server.job_store.kill_process_group
+    killed = []
+
+    def spy_kill(pid):
+        killed.append(pid)
+        real_kill(pid)
+
+    monkeypatch.setattr(server.job_store, "kill_process_group", spy_kill)
+
+    async def run():
+        job_id = server._store.create(
+            "ckRunProfile", "gfx942", "test_gemm", str(ck_repo), "stubserver"
+        )
+        task = asyncio.create_task(
+            server._run_job(
+                job_id,
+                "ckRunProfile",
+                "gfx942",
+                "test_gemm",
+                str(ck_repo),
+                "stubserver",
+            )
+        )
+        for _ in range(_POLL_MAX_ITERS):
+            if server.get_job_status(job_id)["pid"] is not None:
+                break
+            await asyncio.sleep(_POLL_INTERVAL_S)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return job_id
+
+    job_id = asyncio.run(run())
+    status = server.get_job_status(job_id)
+    assert status["state"] == "failed"
+    assert len(killed) == 1
+
+
+def test_run_job_body_kills_subprocess_on_exception_before_timeout_branch(
+    server, ck_repo, monkeypatch
+):
+    # Any exception before normal completion, not just TimeoutError, must
+    # still kill the process group or it leaks running after the job goes terminal.
+    killed = []
+    monkeypatch.setattr(
+        server.job_store, "kill_process_group", lambda pid: killed.append(pid)
+    )
+
+    def boom_set_running(job_id, pid):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(server._store, "set_running", boom_set_running)
+
+    async def run():
+        job_id = server._store.create(
+            "ckRunProfile", "gfx942", "test_gemm", str(ck_repo), "stubserver"
+        )
+        await server._run_job(
+            job_id, "ckRunProfile", "gfx942", "test_gemm", str(ck_repo), "stubserver"
+        )
+        return job_id
+
+    job_id = asyncio.run(run())
+    status = server.get_job_status(job_id)
+    assert status["state"] == "failed"
+    assert len(killed) == 1
 
 
 async def _run_twice_same_server(server, ck_repo):
@@ -156,17 +277,11 @@ def test_run_profile_rejects_invalid_target(server, ck_repo):
 async def _run_and_get_summary(server, ck_repo, mode, summary_contents):
     result = await server.run_profile(mode, "gfx942", "test_gemm", str(ck_repo))
     if summary_contents is not None:
-        mode_dir = "dynamic" if mode == "ckRunProfile" else "static"
+        mode_dir = server.job_store.MODES[mode]["output_dir"]
         summary_dir = ck_repo / "ck_profile_out" / mode_dir / "latest"
         summary_dir.mkdir(parents=True)
         (summary_dir / "summary.json").write_text(json.dumps(summary_contents))
-    for _ in range(200):
-        status = server.get_job_status(result["job_id"])
-        if status["state"] not in ("running", "pulling"):
-            break
-        await asyncio.sleep(0.02)
-    else:
-        raise AssertionError("job did not finish in time")
+    await _wait_for_terminal_job(server, result["job_id"])
     return result
 
 
@@ -190,6 +305,50 @@ def test_get_summary_missing_json_raises_actionable_error(server, ck_repo, monke
     monkeypatch.delenv("STUB_CKREMOTE_RUN_RC", raising=False)
     monkeypatch.delenv("STUB_CKREMOTE_PULL_RC", raising=False)
 
-    result = asyncio.run(_run_and_get_summary(server, ck_repo, "ckStaticProfile", None))
+    result = asyncio.run(_run_and_get_summary(server, ck_repo, "ckRunProfile", None))
     with pytest.raises(ValueError, match="no summary.json"):
+        server.get_summary(result["job_id"])
+
+
+def test_get_summary_not_done_raises(server, ck_repo):
+    async def run():
+        result = await server.run_profile(
+            "ckRunProfile", "gfx942", "test_gemm", str(ck_repo)
+        )
+        with pytest.raises(ValueError, match="not 'done'"):
+            server.get_summary(result["job_id"])
+        await _wait_for_terminal_job(server, result["job_id"])
+
+    asyncio.run(run())
+
+
+def test_run_job_exception_before_set_running_reaches_failed(
+    server, ck_repo, monkeypatch
+):
+    async def boom(*args, **kwargs):
+        raise RuntimeError("simulated failure before set_running")
+
+    monkeypatch.setattr(server, "_run_job_body", boom)
+
+    async def run():
+        job_id = server._store.create(
+            "ckRunProfile", "gfx942", "test_gemm", str(ck_repo), "stubserver"
+        )
+        await server._run_job(
+            job_id, "ckRunProfile", "gfx942", "test_gemm", str(ck_repo), "stubserver"
+        )
+        return job_id
+
+    job_id = asyncio.run(run())
+    status = server.get_job_status(job_id)
+    assert status["state"] == "failed"
+    assert "simulated failure" in status["note"]
+
+
+def test_get_summary_wrong_mode_raises(server, ck_repo, monkeypatch):
+    monkeypatch.delenv("STUB_CKREMOTE_RUN_RC", raising=False)
+    monkeypatch.delenv("STUB_CKREMOTE_PULL_RC", raising=False)
+
+    result = asyncio.run(_run_and_get_summary(server, ck_repo, "ckStaticProfile", None))
+    with pytest.raises(ValueError, match="does not emit a summary"):
         server.get_summary(result["job_id"])
