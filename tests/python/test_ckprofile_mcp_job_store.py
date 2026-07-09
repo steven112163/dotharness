@@ -256,6 +256,42 @@ def test_iter_reconciled_prunes_job_dir_missing_status_json(store):
     assert not store._job_dir(job_id).exists()
 
 
+def test_write_exit_replaces_corrupt_existing_exit_json(store):
+    # Regression (blocker #1, round 8): a corrupt/stale exit.json occupying
+    # the hardlink target used to make write_exit silently discard a real
+    # result. It must instead clear the corrupt file and retry the link.
+    job_id = _create(store)
+    store._exit_path(job_id).write_text("not valid json garbage")
+
+    store.write_exit(job_id, remote_rc=0, pull_rc=0, summary_path="/repo/summary.json")
+
+    status = store.get_status(job_id)
+    assert status["state"] == "done"
+    assert status["summary_path"] == "/repo/summary.json"
+
+
+def test_sync_exit_leaves_permission_denied_exit_json_alone(store, monkeypatch):
+    # Regression (blocker #2, round 8): a permission/IO error reading
+    # exit.json doesn't mean the content is corrupt, so it must not be
+    # treated as safe to discard the way a JSONDecodeError is.
+    job_id = _create(store)
+    exit_path = store._exit_path(job_id)
+    exit_path.write_text(json.dumps({"remote_rc": 0, "pull_rc": 0}))
+    status = store._read_status(job_id)
+    real_open = open
+
+    def failing_open(path, *args, **kwargs):
+        if Path(path) == exit_path:
+            raise PermissionError("simulated permission denied")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", failing_open)
+    result = store._sync_exit_if_present(job_id, status)
+
+    assert result["state"] == "running"  # left alone, not guessed/discarded
+    assert exit_path.exists()  # not unlinked
+
+
 def test_write_exit_first_writer_wins(store):
     job_id = _create(store)
     store.write_exit(job_id, remote_rc=0, pull_rc=0)
