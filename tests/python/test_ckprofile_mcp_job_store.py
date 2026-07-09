@@ -292,6 +292,44 @@ def test_sync_exit_leaves_permission_denied_exit_json_alone(store, monkeypatch):
     assert exit_path.exists()  # not unlinked
 
 
+def test_load_exit_if_valid_rejects_non_dict_json(store):
+    # Regression (blocker #2, round 9): syntactically valid JSON that isn't
+    # an object (e.g. a stray list) used to be trusted as a real sentinel,
+    # crashing get_status with AttributeError on exit_data.get(...).
+    job_id = _create(store, mode="ckStaticProfile")
+    store._exit_path(job_id).write_text("[1, 2, 3]")
+
+    status = store.get_status(job_id)  # must not raise
+    assert status["state"] == "running"
+    assert not store._exit_path(job_id).exists()  # treated as corrupt, discarded
+
+
+def test_write_exit_forces_result_into_status_when_existing_exit_json_unreadable(
+    store, monkeypatch
+):
+    # Regression (blocker #1, round 9): a *persistent* OSError reading the
+    # file blocking os.link (not corrupt, not gone) used to make write_exit
+    # silently drop its own real result. It must land the result directly in
+    # status.json instead, since that write has no hardlink race to lose.
+    job_id = _create(store)
+    exit_path = store._exit_path(job_id)
+    exit_path.write_text(json.dumps({"remote_rc": 1, "pull_rc": 1}))
+    real_open = open
+
+    def failing_open(path, *args, **kwargs):
+        if Path(path) == exit_path:
+            raise PermissionError("simulated permission denied")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", failing_open)
+    store.write_exit(job_id, remote_rc=0, pull_rc=0, summary_path="/repo/summary.json")
+    monkeypatch.undo()
+
+    status = store.get_status(job_id)
+    assert status["state"] == "done"
+    assert status["summary_path"] == "/repo/summary.json"
+
+
 def test_write_exit_first_writer_wins(store):
     job_id = _create(store)
     store.write_exit(job_id, remote_rc=0, pull_rc=0)

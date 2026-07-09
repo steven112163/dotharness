@@ -60,7 +60,7 @@ def validate_target(target, repo):
         raise ValueError(f"invalid target '{target}' (allowed: A-Za-z0-9_./:+-)")
     if "/" not in target:
         return target
-    repo_root = Path(repo).resolve()
+    repo_root = Path(repo)  # validate_repo already returns a resolved path
     resolved = (repo_root / target).resolve()
     try:
         rel = resolved.relative_to(repo_root)

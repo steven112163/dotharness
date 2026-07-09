@@ -153,6 +153,27 @@ def test_run_profile_dispatch_failure_marks_failed(server, ck_repo, monkeypatch)
     assert status["state"] == "failed"
 
 
+def test_subprocess_calls_set_stdin_devnull(server, ck_repo, monkeypatch):
+    # Regression (blocker #3, round 9): without stdin=DEVNULL, every
+    # ckRemote child inherits the MCP server's own stdio-transport JSON-RPC
+    # pipe on fd 0, letting it read from (and corrupt) the protocol stream.
+    monkeypatch.delenv("STUB_CKREMOTE_RUN_RC", raising=False)
+    monkeypatch.delenv("STUB_CKREMOTE_PULL_RC", raising=False)
+    seen_stdins = []
+    real_create = asyncio.create_subprocess_exec
+
+    async def spying_create(*args, **kwargs):
+        seen_stdins.append(kwargs.get("stdin"))
+        return await real_create(*args, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spying_create)
+
+    asyncio.run(_run_and_wait(server, "ckRunProfile", "test_gemm", ck_repo))
+
+    assert len(seen_stdins) == 3  # select, run dispatch, pull dispatch
+    assert all(s == asyncio.subprocess.DEVNULL for s in seen_stdins)
+
+
 def test_run_profile_pull_failure_marks_pull_failed(server, ck_repo, monkeypatch):
     monkeypatch.setenv("STUB_CKREMOTE_PULL_RC", "1")
 

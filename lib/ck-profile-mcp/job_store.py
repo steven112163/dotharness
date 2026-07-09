@@ -21,6 +21,10 @@ from types import MappingProxyType
 
 TERMINAL_STATES = frozenset({"done", "failed", "pull_failed", "timeout"})
 
+# starttime is /proc/<pid>/stat field 22 overall, index 19 after splitting off
+# the "pid (comm)" prefix (fields 1-2).
+_STAT_STARTTIME_INDEX = 19
+
 # Single source of truth for mode-aware timeouts, pull output dirs, and
 # summary-emitting capability. Wrapped read-only so nothing can add/remove a
 # mode entry; per-mode dicts stay plain (tests tweak e.g. timeout_s for speed).
@@ -82,7 +86,7 @@ def _proc_start_ticks(pid):
             raw = f.read()
         # comm (field 2) may contain spaces/parens; split after its closing ')'.
         after = raw.rsplit(")", 1)[1].split()
-        return after[19]  # starttime is field 22 overall, index 19 after the split
+        return after[_STAT_STARTTIME_INDEX]
     except (OSError, IndexError):
         return None
 
@@ -212,8 +216,7 @@ class JobStore:
             try:
                 os.link(tmp, exit_path)
             except FileExistsError:
-                if not self._discard_or_replace_stale_exit(job_id, exit_path, tmp):
-                    return
+                self._land_exit_after_race(job_id, exit_path, tmp, exit_data)
         finally:
             try:
                 os.unlink(tmp)
@@ -221,50 +224,59 @@ class JobStore:
                 pass
         self._reconcile(job_id)
 
-    def _discard_or_replace_stale_exit(self, job_id, exit_path, tmp):
-        """Handle os.link losing the race to an existing exit.json. A valid
-        existing file wins (true first-writer-wins); a corrupt/gone one is
-        cleared so this call's real result can be linked in instead. Returns
-        True if tmp was linked into exit_path, False if the caller should
-        give up (its data is left in tmp for the finally block to clean up)."""
+    def _land_exit_after_race(self, job_id, exit_path, tmp, exit_data):
+        """os.link lost the race to an existing exit.json. A valid existing
+        file wins (true first-writer-wins) since it already represents a real
+        result. Anything else — corrupt, gone, or unreadable — would silently
+        drop this call's own real result, so it's landed instead: by clearing
+        the obstruction and retrying the link, or as a last resort by writing
+        straight into status.json, which has no hardlink race to lose."""
         try:
             existing = self._load_exit_if_valid(exit_path)
         except OSError as e:
             print(
                 f"ck-profile-mcp: write_exit for job {job_id} found an unreadable "
-                f"existing exit.json ({e}); leaving it in place",
+                f"existing exit.json ({e}); recording this result in status.json instead",
                 file=sys.stderr,
             )
-            return False
+            self._force_exit_into_status(job_id, exit_data)
+            return
         if existing is not None:
             print(
                 f"ck-profile-mcp: write_exit for job {job_id} raced with an "
                 "existing valid exit.json; keeping it",
                 file=sys.stderr,
             )
-            return False
+            return
         self._unlink_logged(job_id, exit_path, "corrupt/stale exit.json before retry")
         try:
             os.link(tmp, exit_path)
         except FileExistsError:
             print(
                 f"ck-profile-mcp: write_exit for job {job_id} exit.json race "
-                "persisted after cleanup retry; giving up",
+                "persisted after cleanup retry; recording this result in status.json instead",
                 file=sys.stderr,
             )
-            return False
-        return True
+            self._force_exit_into_status(job_id, exit_data)
+
+    def _force_exit_into_status(self, job_id, exit_data):
+        """Persist exit_data straight into status.json, bypassing exit.json
+        entirely, so a result is never lost to its hardlink race."""
+        status = self._read_status(job_id)
+        self._apply_exit_data(status, exit_data)
+        self._write_status(job_id, status)
 
     @staticmethod
     def _load_exit_if_valid(exit_path):
-        """Parsed exit.json, or None if missing/corrupt (safe to discard).
-        Other OSErrors (permission, I/O) propagate: those don't mean the
-        content is bad, so callers must not treat them as safe to unlink."""
+        """Parsed exit.json, or None if missing/corrupt/not an object (safe to
+        discard). Other OSErrors (permission, I/O) propagate: those don't mean
+        the content is bad, so callers must not treat them as safe to unlink."""
         try:
             with open(exit_path) as f:
-                return json.load(f)
+                data = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             return None
+        return data if isinstance(data, dict) else None
 
     @staticmethod
     def _unlink_logged(job_id, path, reason):
@@ -284,6 +296,18 @@ class JobStore:
         if exit_data.get("pull_rc") not in (0, None):
             return "pull_failed"
         return "done"
+
+    def _apply_exit_data(self, status, exit_data):
+        """Copy exit_data's fields into status in place, marking it synced.
+        Single source of truth for the exit.json -> status.json field list,
+        shared by the normal sync path and the status.json-fallback path."""
+        status["state"] = self._terminal_state_from_exit(exit_data)
+        status["remote_rc"] = exit_data.get("remote_rc")
+        status["pull_rc"] = exit_data.get("pull_rc")
+        status["note"] = exit_data.get("note")
+        status["summary_path"] = exit_data.get("summary_path")
+        status["finished_at"] = exit_data.get("finished_at")
+        status["_synced_from_exit"] = True
 
     def _kill_job(self, status):
         # Guard against PID reuse: only signal if this is still the same
@@ -316,13 +340,7 @@ class JobStore:
             self._unlink_logged(job_id, exit_path, "corrupt/gone exit.json")
             return status
         if not status.get("_synced_from_exit"):
-            status["state"] = self._terminal_state_from_exit(exit_data)
-            status["remote_rc"] = exit_data.get("remote_rc")
-            status["pull_rc"] = exit_data.get("pull_rc")
-            status["note"] = exit_data.get("note")
-            status["summary_path"] = exit_data.get("summary_path")
-            status["finished_at"] = exit_data.get("finished_at")
-            status["_synced_from_exit"] = True
+            self._apply_exit_data(status, exit_data)
             self._write_status(job_id, status)
         return status
 
@@ -342,10 +360,9 @@ class JobStore:
         if status.get("pid") is not None and not _pid_alive(
             status["pid"], status.get("proc_start_ticks")
         ):
-            status["state"] = "failed"
-            status["note"] = "subprocess died before writing a terminal sentinel"
-            self._write_status(job_id, status)
-            return status
+            return self._mark_failed(
+                job_id, status, "subprocess died before writing a terminal sentinel"
+            )
 
         # Crashed between create() and set_running(): pid never got set, so
         # neither fallback above ever fires. Time out from created_at instead,
@@ -356,11 +373,16 @@ class JobStore:
             and created_at is not None
             and time.time() - created_at > status["timeout_s"]
         ):
-            status["state"] = "failed"
-            status["note"] = "job never started running (server likely restarted)"
-            self._write_status(job_id, status)
-            return status
+            return self._mark_failed(
+                job_id, status, "job never started running (server likely restarted)"
+            )
 
+        return status
+
+    def _mark_failed(self, job_id, status, note):
+        status["state"] = "failed"
+        status["note"] = note
+        self._write_status(job_id, status)
         return status
 
     def _reconcile(self, job_id):
