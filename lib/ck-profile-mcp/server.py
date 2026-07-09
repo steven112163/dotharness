@@ -43,6 +43,7 @@ async def _resolve_server(arch, forced_server):
     argv += ["-a", arch, "select"]
     proc = await asyncio.create_subprocess_exec(
         *argv,
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=True,
@@ -125,6 +126,7 @@ async def _run_job_body(job_id, mode, arch, target, repo, server):
             *argv,
             cwd=repo,
             env=env,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=log_file,
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
@@ -155,6 +157,7 @@ async def _run_job_body(job_id, mode, arch, target, repo, server):
             *pull_argv,
             cwd=repo,
             env=env,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=log_file,
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
