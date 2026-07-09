@@ -51,6 +51,8 @@ MODES = MappingProxyType(
     }
 )
 
+# Keep a day of history for debugging a failed run, but cap total dirs so a
+# quiet server doesn't accumulate job dirs forever.
 RETENTION_AGE_S = 24 * 60 * 60
 RETENTION_MAX_TERMINAL = 50
 
@@ -153,6 +155,7 @@ class JobStore:
             "state": "running",
             "pid": None,
             "proc_start_ticks": None,
+            "created_at": time.time(),
             "started_at": None,
             "timeout_s": MODES[mode]["timeout_s"],
         }
@@ -176,26 +179,36 @@ class JobStore:
         status["started_at"] = time.time()
         self._write_status(job_id, status)
 
-    def write_exit(self, job_id, remote_rc, pull_rc=None, note=None, timed_out=False):
-        # No-op if already terminal, so a second caller (e.g. an exception
-        # handler racing a successful first write) can't clobber it with a
-        # misleading state.
-        if self._read_status(job_id)["state"] in TERMINAL_STATES:
-            return
+    def write_exit(
+        self,
+        job_id,
+        remote_rc,
+        pull_rc=None,
+        note=None,
+        timed_out=False,
+        summary_path=None,
+    ):
         exit_data = {
             "remote_rc": remote_rc,
             "pull_rc": pull_rc,
             "note": note,
             "timed_out": timed_out,
+            "summary_path": summary_path,
             "finished_at": time.time(),
         }
-        _atomic_write_json(self._exit_path(job_id), exit_data)
+        exit_path = self._exit_path(job_id)
+        # O_EXCL makes first-writer-wins atomic: a second caller (e.g. an
+        # exception handler racing a successful first write) fails the claim
+        # instead of a check-then-write race on a separately-read status.json.
+        try:
+            os.close(os.open(exit_path, os.O_CREAT | os.O_EXCL))
+        except FileExistsError:
+            return
+        _atomic_write_json(exit_path, exit_data)
         self._reconcile(job_id)
 
     def _terminal_state_from_exit(self, exit_data):
-        # note == "timeout" is back-compat for sentinels predating timed_out;
-        # safe to delete once RETENTION_AGE_S has passed since that field shipped.
-        if exit_data.get("timed_out") or exit_data.get("note") == "timeout":
+        if exit_data.get("timed_out"):
             return "timeout"
         if exit_data.get("remote_rc") not in (0, None):
             return "failed"
@@ -215,34 +228,71 @@ class JobStore:
         # Assumes a single writer per job_id (unverified against FastMCP's
         # threading model); atomic writes bound the damage if that's wrong.
         status = self._read_status(job_id)
+
+        # Checked before the terminal short-circuit below: a fallback branch
+        # (dead-PID, timeout-by-created_at) may have already guessed a
+        # terminal state before the real exit.json landed. Always sync the
+        # real result in when it shows up, rather than freezing the guess.
+        exit_path = self._exit_path(job_id)
+        if exit_path.exists():
+            try:
+                with open(exit_path) as f:
+                    exit_data = json.load(f)
+            except json.JSONDecodeError:
+                # write_exit claimed the file (O_EXCL) but hasn't finished the
+                # atomic write yet; treat as still in-flight and retry later.
+                return status
+            if not status.get("_synced_from_exit"):
+                status["state"] = self._terminal_state_from_exit(exit_data)
+                status["remote_rc"] = exit_data.get("remote_rc")
+                status["pull_rc"] = exit_data.get("pull_rc")
+                status["note"] = exit_data.get("note")
+                status["summary_path"] = exit_data.get("summary_path")
+                status["finished_at"] = exit_data.get("finished_at")
+                status["_synced_from_exit"] = True
+                self._write_status(job_id, status)
+            return status
+
         if status["state"] in TERMINAL_STATES:
             return status
 
-        exit_path = self._exit_path(job_id)
-        if exit_path.exists():
-            with open(exit_path) as f:
-                exit_data = json.load(f)
-            status["state"] = self._terminal_state_from_exit(exit_data)
-            status["remote_rc"] = exit_data.get("remote_rc")
-            status["pull_rc"] = exit_data.get("pull_rc")
-            status["note"] = exit_data.get("note")
-            status["finished_at"] = exit_data.get("finished_at")
-            self._write_status(job_id, status)
-            return status
+        # Owned jobs skip both fallbacks below: the owning task's own
+        # write_exit call can race ahead of a concurrent reconciler here, and
+        # must be allowed to land the real result instead of a guess.
+        owned = self._is_owned(job_id)
 
         started_at = status.get("started_at")
-        if started_at is not None and time.time() - started_at > status["timeout_s"]:
+        if (
+            not owned
+            and started_at is not None
+            and time.time() - started_at > status["timeout_s"]
+        ):
             self._kill_job(status)
             self.write_exit(job_id, remote_rc=None, timed_out=True)
             return self._read_status(job_id)
 
         if (
-            not self._is_owned(job_id)
+            not owned
             and status.get("pid") is not None
             and not _pid_alive(status["pid"], status.get("proc_start_ticks"))
         ):
             status["state"] = "failed"
             status["note"] = "subprocess died before writing a terminal sentinel"
+            self._write_status(job_id, status)
+            return status
+
+        # Crashed between create() and set_running(): pid never got set, so
+        # neither fallback above ever fires. Time out from created_at instead,
+        # or the job (and is_server_busy for its server) wedges forever.
+        created_at = status.get("created_at")
+        if (
+            not owned
+            and status.get("pid") is None
+            and created_at is not None
+            and time.time() - created_at > status["timeout_s"]
+        ):
+            status["state"] = "failed"
+            status["note"] = "job never started running (server likely restarted)"
             self._write_status(job_id, status)
             return status
 
@@ -252,10 +302,16 @@ class JobStore:
         return self._reconcile(job_id)
 
     def _iter_reconciled(self):
+        # A job dir with no status.json (e.g. create() crashed between mkdir
+        # and the write) makes _reconcile raise ValueError; treat it as
+        # prunable garbage rather than letting it break every job-store call.
         for job_dir in self.base_dir.iterdir():
             if not job_dir.is_dir():
                 continue
-            yield job_dir, self._reconcile(job_dir.name)
+            try:
+                yield job_dir, self._reconcile(job_dir.name)
+            except ValueError:
+                shutil.rmtree(job_dir, ignore_errors=True)
 
     def is_server_busy(self, server):
         for _, status in self._iter_reconciled():

@@ -30,6 +30,8 @@ mcp = FastMCP("ck-profile")
 _owned_jobs = set()
 _store = job_store.JobStore(_JOBS_DIR, is_owned=lambda job_id: job_id in _owned_jobs)
 _dispatch_lock = asyncio.Lock()
+_background_tasks = set()  # strong refs so fire-and-forget tasks aren't GC'd
+_SELECT_TIMEOUT_S = 30
 
 
 async def _resolve_server(arch, forced_server):
@@ -42,7 +44,15 @@ async def _resolve_server(arch, forced_server):
     proc = await asyncio.create_subprocess_exec(
         *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
-    stdout, stderr = await proc.communicate()
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(), timeout=_SELECT_TIMEOUT_S
+        )
+    except asyncio.TimeoutError:
+        await _ensure_dead(proc)
+        raise ValueError(
+            f"ckRemote server selection timed out after {_SELECT_TIMEOUT_S}s"
+        ) from None
     if proc.returncode != 0:
         raise ValueError(
             f"ckRemote server selection failed: {stderr.decode(errors='replace').strip()}"
@@ -80,6 +90,13 @@ def _write_exit_best_effort(job_id, **kwargs):
         )
 
 
+async def _ensure_dead(proc):
+    """Kill proc's process group and reap it if it isn't already dead."""
+    if proc.returncode is None:
+        job_store.kill_process_group(proc.pid)
+        await proc.wait()
+
+
 async def _wait_for_exit(proc, timeout_s):
     """Wait for proc, guaranteeing it's dead (killed and reaped) on any exit
     path. Returns (rc, timed_out)."""
@@ -87,13 +104,10 @@ async def _wait_for_exit(proc, timeout_s):
         rc = await asyncio.wait_for(proc.wait(), timeout=timeout_s)
         return rc, False
     except asyncio.TimeoutError:
-        job_store.kill_process_group(proc.pid)
-        await proc.wait()
+        await _ensure_dead(proc)
         return None, True
     finally:
-        if proc.returncode is None:
-            job_store.kill_process_group(proc.pid)
-            await proc.wait()
+        await _ensure_dead(proc)
 
 
 async def _run_job_body(job_id, mode, arch, target, repo, server):
@@ -117,9 +131,7 @@ async def _run_job_body(job_id, mode, arch, target, repo, server):
             remote_rc, timed_out = await _wait_for_exit(proc, timeout_s)
         finally:
             # Covers set_running raising before _wait_for_exit's own cleanup runs.
-            if proc.returncode is None:
-                job_store.kill_process_group(proc.pid)
-                await proc.wait()
+            await _ensure_dead(proc)
 
     if timed_out:
         _store.write_exit(job_id, remote_rc=None, timed_out=True)
@@ -150,14 +162,29 @@ async def _run_job_body(job_id, mode, arch, target, repo, server):
             _store.set_pulling(job_id, pull_proc.pid)
             pull_rc, timed_out = await _wait_for_exit(pull_proc, timeout_s)
         finally:
-            if pull_proc.returncode is None:
-                job_store.kill_process_group(pull_proc.pid)
-                await pull_proc.wait()
+            await _ensure_dead(pull_proc)
 
     if timed_out:
         _store.write_exit(job_id, remote_rc=remote_rc, pull_rc=None, timed_out=True)
         return
-    _store.write_exit(job_id, remote_rc=remote_rc, pull_rc=pull_rc)
+
+    summary_path = None
+    mode_info = job_store.MODES[mode]
+    if mode_info["emits_summary"] and pull_rc == 0:
+        # Freeze the resolved path now: "latest" is a shared symlink that a
+        # later job on the same repo/mode can repoint before get_summary runs.
+        candidate = (
+            Path(repo)
+            / "ck_profile_out"
+            / mode_info["output_dir"]
+            / "latest"
+            / "summary.json"
+        )
+        if candidate.exists():
+            summary_path = str(candidate.resolve())
+    _store.write_exit(
+        job_id, remote_rc=remote_rc, pull_rc=pull_rc, summary_path=summary_path
+    )
 
 
 @mcp.tool()
@@ -168,7 +195,8 @@ async def run_profile(
     validation.validate_mode(mode)
     validation.validate_arch(arch)
     repo = validation.validate_repo(repo)
-    validation.validate_target(target, repo)
+    target = validation.validate_target(target, repo)
+    server = validation.validate_server(server)
 
     # Resolution is a read-only network round-trip; only the busy-check +
     # create need to be atomic, so the lock is held for just that section.
@@ -181,7 +209,11 @@ async def run_profile(
             )
         job_id = _store.create(mode, arch, target, repo, resolved_server)
 
-    asyncio.create_task(_run_job(job_id, mode, arch, target, repo, resolved_server))
+    task = asyncio.create_task(
+        _run_job(job_id, mode, arch, target, repo, resolved_server)
+    )
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
     return {"job_id": job_id, "server": resolved_server, "state": "running"}
 
 
@@ -206,9 +238,12 @@ def get_summary(job_id: str) -> dict:
         raise ValueError(
             f"job '{job_id}' has state '{status['state']}', not 'done'; no summary available"
         )
-    mode_dir = Path(status["repo"]) / "ck_profile_out" / mode_info["output_dir"]
-    summary_path = mode_dir / "latest" / "summary.json"
-    if not summary_path.exists():
+    # Read the path captured right after this job's own pull phase, not the
+    # shared "latest" symlink, which a later job on the same repo/mode may
+    # have since repointed.
+    summary_path = status.get("summary_path")
+    if not summary_path or not Path(summary_path).exists():
+        mode_dir = Path(status["repo"]) / "ck_profile_out" / mode_info["output_dir"]
         raise ValueError(
             f"no summary.json for mode '{status['mode']}'; "
             f"read the report directly under {mode_dir / 'latest'}"

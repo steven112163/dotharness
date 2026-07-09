@@ -83,12 +83,6 @@ def test_write_exit_timed_out_marks_timeout(store):
     assert store.get_status(job_id)["state"] == "timeout"
 
 
-def test_terminal_state_from_exit_legacy_timeout_note(store):
-    # Back-compat: exit.json sentinels written before the timed_out field
-    # existed used note == "timeout" instead.
-    assert store._terminal_state_from_exit({"note": "timeout"}) == "timeout"
-
-
 def test_set_pulling_resets_timeout_budget_for_pull_phase(store):
     job_id = _create(store, mode="ckStaticProfile")
     status = store._read_status(job_id)
@@ -184,6 +178,68 @@ def test_timeout_kill_skips_reused_pid(store, monkeypatch):
     reconciled = store.get_status(job_id)
     assert reconciled["state"] == "timeout"
     assert calls == []
+
+
+def test_owned_job_past_timeout_is_not_reconciled_as_timeout(tmp_path):
+    # Regression for the race where a concurrent reconcile could time out a
+    # job microseconds before the owning task's own write_exit call landed.
+    owned = set()
+    store = JobStore(tmp_path / "mcp-jobs", is_owned=lambda job_id: job_id in owned)
+    job_id = _create(store, mode="ckStaticProfile")
+    owned.add(job_id)
+    status = store._read_status(job_id)
+    status["started_at"] = time.time() - (status["timeout_s"] + 1)
+    status["pid"] = None  # avoid sending a real signal to this test process
+    store._write_status(job_id, status)
+
+    assert store.get_status(job_id)["state"] == "running"
+
+
+def test_never_started_job_times_out_from_created_at(store):
+    # Regression: a crash between create() and set_running() left pid=None
+    # forever, wedging is_server_busy with no recovery path.
+    job_id = _create(store, mode="ckStaticProfile")
+    status = store._read_status(job_id)
+    status["created_at"] = time.time() - (status["timeout_s"] + 1)
+    store._write_status(job_id, status)
+
+    reconciled = store.get_status(job_id)
+    assert reconciled["state"] == "failed"
+
+
+def test_iter_reconciled_prunes_job_dir_missing_status_json(store):
+    # A job dir with no status.json (create() crashed mid-write) must not
+    # break every other job-store call.
+    job_id = _create(store)
+    store._status_path(job_id).unlink()
+
+    assert store.is_server_busy("shared") is False
+    assert not store._job_dir(job_id).exists()
+
+
+def test_write_exit_first_writer_wins(store):
+    job_id = _create(store)
+    store.write_exit(job_id, remote_rc=0, pull_rc=0)
+    store.write_exit(job_id, remote_rc=1, pull_rc=1)
+
+    status = store.get_status(job_id)
+    assert status["state"] == "done"
+    assert status["remote_rc"] == 0
+
+
+def test_write_exit_after_dead_pid_guess_overwrites_it(store):
+    # The dead-PID fallback only guesses "failed"; a real exit.json arriving
+    # afterwards must still be synced in rather than frozen out.
+    job_id = _create(store)
+    status = store._read_status(job_id)
+    status["pid"] = _DEAD_PID
+    status["proc_start_ticks"] = "123"
+    status["started_at"] = time.time()
+    store._write_status(job_id, status)
+    assert store.get_status(job_id)["state"] == "failed"
+
+    store.write_exit(job_id, remote_rc=0, pull_rc=0)
+    assert store.get_status(job_id)["state"] == "done"
 
 
 def test_exit_json_written_atomically_via_rename(store, tmp_path, monkeypatch):

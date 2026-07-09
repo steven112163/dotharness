@@ -58,6 +58,7 @@ def ck_repo(tmp_path):
     repo = tmp_path / "repo"
     (repo / "script").mkdir(parents=True)
     (repo / "script" / "cmake-ck-dev.sh").write_text("")
+    (repo / "CMakeLists.txt").write_text("")
     return repo
 
 
@@ -158,20 +159,17 @@ def test_run_profile_pull_failure_marks_pull_failed(server, ck_repo, monkeypatch
 
 
 def test_pull_phase_timeout_kills_and_marks_timeout(server, ck_repo, monkeypatch):
-    # A hanging pull phase must reach "timeout". The active wait_for and the
-    # lazy reconciler share status.timeout_s, so either may catch it first —
-    # intentional defense in depth, not a test-isolation gap.
+    # A hanging pull phase must reach "timeout". The reconciler no longer
+    # independently times out owned (in-process) jobs — that raced the
+    # owning task's own write_exit call — so shrink the mode's real timeout
+    # instead; monkeypatch.setitem restores it after the test.
     monkeypatch.setenv("STUB_CKREMOTE_PULL_SLEEP_S", "5")
+    monkeypatch.setitem(server.job_store.MODES["ckStaticProfile"], "timeout_s", 0.1)
 
     async def run():
         result = await server.run_profile(
             "ckStaticProfile", "gfx942", "test_gemm", str(ck_repo)
         )
-        # Shrink this job's own budget rather than the shared MODES entry,
-        # which other concurrent/later tests also read.
-        status = server._store._read_status(result["job_id"])
-        status["timeout_s"] = 0.1
-        server._store._write_status(result["job_id"], status)
         return await _wait_for_terminal_job(server, result["job_id"])
 
     status = asyncio.run(run())

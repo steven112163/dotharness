@@ -629,10 +629,10 @@ Tools:
 
 - `run_profile(mode, arch, target, repo, server?)` — starts one of `ckStaticProfile`
   `ckRunProfile`, `ckTraceProfile`, `ckCfgProfile`, `ckComputeProfile` as a background
-  job and returns a `job_id`. `repo` must be a CK project root (has
-  `script/cmake-ck-dev.sh`); `server`, if omitted, is auto-selected the same way
-  `ckRemote` would. Rejected outright (no queue) if the chosen server already has a
-  job in flight.
+  job and returns a `job_id`. `repo` must be a CK project root (has both
+  `script/cmake-ck-dev.sh` and `CMakeLists.txt`); `server`, if omitted, is
+  auto-selected the same way `ckRemote` would. Rejected outright (no queue) if the
+  chosen server already has a job in flight.
 - `get_job_status(job_id)` — state machine: `running -> pulling -> done | failed |
   pull_failed | timeout`. `failed` means the remote command itself exited non-zero;
   `pull_failed` means it succeeded but `ckRemote pull` failed; `timeout` is
@@ -644,6 +644,11 @@ Tools:
 `compare_runs`/`list_runs` are not implemented yet — read successive `runs/<id>/`
 directories directly (see `lib/ck-profile/profile_readme.md`'s "Run history"
 section) until those land.
+
+If the MCP server process itself dies while a job's remote command is still
+running, the orphaned `ckRemote` process is eventually reconciled to `failed`
+on restart even if it actually succeeded remotely, and no pull phase ever
+runs. Recover manually: `ckRemote pull ck_profile_out/<mode_output_dir>`.
 
 ## Known gotchas
 
