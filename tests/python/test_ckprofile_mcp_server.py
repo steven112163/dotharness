@@ -14,6 +14,7 @@ import json
 import os
 import stat
 import sys
+import time
 
 import pytest
 
@@ -28,6 +29,7 @@ with open(log_path, "a") as f:
     f.write(json.dumps(sys.argv[1:]) + "\\n")
 
 if "select" in sys.argv:
+    time.sleep(float(os.environ.get("STUB_CKREMOTE_SELECT_SLEEP_S", "0")))
     print("Selected server 'stubserver' (normal, user@stubserver) for gfx942.")
     sys.exit(0)
 
@@ -174,6 +176,73 @@ def test_pull_phase_timeout_kills_and_marks_timeout(server, ck_repo, monkeypatch
 
     status = asyncio.run(run())
     assert status["state"] == "timeout"
+
+
+def test_resolve_server_timeout_kills_hung_select(server, monkeypatch):
+    # Without start_new_session=True on the select subprocess, killpg targets
+    # the wrong process group and silently no-ops, hanging past the timeout.
+    monkeypatch.setenv("STUB_CKREMOTE_SELECT_SLEEP_S", "5")
+    monkeypatch.setattr(server, "_SELECT_TIMEOUT_S", 0.1)
+
+    async def run():
+        with pytest.raises(ValueError, match="timed out"):
+            await server._resolve_server("gfx942", None)
+
+    start = time.monotonic()
+    asyncio.run(run())
+    assert time.monotonic() - start < 4
+
+
+def test_run_profile_normalizes_path_target_in_dispatch_argv(
+    server, ck_repo, monkeypatch
+):
+    monkeypatch.delenv("STUB_CKREMOTE_RUN_RC", raising=False)
+    monkeypatch.delenv("STUB_CKREMOTE_PULL_RC", raising=False)
+    binary = ck_repo / "build" / "test_gemm"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("")
+
+    _, status = asyncio.run(
+        _run_and_wait(server, "ckStaticProfile", str(binary), ck_repo)
+    )
+    assert status["state"] == "done"
+
+    calls = _read_calls(server._log_path)
+    dispatch_argv = calls[1]
+    assert dispatch_argv[-1] == "build/test_gemm"
+
+
+def test_get_summary_path_frozen_survives_later_latest_repoint(
+    server, ck_repo, monkeypatch
+):
+    monkeypatch.delenv("STUB_CKREMOTE_RUN_RC", raising=False)
+    monkeypatch.delenv("STUB_CKREMOTE_PULL_RC", raising=False)
+    summary_root = ck_repo / "ck_profile_out" / "dynamic"
+
+    async def run():
+        result = await server.run_profile(
+            "ckRunProfile", "gfx942", "test_gemm", str(ck_repo)
+        )
+        # Point "latest" at run1 before the job's pull phase finishes, so its
+        # summary_path capture resolves through the symlink like real ckRemote.
+        run1 = summary_root / "run1"
+        run1.mkdir(parents=True)
+        (run1 / "summary.json").write_text(json.dumps({"run": 1}))
+        (summary_root / "latest").symlink_to(run1)
+        await _wait_for_terminal_job(server, result["job_id"])
+        return result
+
+    result = asyncio.run(run())
+    assert server.get_summary(result["job_id"])["run"] == 1
+
+    # A later job on the same repo/mode repoints "latest" to a new run dir.
+    run2 = summary_root / "run2"
+    run2.mkdir()
+    (run2 / "summary.json").write_text(json.dumps({"run": 2}))
+    (summary_root / "latest").unlink()
+    (summary_root / "latest").symlink_to(run2)
+
+    assert server.get_summary(result["job_id"])["run"] == 1
 
 
 def test_cancelled_task_kills_subprocess_and_marks_terminal(

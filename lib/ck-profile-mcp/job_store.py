@@ -1,9 +1,11 @@
 """Job state store for the ck-profile MCP server.
 
 Layout: <base_dir>/<job_id>/{status.json, exit.json, log}. exit.json is a
-terminal sentinel written atomically (temp file + rename) by whatever ran the
-job. Reconciliation derives terminal state lazily on every read, so it also
-recovers correctly across a server restart.
+terminal sentinel written to a temp file then hardlinked into place, so it
+only ever appears fully populated. Reconciliation derives terminal state
+lazily on every read — via owned-job-aware timeout/dead-PID/never-started
+fallbacks when exit.json hasn't landed yet — so it also recovers correctly
+across a server restart.
 """
 
 import json
@@ -197,14 +199,24 @@ class JobStore:
             "finished_at": time.time(),
         }
         exit_path = self._exit_path(job_id)
-        # O_EXCL makes first-writer-wins atomic: a second caller (e.g. an
-        # exception handler racing a successful first write) fails the claim
-        # instead of a check-then-write race on a separately-read status.json.
+        # Write the full payload to a temp file first, then hardlink it into
+        # place: exit_path only ever appears once complete, so a crash
+        # mid-write can't leave a wedged empty file. os.link is first-writer-
+        # wins (fails if exit_path already exists), covering a second caller
+        # (e.g. an exception handler racing a successful first write).
+        fd, tmp = tempfile.mkstemp(dir=exit_path.parent, prefix=f".{exit_path.name}.")
         try:
-            os.close(os.open(exit_path, os.O_CREAT | os.O_EXCL))
-        except FileExistsError:
-            return
-        _atomic_write_json(exit_path, exit_data)
+            with os.fdopen(fd, "w") as f:
+                json.dump(exit_data, f, indent=2)
+            try:
+                os.link(tmp, exit_path)
+            except FileExistsError:
+                return
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
         self._reconcile(job_id)
 
     def _terminal_state_from_exit(self, exit_data):
@@ -229,6 +241,11 @@ class JobStore:
         # threading model); atomic writes bound the damage if that's wrong.
         status = self._read_status(job_id)
 
+        # Fast path: nothing left to sync or guess for an already-synced
+        # terminal job, so skip re-parsing exit.json on every poll.
+        if status["state"] in TERMINAL_STATES and status.get("_synced_from_exit"):
+            return status
+
         # Checked before the terminal short-circuit below: a fallback branch
         # (dead-PID, timeout-by-created_at) may have already guessed a
         # terminal state before the real exit.json landed. Always sync the
@@ -239,42 +256,39 @@ class JobStore:
                 with open(exit_path) as f:
                     exit_data = json.load(f)
             except json.JSONDecodeError:
-                # write_exit claimed the file (O_EXCL) but hasn't finished the
-                # atomic write yet; treat as still in-flight and retry later.
+                exit_data = None
+            if exit_data is not None:
+                if not status.get("_synced_from_exit"):
+                    status["state"] = self._terminal_state_from_exit(exit_data)
+                    status["remote_rc"] = exit_data.get("remote_rc")
+                    status["pull_rc"] = exit_data.get("pull_rc")
+                    status["note"] = exit_data.get("note")
+                    status["summary_path"] = exit_data.get("summary_path")
+                    status["finished_at"] = exit_data.get("finished_at")
+                    status["_synced_from_exit"] = True
+                    self._write_status(job_id, status)
                 return status
-            if not status.get("_synced_from_exit"):
-                status["state"] = self._terminal_state_from_exit(exit_data)
-                status["remote_rc"] = exit_data.get("remote_rc")
-                status["pull_rc"] = exit_data.get("pull_rc")
-                status["note"] = exit_data.get("note")
-                status["summary_path"] = exit_data.get("summary_path")
-                status["finished_at"] = exit_data.get("finished_at")
-                status["_synced_from_exit"] = True
-                self._write_status(job_id, status)
-            return status
+            # exit.json exists but is corrupt (should be unreachable now that
+            # write_exit only ever hardlinks a fully-written file into place);
+            # fall through to the fallback logic below instead of wedging.
 
         if status["state"] in TERMINAL_STATES:
             return status
 
-        # Owned jobs skip both fallbacks below: the owning task's own
+        # Owned jobs skip every fallback below: the owning task's own
         # write_exit call can race ahead of a concurrent reconciler here, and
         # must be allowed to land the real result instead of a guess.
-        owned = self._is_owned(job_id)
+        if self._is_owned(job_id):
+            return status
 
         started_at = status.get("started_at")
-        if (
-            not owned
-            and started_at is not None
-            and time.time() - started_at > status["timeout_s"]
-        ):
+        if started_at is not None and time.time() - started_at > status["timeout_s"]:
             self._kill_job(status)
             self.write_exit(job_id, remote_rc=None, timed_out=True)
             return self._read_status(job_id)
 
-        if (
-            not owned
-            and status.get("pid") is not None
-            and not _pid_alive(status["pid"], status.get("proc_start_ticks"))
+        if status.get("pid") is not None and not _pid_alive(
+            status["pid"], status.get("proc_start_ticks")
         ):
             status["state"] = "failed"
             status["note"] = "subprocess died before writing a terminal sentinel"
@@ -286,8 +300,7 @@ class JobStore:
         # or the job (and is_server_busy for its server) wedges forever.
         created_at = status.get("created_at")
         if (
-            not owned
-            and status.get("pid") is None
+            status.get("pid") is None
             and created_at is not None
             and time.time() - created_at > status["timeout_s"]
         ):
