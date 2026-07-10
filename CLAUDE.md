@@ -13,7 +13,7 @@ git submodule update --init
 ./setup.sh
 ```
 
-`setup.sh` symlinks `skills/`, `agents/`, `hooks/`, `rules/`, `output-styles/`, third-party skills, and `statusline.sh` into `~/.claude/`; symlinks `bin/` scripts into `~/bin/`; symlinks `lib/` subdirs into `~/lib/`; registers lifecycle hooks in `~/.claude/settings.json`; installs Claude plugins; and provisions a repo-local `.venv` with `pre-commit` and `anthropic`. Re-running is idempotent. Requires `jq`.
+`setup.sh` symlinks `skills/`, `agents/`, `hooks/`, `rules/`, `output-styles/`, third-party skills, and `statusline.sh` into `~/.claude/`; symlinks `bin/` scripts into `~/bin/`; symlinks `lib/` subdirs into `~/lib/`; symlinks `gitignore_global` to `~/.gitignore_global` and registers it as `git config --global core.excludesFile`; registers lifecycle hooks in `~/.claude/settings.json`; installs Claude plugins; installs `playwright-cli` (npm) and `graphify` (pipx) globally; and provisions a repo-local `.venv` with `pre-commit` and `anthropic`. Re-running is idempotent. Requires `jq`.
 
 `README.md` files inside linked directories are intentionally skipped — they document the repo without being parsed as active rules or skills.
 
@@ -55,6 +55,7 @@ catch what CI will catch.
 | `output-styles/` | per-file | `~/.claude/output-styles/` | Voice/format presets |
 | `bin/` | per-file | `~/bin/` (on PATH) | User-facing CLI commands, accessible from any repo |
 | `lib/` | per-dir | `~/lib/` | Internal libraries imported by `bin/` scripts, not on PATH |
+| `gitignore_global` | single file | `~/.gitignore_global` | Git ignore patterns applied to every repo via `core.excludesFile` |
 
 **Critical property:** Directly-executed `bin/` scripts use `readlink -f "$0"` to resolve their real path through symlinks and locate sibling files in `bin/` and `lib/`. Sourced helpers (like `ckExec`) use `readlink -f "${BASH_SOURCE[0]}"` instead — `$0` in a sourced script is the calling script's name, not the helper's. Python scripts use `os.path.abspath(__file__)` which stays at the symlink path — so `../lib/ck-profile/` resolves to `~/lib/ck-profile/` as intended.
 
@@ -76,6 +77,8 @@ Each skill is a directory with a `SKILL.md` (YAML frontmatter: `name`, `descript
 - `survey` — academic literature survey, discover/curated modes.
 
 Third-party skills from `third-party/mattpocock-skills/` are linked alongside own skills. Plugins (`superpowers`, `example-skills`, `caveman`, `ponytail`, `claude-api`) are installed via the Claude CLI by `setup.sh`.
+
+[`playwright-cli`](https://github.com/microsoft/playwright-cli) (browser automation) and [`graphify`](https://github.com/Graphify-Labs/graphify) (codebase knowledge-graph generation) are externally-managed skills: `setup.sh` installs them globally (npm, pipx) and runs their own installers rather than sourcing them from `skills/`.
 
 `caveman` and `ponytail` are always-on plugins activated every session via their own hooks. `setup.sh` prunes the mattpocock `caveman` link to avoid conflict.
 
