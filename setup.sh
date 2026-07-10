@@ -59,6 +59,27 @@ prune() {
     done
 }
 
+# Symlink own + third-party skills straight from their repo sources into
+# dst_dir. Called once per agent (Claude, Codex) so each agent's skills dir
+# points directly at the source, never at another agent's dir.
+link_skills_to() {
+    local dst_dir="$1" indent="${2:-  }"
+    mkdir -p "$dst_dir"
+    link_items "$REPO_DIR/skills" "$dst_dir" "$indent"
+    for category_dir in "$REPO_DIR"/third-party/*/skills/{engineering,productivity}/; do
+        [ -d "$category_dir" ] || continue
+        for skill_dir in "$category_dir"*/; do
+            [ -f "$skill_dir/SKILL.md" ] || continue
+            name=$(basename "$skill_dir")
+            # caveman is provided always-on by the JuliusBrussee/caveman plugin
+            # (installed below); skip the on-demand mattpocock copy to avoid a duplicate.
+            [ "$name" = caveman ] && continue
+            link "$skill_dir" "$dst_dir/$name" "$indent"
+        done
+    done
+    prune "$dst_dir" "$indent"
+}
+
 echo "Claude:"
 
 # --- Rules: per-file so the folder README is not linked as a rule ---
@@ -77,19 +98,7 @@ if [ -L "$CLAUDE_DIR/skills" ]; then
     echo "    converting $CLAUDE_DIR/skills from symlink to directory"
     rm "$CLAUDE_DIR/skills"
 fi
-mkdir -p "$CLAUDE_DIR/skills"
-link_items "$REPO_DIR/skills" "$CLAUDE_DIR/skills" "    "
-for category_dir in "$REPO_DIR"/third-party/*/skills/{engineering,productivity}/; do
-    [ -d "$category_dir" ] || continue
-    for skill_dir in "$category_dir"*/; do
-        [ -f "$skill_dir/SKILL.md" ] || continue
-        name=$(basename "$skill_dir")
-        # caveman is provided always-on by the JuliusBrussee/caveman plugin
-        # (installed below); skip the on-demand mattpocock copy to avoid a duplicate.
-        [ "$name" = caveman ] && continue
-        link "$skill_dir" "$CLAUDE_DIR/skills/$name" "    "
-    done
-done
+link_skills_to "$CLAUDE_DIR/skills" "    "
 # Drop a caveman link from an earlier run, now that the plugin owns it.
 if [ -L "$CLAUDE_DIR/skills/caveman" ]; then
     case "$(readlink "$CLAUDE_DIR/skills/caveman")" in
@@ -99,7 +108,6 @@ if [ -L "$CLAUDE_DIR/skills/caveman" ]; then
         ;;
     esac
 fi
-prune "$CLAUDE_DIR/skills" "    "
 
 # --- Agents (native subagents, reusable as delegated subagents or team teammates) ---
 echo "  Agents:"
@@ -283,9 +291,12 @@ fi
 
 # --- ck-profile MCP server (user-level, available in every repo) ---
 echo "  ck-profile MCP server:"
-ckprofile_mcp_cmd="$venv_dir/bin/python3 $REPO_DIR/lib/ck-profile-mcp/server.py"
 if command -v claude &>/dev/null && [ -x "$venv_dir/bin/python3" ]; then
-    if claude mcp get ck-profile 2>/dev/null | grep -qF "$ckprofile_mcp_cmd"; then
+    # `claude mcp get` prints Command and Args on separate lines, so both must
+    # be checked individually rather than as one combined string.
+    ckprofile_mcp_info=$(claude mcp get ck-profile 2>/dev/null || true)
+    if grep -qF "$venv_dir/bin/python3" <<<"$ckprofile_mcp_info" &&
+        grep -qF "$REPO_DIR/lib/ck-profile-mcp/server.py" <<<"$ckprofile_mcp_info"; then
         echo "    ok  ck-profile"
     else
         echo "    registering ck-profile"
@@ -300,13 +311,7 @@ echo "Codex:"
 if command -v codex &>/dev/null; then
     # Skills: Codex reads ~/.agents/skills/<name>/SKILL.md — same format as Claude.
     echo "  Skills:"
-    mkdir -p "$AGENTS_DIR/skills"
-    for skill_dir in "$CLAUDE_DIR/skills"/*/; do
-        [ -f "$skill_dir/SKILL.md" ] || continue
-        name=$(basename "$skill_dir")
-        link "$skill_dir" "$AGENTS_DIR/skills/$name" "    "
-    done
-    prune "$AGENTS_DIR/skills" "    "
+    link_skills_to "$AGENTS_DIR/skills" "    "
 
     # Rules: Codex reads a single AGENTS.md at ~/.agents/AGENTS.md.
     # Concatenate all rule files into one file (generated, not symlinked).
