@@ -63,7 +63,7 @@ prune() {
 # dst_dir. Called once per agent (Claude, Codex) so each agent's skills dir
 # points directly at the source, never at another agent's dir.
 link_skills_to() {
-    local dst_dir="$1" indent="${2:-  }"
+    local dst_dir="$1" indent="${2:-  }" category_dir skill_dir name
     mkdir -p "$dst_dir"
     link_items "$REPO_DIR/skills" "$dst_dir" "$indent"
     for category_dir in "$REPO_DIR"/third-party/*/skills/{engineering,productivity}/; do
@@ -77,6 +77,8 @@ link_skills_to() {
             link "$skill_dir" "$dst_dir/$name" "$indent"
         done
     done
+    # Safe to prune here even though the caveman-cleanup block below runs after:
+    # that block does a direct rm, not something prune would ever need to catch.
     prune "$dst_dir" "$indent"
 }
 
@@ -300,6 +302,10 @@ if command -v claude &>/dev/null && [ -x "$venv_dir/bin/python3" ]; then
         echo "    ok  ck-profile"
     else
         echo "    registering ck-profile"
+        # Remove first in case a mismatched entry already exists (e.g. repo
+        # moved or .venv recreated elsewhere) — `mcp add` fails if the name is
+        # already registered, which would abort the script under set -e.
+        claude mcp remove ck-profile -s user 2>/dev/null || true
         claude mcp add -s user ck-profile -- "$venv_dir/bin/python3" "$REPO_DIR/lib/ck-profile-mcp/server.py"
     fi
 else
@@ -311,6 +317,21 @@ echo "Codex:"
 if command -v codex &>/dev/null; then
     # Skills: Codex reads ~/.agents/skills/<name>/SKILL.md — same format as Claude.
     echo "  Skills:"
+    # One-time cleanup: drop symlinks left over from an earlier setup.sh that
+    # pointed here through $CLAUDE_DIR instead of straight at the repo (e.g. a
+    # skill excluded from link_skills_to, like caveman, never gets relinked and
+    # would otherwise dangle forever once its $CLAUDE_DIR counterpart is removed).
+    if [ -d "$AGENTS_DIR/skills" ]; then
+        for item in "$AGENTS_DIR/skills"/*; do
+            [ -L "$item" ] || continue
+            case "$(readlink "$item")" in
+            "$CLAUDE_DIR"/*)
+                echo "    rm  $item (was linked through \$CLAUDE_DIR)"
+                rm "$item"
+                ;;
+            esac
+        done
+    fi
     link_skills_to "$AGENTS_DIR/skills" "    "
 
     # Rules: Codex reads a single AGENTS.md at ~/.agents/AGENTS.md.
