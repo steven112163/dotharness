@@ -219,6 +219,16 @@ if [ -f "$SETTINGS" ] && command -v jq &>/dev/null; then
     fi
 fi
 
+# --- Global gitignore (excludesFile applies to every repo on the machine) ---
+echo "  Global gitignore:"
+link "$REPO_DIR/gitignore_global" "${HOME:?HOME is not set}/.gitignore_global" "    "
+if git config --global core.excludesFile &>/dev/null; then
+    echo "    ok  core.excludesFile"
+else
+    git config --global core.excludesFile "${HOME:?HOME is not set}/.gitignore_global"
+    echo "    set core.excludesFile"
+fi
+
 # --- Pre-commit (repo-local lint/format gate in a venv; tools managed by pre-commit) ---
 echo "  Pre-commit:"
 venv_dir="$REPO_DIR/.venv"
@@ -250,6 +260,27 @@ if [ -x "$venv_dir/bin/pre-commit" ]; then
     fi
 else
     echo "    skipped git hook (pre-commit not available)"
+fi
+
+# --- playwright-cli (browser automation skill, available in every repo) ---
+echo "  playwright-cli:"
+if command -v npm &>/dev/null; then
+    npm install -g @playwright/cli >/dev/null
+    playwright-cli install --skills >/dev/null
+    playwright-cli install-browser >/dev/null
+    echo "    ok  playwright-cli"
+else
+    echo "    skipped (npm not found)"
+fi
+
+# --- graphify (codebase knowledge-graph skill, available in every repo) ---
+echo "  graphify:"
+if command -v pipx &>/dev/null; then
+    pipx install --force graphifyy >/dev/null
+    graphify install >/dev/null
+    echo "    ok  graphify"
+else
+    echo "    skipped (pipx not found)"
 fi
 
 # --- Plugins (requires claude CLI) ---
@@ -430,6 +461,15 @@ if command -v codex &>/dev/null; then
     add_codex_marketplace ponytail DietrichGebert/ponytail
     # superpowers: Codex has a built-in official marketplace; add the anthropic skills source too.
     add_codex_marketplace anthropic-agent-skills anthropics/skills
+
+    # graphify: Codex needs its own explicit platform install.
+    echo "  graphify:"
+    if command -v graphify &>/dev/null; then
+        graphify install --platform codex >/dev/null
+        echo "    ok  graphify"
+    else
+        echo "    skipped (graphify not found)"
+    fi
 else
     echo "  skipped (codex not found)"
 fi
