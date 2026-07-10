@@ -223,12 +223,15 @@ fi
 echo "  Global gitignore:"
 target_excludes_file="${HOME:?HOME is not set}/.gitignore_global"
 link "$REPO_DIR/gitignore_global" "$target_excludes_file" "    "
-existing_excludes_file=$(git config --global core.excludesFile 2>/dev/null || true)
+existing_excludes_file=$(git config --global --path core.excludesFile 2>/dev/null || true)
 if [ "$existing_excludes_file" = "$target_excludes_file" ]; then
     echo "    ok  core.excludesFile"
 elif [ -z "$existing_excludes_file" ]; then
-    git config --global core.excludesFile "$target_excludes_file"
-    echo "    set core.excludesFile"
+    if git config --global core.excludesFile "$target_excludes_file"; then
+        echo "    set core.excludesFile"
+    else
+        echo "    warn: could not set core.excludesFile"
+    fi
 else
     # never override a pre-existing user value
     echo "    skip core.excludesFile (already set to $existing_excludes_file)"
@@ -270,6 +273,10 @@ fi
 # --- playwright-cli (browser automation skill, available in every repo) ---
 echo "  playwright-cli:"
 if command -v npm &>/dev/null; then
+    # A first-time global npm install may not yet be on PATH in this shell;
+    # prepend its bin dir so the rest of the script sees the fresh install.
+    npm_bin_dir="$(npm prefix -g 2>/dev/null)"
+    export PATH="$npm_bin_dir/bin:$PATH"
     if npm install -g @playwright/cli >/dev/null &&
         playwright-cli install --skills >/dev/null &&
         playwright-cli install-browser >/dev/null; then
@@ -284,12 +291,13 @@ fi
 # --- graphify (codebase knowledge-graph skill, available in every repo) ---
 echo "  graphify:"
 if command -v pipx &>/dev/null; then
-    # A first-time pipx install may not yet be on PATH in this shell; resolve
-    # its bin dir explicitly rather than relying on a PATH update mid-script.
+    # A first-time pipx install may not yet be on PATH in this shell; prepend
+    # its bin dir so both this block and the later Codex install see it.
     pipx_bin_dir=$(pipx environment --value PIPX_BIN_DIR 2>/dev/null || echo "$HOME/.local/bin")
+    export PATH="$pipx_bin_dir:$PATH"
     # "graphifyy" (double y) is the actual PyPI package name, not a typo.
     if pipx install --force graphifyy >/dev/null &&
-        PATH="$PATH:$pipx_bin_dir" graphify install >/dev/null; then
+        graphify install >/dev/null; then
         echo "    ok  graphify"
     else
         echo "    warn: graphify install failed"
