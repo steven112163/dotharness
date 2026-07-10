@@ -44,3 +44,10 @@ Installed by `setup.sh` via the Claude CLI. The `claude-plugins-official` market
 - **ponytail** (`ponytail`) — always-on "lazy senior dev" mode that steers generated code toward YAGNI and minimal solutions (`PONYTAIL_DEFAULT_MODE` sets the level, default `full`). Reinforces `coding-standards.md`.
 
 Plugin granularity is per-plugin: `example-skills` is all-or-nothing, so the wanted skills arrive bundled with others. Skills are description-triggered and lazy, so unused ones cost nothing at runtime.
+
+## Externally-managed
+
+Installed globally by `setup.sh` via their own package managers/installers, not sourced from `skills/` or a submodule:
+
+- **[playwright-cli](https://github.com/microsoft/playwright-cli)** — browser automation. `setup.sh` installs `@playwright/cli` via npm, then runs `playwright-cli install --skills` and `playwright-cli install-browser`.
+- **[graphify](https://github.com/Graphify-Labs/graphify)** — codebase knowledge-graph generation. `setup.sh` installs `graphifyy` via pipx, then runs `graphify install` (Claude) and `graphify install --platform codex` (Codex, when present).

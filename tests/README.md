@@ -18,6 +18,15 @@ Two suites live here: bats for the shell hooks and skill scripts (under
   with `name` matching the directory and a non-empty `description` (needs PyYAML).
 - `multi-review.bats` — the `gather_context.sh` context builder (local-mode diff
   capture, chunk split, relative `REVIEW_DIR`).
+- `setup-codex-skills.bats` — static checks on `setup.sh`'s Codex skill wiring:
+  `link_skills_to` is defined once and used by both the Claude and Codex sections,
+  the Codex skills block no longer iterates `$CLAUDE_DIR/skills`, and the ck-profile
+  MCP idempotency check requires both the command and args to match.
+- `setup-playwright-graphify.bats` — static checks on `setup.sh`'s `playwright-cli`/
+  `graphify`/global-gitignore wiring: the npm/pipx install and skill/browser
+  provisioning commands are present, the Codex-specific `graphify install
+  --platform codex` lives inside the Codex guard, and `gitignore_global` /
+  `core.excludesFile` are referenced.
 
 Run with `bats tests/bats/`. CI runs the same suite (the `bats` job installs
 `bats`/`jq`/`python3-yaml` on the runner).

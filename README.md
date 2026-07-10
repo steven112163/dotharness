@@ -15,6 +15,7 @@ Everything lives here and is symlinked outward:
 | `output-styles/` | `~/.claude/output-styles/` | Voice/format presets |
 | `bin/` | `~/bin/` (on PATH) | CLI commands (`ckBuild`, `ckRunProfile`, `llm`, …) |
 | `lib/` | `~/lib/` | Internal libraries imported by `bin/` scripts |
+| `gitignore_global` | `~/.gitignore_global` | Git ignore patterns applied to every repo via `core.excludesFile` |
 
 Changes to any file here take effect immediately in all repos — no reinstall.
 
@@ -34,6 +35,7 @@ third-party/
   mattpocock-skills/   → git submodule (engineering + productivity skills)
 template/              → templates for plan/implementation-notes/test-notes docs
 statusline.sh          → compact status line, symlinked to ~/.claude/
+gitignore_global       → global git ignore patterns, symlinked to ~/.gitignore_global
 setup.sh               → symlinks, hooks, output style, plugins, pre-commit provisioning
 ```
 
@@ -49,7 +51,7 @@ git submodule update --init
 ./setup.sh
 ```
 
-Symlinks `skills/`, `hooks/`, `output-styles/`, `rules/`, third-party skills, and `statusline.sh` into `~/.claude/`; `bin/` scripts into `~/bin/`; `lib/` subdirs into `~/lib/`. Registers hooks and sets the `dotharness` output style in `~/.claude/settings.json` (requires `jq`), creating that file if it does not yet exist (fresh-machine safe). Installs plugins via the Claude CLI. Provisions a repo-local `.venv` with `pre-commit` and installs the git pre-commit hook. Existing files are backed up to `.bak`. Re-running is idempotent. Per-folder `README.md` files are skipped so they document the repo without being linked into the live `~/.claude/` tree.
+Symlinks `skills/`, `hooks/`, `output-styles/`, `rules/`, third-party skills, and `statusline.sh` into `~/.claude/`; `bin/` scripts into `~/bin/`; `lib/` subdirs into `~/lib/`; `gitignore_global` to `~/.gitignore_global` and registers it as `git config --global core.excludesFile`. Registers hooks and sets the `dotharness` output style in `~/.claude/settings.json` (requires `jq`), creating that file if it does not yet exist (fresh-machine safe). Installs plugins via the Claude CLI. Installs [`playwright-cli`](https://github.com/microsoft/playwright-cli) (npm) and [`graphify`](https://github.com/Graphify-Labs/graphify) (pipx) globally, both externally-managed and not sourced from `skills/`. Provisions a repo-local `.venv` with `pre-commit` and installs the git pre-commit hook. Existing files are backed up to `.bak`. Re-running is idempotent. Per-folder `README.md` files are skipped so they document the repo without being linked into the live `~/.claude/` tree.
 
 Optional: desktop notifications work out of the box, but Teams notifications need a webhook URL you configure manually — see [hooks/README.md](hooks/README.md#teams-notifications).
 
