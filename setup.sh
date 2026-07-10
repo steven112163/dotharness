@@ -222,19 +222,19 @@ fi
 # --- Global gitignore (excludesFile applies to every repo on the machine) ---
 echo "  Global gitignore:"
 target_excludes_file="${HOME:?HOME is not set}/.gitignore_global"
-link "$REPO_DIR/gitignore_global" "$target_excludes_file" "    "
 existing_excludes_file=$(git config --global --path core.excludesFile 2>/dev/null || true)
-if [ "$existing_excludes_file" = "$target_excludes_file" ]; then
-    echo "    ok  core.excludesFile"
-elif [ -z "$existing_excludes_file" ]; then
-    if git config --global core.excludesFile "$target_excludes_file"; then
+if [ -n "$existing_excludes_file" ] && [ "$existing_excludes_file" != "$target_excludes_file" ]; then
+    # never override a pre-existing user value, or its backing file
+    echo "    skip core.excludesFile (already set to $existing_excludes_file)"
+else
+    link "$REPO_DIR/gitignore_global" "$target_excludes_file" "    "
+    if [ "$existing_excludes_file" = "$target_excludes_file" ]; then
+        echo "    ok  core.excludesFile"
+    elif git config --global core.excludesFile "$target_excludes_file"; then
         echo "    set core.excludesFile"
     else
         echo "    warn: could not set core.excludesFile"
     fi
-else
-    # never override a pre-existing user value
-    echo "    skip core.excludesFile (already set to $existing_excludes_file)"
 fi
 
 # --- Pre-commit (repo-local lint/format gate in a venv; tools managed by pre-commit) ---
@@ -273,16 +273,20 @@ fi
 # --- playwright-cli (browser automation skill, available in every repo) ---
 echo "  playwright-cli:"
 if command -v npm &>/dev/null; then
-    # A first-time global npm install may not yet be on PATH in this shell;
-    # prepend its bin dir so the rest of the script sees the fresh install.
-    npm_bin_dir="$(npm prefix -g 2>/dev/null)"
-    export PATH="$npm_bin_dir/bin:$PATH"
-    if npm install -g @playwright/cli >/dev/null &&
-        playwright-cli install --skills >/dev/null &&
-        playwright-cli install-browser >/dev/null; then
+    if command -v playwright-cli &>/dev/null; then
         echo "    ok  playwright-cli"
     else
-        echo "    warn: playwright-cli install failed"
+        # A first-time global npm install may not yet be on PATH in this
+        # shell; prepend its bin dir so the rest of the script sees it.
+        npm_bin_dir="$(npm prefix -g 2>/dev/null || echo "$HOME/.npm-global")"
+        export PATH="$npm_bin_dir/bin:$PATH"
+        if npm install -g @playwright/cli >/dev/null &&
+            playwright-cli install --skills >/dev/null &&
+            playwright-cli install-browser >/dev/null; then
+            echo "    ok  playwright-cli"
+        else
+            echo "    warn: playwright-cli install failed"
+        fi
     fi
 else
     echo "    skipped (npm not found)"
@@ -291,16 +295,20 @@ fi
 # --- graphify (codebase knowledge-graph skill, available in every repo) ---
 echo "  graphify:"
 if command -v pipx &>/dev/null; then
-    # A first-time pipx install may not yet be on PATH in this shell; prepend
-    # its bin dir so both this block and the later Codex install see it.
-    pipx_bin_dir=$(pipx environment --value PIPX_BIN_DIR 2>/dev/null || echo "$HOME/.local/bin")
-    export PATH="$pipx_bin_dir:$PATH"
-    # "graphifyy" (double y) is the actual PyPI package name, not a typo.
-    if pipx install --force graphifyy >/dev/null &&
-        graphify install >/dev/null; then
+    if command -v graphify &>/dev/null; then
         echo "    ok  graphify"
     else
-        echo "    warn: graphify install failed"
+        # A first-time pipx install may not yet be on PATH in this shell;
+        # prepend its bin dir so both this and the later Codex install see it.
+        pipx_bin_dir=$(pipx environment --value PIPX_BIN_DIR 2>/dev/null || echo "$HOME/.local/bin")
+        export PATH="$pipx_bin_dir:$PATH"
+        # "graphifyy" (double y) is the actual PyPI package name, not a typo.
+        if pipx install --force graphifyy >/dev/null &&
+            graphify install >/dev/null; then
+            echo "    ok  graphify"
+        else
+            echo "    warn: graphify install failed"
+        fi
     fi
 else
     echo "    skipped (pipx not found)"
