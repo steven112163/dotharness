@@ -22,22 +22,31 @@ setup() {
     run grep -qF 'pipx install --force graphifyy' "$SETUP_SH"
     [ "$status" -eq 0 ]
 
-    run grep -qF 'graphify install --platform codex' "$SETUP_SH"
+    # The Codex-specific install must live inside the `command -v codex` guard,
+    # bounded to the guard body so a move outside it would fail this test.
+    codex_guard=$(awk '/if command -v codex &>\/dev\/null; then/,/echo "  skipped \(codex not found\)"/' "$SETUP_SH")
+    run grep -qF 'graphify install --platform codex' <<<"$codex_guard"
+    [ "$status" -eq 0 ]
+}
+
+@test "playwright-cli and graphify installs degrade to a warning on failure" {
+    run grep -qF 'warn: playwright-cli install failed' "$SETUP_SH"
     [ "$status" -eq 0 ]
 
-    # The Codex-specific install must live inside the `command -v codex` guard,
-    # not the top-level Claude section.
-    codex_block=$(awk '/^# --- Codex CLI/,0' "$SETUP_SH")
-    run grep -qF 'graphify install --platform codex' <<<"$codex_block"
+    run grep -qF 'warn: graphify install failed' "$SETUP_SH"
+    [ "$status" -eq 0 ]
+
+    run grep -qF 'warn: graphify install --platform codex failed' "$SETUP_SH"
     [ "$status" -eq 0 ]
 }
 
 @test "global gitignore file is symlinked and core.excludesFile is registered" {
-    [ -f "${BATS_TEST_DIRNAME}/../../gitignore_global" ]
-
-    run grep -qF 'gitignore_global' "$SETUP_SH"
+    run [ -f "${BATS_TEST_DIRNAME}/../../gitignore_global" ]
     [ "$status" -eq 0 ]
 
-    run grep -qF 'core.excludesFile' "$SETUP_SH"
+    run grep -qF "link \"\$REPO_DIR/gitignore_global\" \"\$target_excludes_file\"" "$SETUP_SH"
+    [ "$status" -eq 0 ]
+
+    run grep -qF "git config --global core.excludesFile \"\$target_excludes_file\"" "$SETUP_SH"
     [ "$status" -eq 0 ]
 }
