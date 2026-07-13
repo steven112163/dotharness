@@ -35,12 +35,12 @@ stub() {
 # logic is what makes it resolvable — no cp/chmod needed under a PATH
 # that's deliberately isolated from real coreutils.
 stub_installer() {
-    local name="$1" exit_code="$2" installs="$3"
-    local fresh_dir="$BATS_TEST_TMPDIR/fresh-$installs"
+    local name="$1" exit_code="$2" tool_bin="$3"
+    local fresh_dir="$BATS_TEST_TMPDIR/fresh-$tool_bin"
     mkdir -p "$fresh_dir/bin"
-    printf '#!/bin/sh\necho "%s $*" >> "%s"\nexit 0\n' "$installs" "$LOG_FILE" \
-        >"$fresh_dir/bin/$installs"
-    chmod +x "$fresh_dir/bin/$installs"
+    printf '#!/bin/sh\necho "%s $*" >> "%s"\nexit 0\n' "$tool_bin" "$LOG_FILE" \
+        >"$fresh_dir/bin/$tool_bin"
+    chmod +x "$fresh_dir/bin/$tool_bin"
 
     local locate_arg locate_output
     case "$name" in
@@ -51,6 +51,10 @@ stub_installer() {
     pipx)
         locate_arg="environment"
         locate_output="$fresh_dir/bin"
+        ;;
+    *)
+        echo "stub_installer: unknown installer '$name'" >&2
+        return 1
         ;;
     esac
     {
@@ -143,12 +147,22 @@ stub_installer() {
     [[ "$output" == *"skipped (graphify not found)"* ]]
 }
 
+@test "graphify (Codex): installs and succeeds" {
+    stub graphify 0
+    block=$(extract_block '^    # graphify: Codex needs' '^    fi$')
+    run env PATH="$STUB_BIN" "$BASH_BIN" -c "$block"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ok  graphify"* ]]
+    grep -qF "graphify install --platform codex" "$LOG_FILE"
+}
+
 @test "graphify (Codex): warns instead of aborting when the codex install fails" {
     stub graphify 1
     block=$(extract_block '^    # graphify: Codex needs' '^    fi$')
     run env PATH="$STUB_BIN" "$BASH_BIN" -c "set -euo pipefail; $block"
     [ "$status" -eq 0 ]
     [[ "$output" == *"warn: graphify install --platform codex failed"* ]]
+    grep -qF "graphify install --platform codex" "$LOG_FILE"
 }
 
 @test "core.excludesFile: left alone when already pointed elsewhere" {
