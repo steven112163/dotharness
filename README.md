@@ -22,6 +22,7 @@ Changes to any file here take effect immediately in all repos — no reinstall.
 ## Structure
 
 ```text
+CLAUDE.md              → guidance for Claude Code in this repo; AGENTS.md is a symlink to it
 skills/                → own skills                                        (skills/README.md)
 agents/                → native subagents (worker roles)                   (agents/README.md)
 hooks/                 → lifecycle hook scripts                            (hooks/README.md)
@@ -30,6 +31,7 @@ output-styles/         → output styles                                     (ou
 bin/                   → helper scripts, symlinked to ~/bin/ (on PATH)     (bin/README.md)
 lib/                   → internal libraries, symlinked to ~/lib/
   ck-profile/          → Python libs + data for ck*Profile binaries        (lib/ck-profile/README.md)
+  ck-profile-mcp/      → ck-profile MCP server (registered at user scope)
 tests/                 → bats + pytest suites                              (tests/README.md)
 third-party/
   mattpocock-skills/   → git submodule (engineering + productivity skills)
@@ -37,6 +39,7 @@ template/              → templates for plan/implementation-notes/test-notes do
 statusline.sh          → compact status line, symlinked to ~/.claude/
 gitignore_global       → global git ignore patterns, symlinked to ~/.gitignore_global
 setup.sh               → symlinks, hooks, output style, plugins, pre-commit provisioning
+graphify-out/          → generated knowledge graph (gitignored; see CLAUDE.md's graphify section)
 ```
 
 Non-trivial work in this repo follows a plan-first workflow: copy `template/plan.md` into
@@ -51,7 +54,7 @@ git submodule update --init
 ./setup.sh
 ```
 
-Symlinks `skills/`, `hooks/`, `output-styles/`, `rules/`, third-party skills, and `statusline.sh` into `~/.claude/`; `bin/` scripts into `~/bin/`; `lib/` subdirs into `~/lib/`; `gitignore_global` to `~/.gitignore_global` and registers it as `git config --global core.excludesFile`. Registers hooks and sets the `dotharness` output style in `~/.claude/settings.json` (requires `jq`), creating that file if it does not yet exist (fresh-machine safe). Installs plugins via the Claude CLI. Installs [`playwright-cli`](https://github.com/microsoft/playwright-cli) (npm) and [`graphify`](https://github.com/Graphify-Labs/graphify) (pipx) globally, both externally-managed and not sourced from `skills/`. Provisions a repo-local `.venv` with `pre-commit` and installs the git pre-commit hook. Existing files are backed up to `.bak`. Re-running is idempotent. Per-folder `README.md` files are skipped so they document the repo without being linked into the live `~/.claude/` tree.
+Symlinks `skills/`, `agents/`, `hooks/`, `output-styles/`, `rules/`, third-party skills, and `statusline.sh` into `~/.claude/`; `bin/` scripts into `~/bin/`; `lib/` subdirs into `~/lib/`; `gitignore_global` to `~/.gitignore_global` and registers it as `git config --global core.excludesFile`. Registers hooks and sets the `dotharness` output style in `~/.claude/settings.json` (requires `jq`), creating that file if it does not yet exist (fresh-machine safe). Installs plugins via the Claude CLI, and registers the `ck-profile` MCP server at user scope. Installs [`playwright-cli`](https://github.com/microsoft/playwright-cli) (npm) and [`graphify`](https://github.com/Graphify-Labs/graphify) (pipx) globally, both externally-managed and not sourced from `skills/`. Provisions a repo-local `.venv` with `pre-commit`, `anthropic`, and `mcp`, and installs the git pre-commit hook. If the `codex` CLI is present, mirrors skills/hooks/statusline/plugins into `~/.agents/` and `~/.codex/` and concatenates `rules/*.md` into a generated `~/.agents/AGENTS.md`. Existing files are backed up to `.bak`. Re-running is idempotent. Per-folder `README.md` files are skipped so they document the repo without being linked into the live `~/.claude/` tree.
 
 Optional: desktop notifications work out of the box, but Teams notifications need a webhook URL you configure manually — see [hooks/README.md](hooks/README.md#teams-notifications).
 
@@ -79,6 +82,7 @@ A `pre-commit` gate runs lint, format, and secret checks on every commit, and a 
 - `ruff` + `ruff-format` — Python lint and format for the ck-profile scripts
 - `typos` — spell-checking for code and docs; `_typos.toml` allowlists GPU terms (`VALU`, `HSA`) that are not typos
 - `actionlint` (docker) — GitHub Actions workflow linting, including the embedded `run:` shell via the image's bundled shellcheck
+- `markdownlint` — Markdown style/structure checks (`.markdownlint.json`)
 - `gitleaks` — secret scanning on staged diffs (regex + entropy)
 - `pre-commit-hooks` — trailing whitespace, end-of-file, merge-conflict, large-file, JSON/YAML validity, shebang/executable consistency, case-conflict, mixed-line-ending (LF), and `detect-private-key` (excluding `security-scan.sh`, which greps for the key-header marker)
 

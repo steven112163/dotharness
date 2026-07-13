@@ -33,9 +33,13 @@ Run with `bats tests/bats/`. CI runs the same suite (the `bats` job installs
 
 ## pytest (Python)
 
-`test_gpu_specs.py`, `test_parse_resource_usage.py`, and `test_aggregate.py` cover
-the pure helpers in `bin/` and `lib/ck-profile/` (hardware-spec lookups, build-log
-parsing and VGPR/spill math, bottleneck classification and stats).
+`test_gpu_specs.py`, `test_parse_resource_usage.py`, `test_ck_profile_utils.py`,
+`test_compute_report.py`, `test_html_report.py`, and `test_ckaggregate.py` cover the
+pure helpers in `bin/` and `lib/ck-profile/`: hardware-spec lookups, build-log
+parsing and VGPR/spill math, bottleneck classification and stats, header-name-based
+CSV panel parsing, bar-fill color thresholds, and the `ckAggregate` `COUNTER_CLASS`
+guard / `summary.json` emission (loaded via `importlib` since `ckAggregate` has no
+`.py` extension).
 
 `test_ckprofile_mcp_job_store.py`, `test_ckprofile_mcp_server.py`,
 `test_ckprofile_mcp_validation.py`, and `test_ckprofile_mcp_detach.py` cover the
