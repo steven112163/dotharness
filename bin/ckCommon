@@ -139,6 +139,10 @@ read -r -d '' _ACCT_SETUP_SH <<'SH' || true
 _u=$(id -u); _g=$(id -g)
 mkdir -p "$ACCT_DIR"
 _pw="$ACCT_DIR/passwd-$_u"; _gr="$ACCT_DIR/group-$_u"
+# Serialize the account-file read-modify-write across concurrent jobs; released
+# before docker run so concurrent GPU jobs still run in parallel.
+exec {_lock_fd}>"$ACCT_DIR/.lock-$_u" || { echo "ckCommon: cannot open lock file" >&2; exit 1; }
+flock -x "$_lock_fd" || { echo "ckCommon: flock failed" >&2; exit 1; }
 # Write to a temp file and mv into place so a killed `docker run` cat never
 # leaves a partial account file that a later run would trust.
 _t=$(mktemp "$_pw.XXXXXX") && docker run --rm "$IMAGE" cat /etc/passwd >"$_t" && mv -f "$_t" "$_pw"
@@ -148,10 +152,27 @@ cut -d: -f3 "$_gr" | grep -qx "$_g" || getent group "$_g" >>"$_gr"
 _ACCT_FLAGS="-v $_pw:/etc/passwd:ro -v $_gr:/etc/group:ro"
 if [ "${_ACCT_GPU:-0}" -eq 1 ]; then
     for _grp in render video; do
-        _gid=$(getent group "$_grp" | cut -d: -f3) || _gid=""
-        [ -n "$_gid" ] && _ACCT_FLAGS="$_ACCT_FLAGS --group-add $_gid"
+        _grp_line=$(getent group "$_grp") || continue
+        _gid=$(cut -d: -f3 <<<"$_grp_line")
+        [ -n "$_gid" ] || continue
+        # Replace by name only (gid-match risks deleting unrelated groups) and drop
+        # the member list — harmless, since access uses numeric --group-add/--user.
+        if _t=$(mktemp "$_gr.XXXXXX") &&
+            grep -v "^${_grp}:" "$_gr" >"$_t" &&
+            echo "${_grp}:x:${_gid}:" >>"$_t" &&
+            mv -f "$_t" "$_gr"; then
+            _ACCT_FLAGS="$_ACCT_FLAGS --group-add $_gid"
+        else
+            rm -f "$_t"
+            echo "ckCommon: failed to update $_gr for $_grp" >&2
+        fi
     done
 fi
+# Files are keyed by uid only and rebuilt from $IMAGE every run; released here
+# rather than held across docker run, trading a narrow same-uid TOCTOU window
+# for GPU-job parallelism (numeric --user/--group-add are unaffected).
+flock -u "$_lock_fd"
+exec {_lock_fd}>&-
 SH
 
 # Emit a node-side snippet that loads the image if absent, sets up the account
