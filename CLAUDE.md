@@ -2,9 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+`AGENTS.md` is a symlink to this file, so Codex reads the same content.
+
 ## Purpose
 
-dotharness is a **host-level configuration hub**: `setup.sh` symlinks everything into `~/.claude/`, `~/bin/`, and `~/lib/` so all skills, rules, hooks, agents, and CK tooling are available in **every repo on this machine** — not just this one. Changes here take effect immediately across all projects without reinstalling.
+dotharness is a **host-level configuration hub**: `setup.sh` symlinks everything into `~/.claude/`, `~/bin/`, and `~/lib/` so all skills, rules, hooks, agents, and CK tooling are available in **every repo on this machine** — not just this one. Changes here take effect immediately across all projects without reinstalling. Codex is a first-class second target: `setup.sh` mirrors skills, rules, hooks, statusline, and plugins into `~/.agents/` and `~/.codex/` whenever the `codex` CLI is present.
 
 ## Setup
 
@@ -13,7 +15,7 @@ git submodule update --init
 ./setup.sh
 ```
 
-`setup.sh` symlinks `skills/`, `agents/`, `hooks/`, `rules/`, `output-styles/`, third-party skills, and `statusline.sh` into `~/.claude/`; symlinks `bin/` scripts into `~/bin/`; symlinks `lib/` subdirs into `~/lib/`; symlinks `gitignore_global` to `~/.gitignore_global` and registers it as `git config --global core.excludesFile`; registers lifecycle hooks in `~/.claude/settings.json`; installs Claude plugins; installs `playwright-cli` (npm) and `graphify` (pipx) globally; and provisions a repo-local `.venv` with `pre-commit` and `anthropic`. Re-running is idempotent. Requires `jq`.
+`setup.sh` symlinks `skills/`, `agents/`, `hooks/`, `rules/`, `output-styles/`, third-party skills, and `statusline.sh` into `~/.claude/`; symlinks `bin/` scripts into `~/bin/`; symlinks `lib/` subdirs into `~/lib/`; symlinks `gitignore_global` to `~/.gitignore_global` and registers it as `git config --global core.excludesFile`; registers lifecycle hooks in `~/.claude/settings.json`; installs Claude plugins; installs `playwright-cli` (npm) and `graphify` (pipx) globally; provisions a repo-local `.venv` with `pre-commit`, `anthropic`, and `mcp`; and registers the `ck-profile` MCP server at user scope (`claude mcp add -s user ck-profile`). If the `codex` CLI is present, it also mirrors skills/hooks/statusline into `~/.agents/` and `~/.codex/`, concatenates `rules/*.md` into `~/.agents/AGENTS.md`, and runs `graphify install --platform codex`. Re-running is idempotent. Requires `jq`.
 
 `README.md` files inside linked directories are intentionally skipped — they document the repo without being parsed as active rules or skills.
 
@@ -38,7 +40,7 @@ bin/llm -m gpt-5.5 --thinking "your question"
 
 CI (`.github/workflows/ci.yml`) runs four jobs: `pre-commit`, `bats`, `pytest`, and `gitleaks`
 (full-history secret scan). `.pre-commit-config.yaml` wires `shellcheck`, `shfmt`, `ruff`/
-`ruff-format`, `typos`, `actionlint` (via docker), `gitleaks`, and the standard
+`ruff-format`, `typos`, `actionlint` (via docker), `markdownlint`, `gitleaks`, and the standard
 `pre-commit-hooks` set — run `.venv/bin/pre-commit run --all-files` locally before pushing to
 catch what CI will catch.
 
@@ -100,6 +102,16 @@ Worker roles: researcher, implementer, reviewer, tester, builder, profiler. Usab
 - `notify-stop.sh` / `notify-prompt.sh` (Stop/Notification) — desktop/system notifications on stop or when input is needed.
 - `teams-notify.sh` — posts a Microsoft Teams adaptive card (`teams-adaptive-card.json`) via an incoming webhook; see `hooks/README.md` for setup.
 
+### Codex integration
+
+`setup.sh` treats Codex as a second target when the `codex` CLI is on `PATH`, reusing the same source files as Claude rather than a separate config:
+
+- **Skills** — `link_skills_to` (the same function used for Claude) also symlinks `skills/` + third-party engineering/productivity skills into `~/.agents/skills/`.
+- **Rules → `AGENTS.md`** — Codex has no per-file rules directory, so `rules/*.md` are concatenated (in filename order, `README.md` excluded) into a generated `~/.agents/AGENTS.md`, rewritten only when the content changes.
+- **Hooks** — the same `hooks/*.sh` scripts are registered in `~/.codex/config.toml` under Codex's `[[hooks.<event>]]` TOML format (`register_codex_hook`), since the JSON-stdin schema is compatible with Claude Code's.
+- **Statusline** — sets `[tui] status_line` in `config.toml` to a fixed enum list (Codex has no shell-backed custom statusline).
+- **Plugins / graphify** — registers the `caveman`/`ponytail`/`anthropic-agent-skills` marketplaces via `codex plugin marketplace add`, and runs `graphify install --platform codex` separately from the Claude-side `graphify install`.
+
 ### Binaries (`bin/`)
 
 All files symlinked into `~/bin/` and available on PATH from any repo.
@@ -122,7 +134,7 @@ Symlinked into `~/lib/` by `setup.sh`. Not on PATH — imported programmatically
 
 ### Tests (`tests/`)
 
-`tests/bats/` — shell tests for hooks and scripts (enforced by CI): `block-dangerous.bats`, `ckCommon.bats`, `commit-lint.bats`, `multi-review.bats`, `skills-frontmatter.bats`. `tests/python/` — pytest for ck-profile Python helpers (`test_aggregate.py`, `test_gpu_specs.py`, `test_parse_resource_usage.py`) and the ck-profile MCP server (`test_ckprofile_mcp_*.py`); `conftest.py` puts `bin/`, `lib/ck-profile/`, and `lib/ck-profile-mcp/` on `sys.path`. Every `SKILL.md` frontmatter `name` must match its directory name — enforced by `skills-frontmatter.bats`.
+`tests/bats/` — shell tests for hooks and scripts (enforced by CI): `block-dangerous.bats`, `ckCommon.bats`, `commit-lint.bats`, `multi-review.bats`, `skills-frontmatter.bats`, `setup-codex-skills.bats`, `setup-playwright-graphify.bats`. `tests/python/` — pytest for ck-profile Python helpers (`test_gpu_specs.py`, `test_parse_resource_usage.py`, `test_ck_profile_utils.py`, `test_compute_report.py`, `test_html_report.py`, `test_ckaggregate.py`) and the ck-profile MCP server (`test_ckprofile_mcp_*.py`); `conftest.py` puts `bin/`, `lib/ck-profile/`, and `lib/ck-profile-mcp/` on `sys.path`. Every `SKILL.md` frontmatter `name` must match its directory name — enforced by `skills-frontmatter.bats`.
 
 ### Key conventions
 
@@ -137,11 +149,12 @@ Symlinked into `~/lib/` by `setup.sh`. Not on PATH — imported programmatically
 
 ## graphify
 
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships. When the user types `/graphify`, use the installed graphify skill or instructions before doing anything else.
 
 Rules:
 
 - For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
