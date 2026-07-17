@@ -1,12 +1,12 @@
 ---
 name: council
 argument-hint: "<question>"
-description: Fan out a question to Claude and GPT-5.5 in parallel, run up to 3 rounds of adversarial debate where each model challenges the other's weakest argument and updates its position, assess convergence after each round with a dedicated subagent, then synthesize and deliver a final answer weighted by argument quality — not consensus.
+description: Fan out a question to Claude and GPT-5.6-sol in parallel, run up to 3 rounds of adversarial debate where each model challenges the other's weakest argument and updates its position, assess convergence after each round with a dedicated subagent, then synthesize and deliver a final answer weighted by argument quality — not consensus.
 ---
 
 # Council
 
-Coordinates an adversarial two-model debate: Claude and GPT-5.5 generate independent positions, challenge each other directly for up to 3 rounds, and converge on the strongest answer by argument quality — not agreement.
+Coordinates an adversarial two-model debate: Claude and GPT-5.6-sol generate independent positions, challenge each other directly for up to 3 rounds, and converge on the strongest answer by argument quality — not agreement.
 
 ## When to use
 
@@ -46,7 +46,7 @@ Then spawn a `general-purpose` subagent to get GPT's response. Provide the liter
 > Run this command:
 >
 > ```bash
-> codex exec -m gpt-5.5 --ephemeral -o "<COUNCIL_DIR>/round-0/gpt.txt" < "<COUNCIL_DIR>/question.txt" > "<COUNCIL_DIR>/round-0/gpt.log" 2>&1
+> codex exec -m gpt-5.6-sol --ephemeral -o "<COUNCIL_DIR>/round-0/gpt.txt" < "<COUNCIL_DIR>/question.txt" > "<COUNCIL_DIR>/round-0/gpt.log" 2>&1
 > ```
 >
 > Return: "done" if `<COUNCIL_DIR>/round-0/gpt.txt` exists and is non-empty, otherwise the error from the log.
@@ -67,7 +67,7 @@ Spawn one `reviewer` subagent as the **convergence checker** with this fully sel
 
 > You are a convergence checker for a two-model debate. Read the two responses to: `<QUESTION>`
 >
-> Files in `<ROUND_DIR>`: `claude.txt` (Claude), `gpt.txt` (GPT-5.5).
+> Files in `<ROUND_DIR>`: `claude.txt` (Claude), `gpt.txt` (GPT-5.6-sol).
 >
 > For each model:
 >
@@ -165,7 +165,7 @@ Then spawn a `general-purpose` subagent for the GPT debate call. Substitute lite
 > Run this command:
 >
 > ```bash
-> codex exec -m gpt-5.5 --ephemeral -o "<NEXT_DIR>/gpt.txt" < "<NEXT_DIR>/prompt-gpt.txt" > "<NEXT_DIR>/gpt.log" 2>&1
+> codex exec -m gpt-5.6-sol --ephemeral -o "<NEXT_DIR>/gpt.txt" < "<NEXT_DIR>/prompt-gpt.txt" > "<NEXT_DIR>/gpt.log" 2>&1
 > ```
 >
 > Return: "done" if `<NEXT_DIR>/gpt.txt` exists and is non-empty, otherwise the error from the log.
@@ -183,7 +183,7 @@ Use the `$VERDICT` variable already set by the loop. Spawn one `reviewer` subage
 > **Round-0 responses** (original independent answers — historical anchor):
 >
 > - `<COUNCIL_DIR>/round-0/claude.txt` (Claude)
-> - `<COUNCIL_DIR>/round-0/gpt.txt` (GPT-5.5)
+> - `<COUNCIL_DIR>/round-0/gpt.txt` (GPT-5.6-sol)
 >
 > **Final-round responses** (after debate):
 >
@@ -222,7 +222,7 @@ After delivering the final answer, clean up: `rm -rf "$COUNCIL_DIR"`.
 | Model | Role |
 | ----- | ---- |
 | Claude | Main session — forms prior, debates, synthesizes |
-| `gpt-5.5` | External challenger via `codex exec` |
+| `gpt-5.6-sol` | External challenger via `codex exec` |
 
 ## Requirements
 

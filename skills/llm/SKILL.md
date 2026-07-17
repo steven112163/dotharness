@@ -1,7 +1,7 @@
 ---
 name: llm
 argument-hint: "[-m MODEL] [-s SYSTEM] [-t N] [--temperature F] [--stream] <message>"
-description: Query an external LLM to get a second opinion, cross-check a claim, debate a design, or consult a different model. Use when the user asks to consult another model, or on your own initiative when a second perspective would strengthen your answer. Default model is gpt-5.5 (1M context).
+description: Query an external LLM to get a second opinion, cross-check a claim, debate a design, or consult a different model. Use when the user asks to consult another model, or on your own initiative when a second perspective would strengthen your answer. Default model is gpt-5.6-sol (1M context).
 ---
 
 # LLM
@@ -23,7 +23,7 @@ echo "message" | bin/llm [options]
 
 Options:
 
-- `-m MODEL` — model name (default: `gpt-5.5`)
+- `-m MODEL` — model name (default: `gpt-5.6-sol`)
 - `-s "SYSTEM"` — system prompt
 - `-t N` — max output tokens (default: 32768)
 - `--temperature F` — sampling temperature (suppressed when `--thinking` is set)
@@ -46,7 +46,7 @@ Options:
 
 | Model | Context |
 |-------|---------|
-| `gpt-5.5` | 1M |
+| `gpt-5.6-sol` | 1M |
 | `gpt-4o` | 128k |
 | `o3` | 200k |
 | `gemini-3.5-flash` | 1M |

@@ -28,7 +28,7 @@ import argparse
 import anthropic
 
 # ponytail: gateway proxies non-Anthropic model names over the Anthropic wire protocol
-DEFAULT_MODEL = "gpt-5.5"
+DEFAULT_MODEL = "gpt-5.6-sol"
 DEFAULT_MAX_TOKENS = 32768
 
 CLAUDE_MANUAL_BUDGETS = {"low": 1024, "medium": 4096, "high": 16000, "xhigh": 32768}
@@ -69,7 +69,7 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
-        "--model", "-m", default=DEFAULT_MODEL, help="Model name (default: gpt-5.5)"
+        "--model", "-m", default=DEFAULT_MODEL, help="Model name (default: gpt-5.6-sol)"
     )
     parser.add_argument("--system", "-s", default=None, help="System prompt")
     parser.add_argument(

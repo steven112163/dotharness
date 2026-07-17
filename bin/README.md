@@ -27,5 +27,5 @@ All profiling binaries follow the same CLI style as `ckBuild`/`ckRun`: `REPO` au
 ## Other
 
 - **dockerRun** — create a named dev container from an image, or print the attach command if it already exists.
-- **llm** — query an external LLM gateway (bash wrapper over `llm.py`). Requires `ANTHROPIC_BASE_URL`, `LLM_GATEWAY_KEY`, `LLM_GATEWAY_KEY_HEADER`. Default model `gpt-5.5`.
+- **llm** — query an external LLM gateway (bash wrapper over `llm.py`). Requires `ANTHROPIC_BASE_URL`, `LLM_GATEWAY_KEY`, `LLM_GATEWAY_KEY_HEADER`. Default model `gpt-5.6-sol`.
 - **llm.py** — Python implementation for `llm`; not invoked directly.

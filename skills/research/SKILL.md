@@ -69,7 +69,7 @@ Spawn a `general-purpose` subagent for the GPT call (substitute literal expanded
 > Run this command:
 >
 > ```bash
-> codex exec -m gpt-5.5 --ephemeral -o "<RESEARCH_DIR>/sq_N_gpt.txt" < "<RESEARCH_DIR>/sq_N.txt" > "<RESEARCH_DIR>/sq_N_gpt.log" 2>&1
+> codex exec -m gpt-5.6-sol --ephemeral -o "<RESEARCH_DIR>/sq_N_gpt.txt" < "<RESEARCH_DIR>/sq_N.txt" > "<RESEARCH_DIR>/sq_N_gpt.log" 2>&1
 > ```
 >
 > Return: "done" if `<RESEARCH_DIR>/sq_N_gpt.txt` is non-empty, otherwise the last 10 lines of the log.
@@ -87,7 +87,7 @@ Spawn a `general-purpose` subagent for the GPT challenge (substitute literal exp
 >
 > ```bash
 > { printf 'What is missing or wrong with these findings?\n\n'; cat "<RESEARCH_DIR>/draft_findings.txt"; } \
->   | codex exec -m gpt-5.5 --ephemeral -o "<RESEARCH_DIR>/challenge_gpt.txt" > "<RESEARCH_DIR>/challenge_gpt.log" 2>&1
+>   | codex exec -m gpt-5.6-sol --ephemeral -o "<RESEARCH_DIR>/challenge_gpt.txt" > "<RESEARCH_DIR>/challenge_gpt.log" 2>&1
 > ```
 >
 > Return: "done" if `<RESEARCH_DIR>/challenge_gpt.txt` is non-empty, otherwise the last 10 lines of the log.
