@@ -11,7 +11,7 @@ description: Use when reviewing a diff or pull request before merge and a single
 Run a multi-angle code review and emit a consolidated, validated findings report in
 the conversation. Up to eight reviewers run in parallel — up to four Claude subagents
 (broad generalist plus up to three specialized lenses selected from the diff) and a
-matching set of external GPT-5.5 general-purpose subagents (one per active lens). A spawned
+matching set of external GPT-5.6-sol general-purpose subagents (one per active lens). A spawned
 consolidator agent merges their findings into one file, a validation subagent verifies
 each finding against the actual source and writes a final validated report, and (for a
 PR) anything existing reviewers already raised is stripped. The orchestrator reads only
@@ -82,7 +82,7 @@ source "$REVIEW_DIR/shas.env"
 
 ### 2c: Dispatch reviewers
 
-**In a single message**, dispatch all Claude subagents in background so they run in parallel. After dispatching, run the external `codex exec` reviews in parallel in the background from the orchestrator (not in subagents — subagents don't inherit `permissions.allow`). Each active lens gets two perspectives: a Claude subagent (deep context, tool access) and a GPT-5.5 codex review (independent perspective, different training). Give each only the diff and lens-specific instructions — never this session's history.
+**In a single message**, dispatch all Claude subagents in background so they run in parallel. After dispatching, run the external `codex exec` reviews in parallel in the background from the orchestrator (not in subagents — subagents don't inherit `permissions.allow`). Each active lens gets two perspectives: a Claude subagent (deep context, tool access) and a GPT-5.6-sol codex review (independent perspective, different training). Give each only the diff and lens-specific instructions — never this session's history.
 
 **Do not dispatch a lens that was marked inactive in 2a.**
 
@@ -120,7 +120,7 @@ Substitute `<REVIEW_DIR>` with the literal expanded path in every command.
 **Broad (always):**
 
 ```bash
-codex exec -m gpt-5.5 --ephemeral \
+codex exec -m gpt-5.6-sol --ephemeral \
   -o "<REVIEW_DIR>/review-broad-ext.md" \
   'Read the diff at <REVIEW_DIR>/diff.txt and do a senior code review for correctness, security, performance, and readability. One finding per line: file:line: blocker|suggestion|nit: issue. fix.' \
   > "<REVIEW_DIR>/review-broad-ext.log" 2>&1
@@ -129,7 +129,7 @@ codex exec -m gpt-5.5 --ephemeral \
 **Correctness (if active):**
 
 ```bash
-codex exec -m gpt-5.5 --ephemeral \
+codex exec -m gpt-5.6-sol --ephemeral \
   -o "<REVIEW_DIR>/review-correctness-ext.md" \
   'Read the diff at <REVIEW_DIR>/diff.txt and review for correctness: logic errors, unchecked returns, null/dangling pointers, off-by-one, integer overflow, error paths, security at boundaries. One finding per line: file:line: blocker|suggestion|nit: issue. fix.' \
   > "<REVIEW_DIR>/review-correctness-ext.log" 2>&1
@@ -138,7 +138,7 @@ codex exec -m gpt-5.5 --ephemeral \
 **GPU performance (if active):**
 
 ```bash
-codex exec -m gpt-5.5 --ephemeral \
+codex exec -m gpt-5.6-sol --ephemeral \
   -o "<REVIEW_DIR>/review-gpu-ext.md" \
   'Read the diff at <REVIEW_DIR>/diff.txt and review for GPU performance: memory coalescing, LDS bank conflicts, occupancy, wavefront divergence, kernel launch bounds, unnecessary host-device transfers, missed parallelism. One finding per line: file:line: blocker|suggestion|nit: issue. fix.' \
   > "<REVIEW_DIR>/review-gpu-ext.log" 2>&1
@@ -147,7 +147,7 @@ codex exec -m gpt-5.5 --ephemeral \
 **Code quality (if active):**
 
 ```bash
-codex exec -m gpt-5.5 --ephemeral \
+codex exec -m gpt-5.6-sol --ephemeral \
   -o "<REVIEW_DIR>/review-quality-ext.md" \
   'Read the diff at <REVIEW_DIR>/diff.txt and review for code quality: dead code, magic numbers, premature abstractions, naming issues, functions over 100 lines, nesting over 3 levels, YAGNI violations. One finding per line: file:line: blocker|suggestion|nit: issue. fix.' \
   > "<REVIEW_DIR>/review-quality-ext.log" 2>&1

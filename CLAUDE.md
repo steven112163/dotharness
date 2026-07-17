@@ -35,7 +35,7 @@ pytest
 bats tests/bats/commit-lint.bats
 
 # External LLM query (gateway required)
-bin/llm -m gpt-5.5 --thinking "your question"
+bin/llm -m gpt-5.6-sol --thinking "your question"
 ```
 
 CI (`.github/workflows/ci.yml`) runs four jobs: `pre-commit`, `bats`, `pytest`, and `gitleaks`
@@ -69,10 +69,10 @@ Always-loaded: `writing-style.md`, `coding-standards.md`, `code-review.md`, `git
 
 Each skill is a directory with a `SKILL.md` (YAML frontmatter: `name`, `description`, optional `argument-hint`). Key own skills:
 
-- `council` — adversarial Claude + GPT-5.5 debate, up to 3 rounds, converges by argument quality.
+- `council` — adversarial Claude + GPT-5.6-sol debate, up to 3 rounds, converges by argument quality.
 - `dev-team` — 8-phase candidate workflow: lead spawns native worker agents (researcher, implementer, reviewer, tester, builder, profiler) as teammates; runs 2–3 candidate implementations in parallel git worktrees; picks winner on profiling evidence.
 - `ck-profile` — six profiling modes for Composable Kernel targets (static, dynamic, trace, cfg, depgraph, compute). Backed by `bin/ck*Profile` binaries.
-- `multi-review` — up to 8 parallel reviewers (Claude subagents + GPT-5.5 codex calls per lens); consolidator; dedup against existing PR reviews.
+- `multi-review` — up to 8 parallel reviewers (Claude subagents + GPT-5.6-sol codex calls per lens); consolidator; dedup against existing PR reviews.
 - `research` — four modes (socratic, direct, deep, adversarial) with anti-sycophancy safeguards.
 - `llm` — external LLM gateway wrapper.
 - `create-pr` — creates a pull request following the CK team's PR template.
