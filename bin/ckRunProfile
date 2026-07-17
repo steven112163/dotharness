@@ -140,6 +140,7 @@ if [ -z "$OUTDIR" ]; then
     RUNDIR=$MODE_DIR/runs/$RUN_ID
     OUTDIR=$RUNDIR/raw
 else
+    echo "NOTE: OUTDIR override set ($OUTDIR); skipping run versioning and wiping any prior contents there." >&2
     rm -rf "$OUTDIR"
 fi
 mkdir -p "$OUTDIR"
@@ -178,7 +179,9 @@ AGG_ARGS+=(--workload "$WORKLOAD")
 [ -d "$REPO/ck_profile_out/compute/latest" ] && AGG_ARGS+=(--compute-dir "$REPO/ck_profile_out/compute/latest")
 if python3 "$SELF_DIR/ckAggregate" "${AGG_ARGS[@]}"; then agg_rc=0; else agg_rc=$?; fi
 
-if [ -n "$RUNDIR" ] && [ "$agg_rc" -eq 0 ]; then
+if [ "$agg_rc" -ne 0 ]; then
+    echo "ERROR: ckAggregate failed (exit $agg_rc); raw output kept in $OUTDIR" >&2
+elif [ -n "$RUNDIR" ]; then
     ln -sfn "runs/$RUN_ID" "$MODE_DIR/latest"
     echo "DONE  (raw output in $OUTDIR, latest -> $MODE_DIR/latest)"
 else
