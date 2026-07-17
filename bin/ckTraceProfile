@@ -131,6 +131,7 @@ if [ -z "$OUTDIR" ]; then
     RUN_ID=$(_new_run_dir "$MODE_DIR")
     OUTDIR=$MODE_DIR/runs/$RUN_ID
 else
+    echo "NOTE: OUTDIR override set ($OUTDIR); skipping run versioning and wiping any prior contents there." >&2
     rm -rf "$OUTDIR"
 fi
 mkdir -p "$OUTDIR"
@@ -189,7 +190,9 @@ for v in "${VARIANTS[@]}"; do
 done
 find "$REPO/.rocprofv3" -mindepth 1 -delete 2>/dev/null || true
 rmdir "$REPO/.rocprofv3" 2>/dev/null || true
-if [ -n "$RUN_ID" ] && [ "$trace_ok" -eq 1 ]; then
+if [ "$trace_ok" -ne 1 ]; then
+    echo "ERROR: one or more rocprofv3 trace runs failed (see per-run trace_exit above); output kept in $OUTDIR" >&2
+elif [ -n "$RUN_ID" ]; then
     ln -sfn "runs/$RUN_ID" "$MODE_DIR/latest"
     echo "DONE  (traces in $OUTDIR; see index.md; latest -> $MODE_DIR/latest)"
 else
