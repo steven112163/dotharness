@@ -97,7 +97,8 @@ cmake --build '$BUILD' --target '$TARGET' -j\$(( \$(nproc) / 2 )) > '$LOG' 2>&1
 build_rc=\$?
 echo "build exit: \$build_rc  (parsing any partial logs ...)"
 echo "Parsing resource-usage remarks (demangling with c++filt) ..."
-python3 '$PARSER' '$LOG' --target '$TARGET' --arch '$ARCH' --out '$REPORTDIR' || true
+python3 '$PARSER' '$LOG' --target '$TARGET' --arch '$ARCH' --out '$REPORTDIR' || parser_rc=\$?
+[ "\${parser_rc:-0}" -eq 0 ] || echo "WARNING: resource-usage parser exited \$parser_rc; report may be missing or incomplete" >&2
 exit "\$build_rc"
 EOF
 )
