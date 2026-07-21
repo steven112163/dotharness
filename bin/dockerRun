@@ -39,6 +39,7 @@ docker run -d -it \
     --security-opt seccomp=unconfined --privileged \
     --network=host \
     --cap-add=SYS_PTRACE \
+    --restart=always \
     --name "$name" \
     --user "$(id -u):$(id -g)" \
     $_ACCT_FLAGS \
