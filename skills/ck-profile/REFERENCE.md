@@ -597,10 +597,14 @@ memory-hierarchy panels. Install facts learned the hard way:
    and even different `$REPO` checkouts, with no image pre-bake needed — as
    long as `VENV=` resolves under `$HOME` or `$REPO` (anywhere else isn't
    bind-mounted, so docker/srun would reinstall from scratch every call). A
-   `VENV=` override is canonicalized (`readlink -f`, closing off a relative
-   path or symlink) and validated (basename must look like
-   `rocprof-compute-venv*`) before anything is deleted, so a typo like
-   `VENV=$HOME` is rejected instead of wiping the caller's home directory.
+   `VENV=` override is canonicalized with `realpath -s -m` (closes off a
+   relative path, but — unlike `readlink -f` — does not resolve symlinks, so
+   a symlinked `$HOME` still matches the literal, unresolved path
+   docker/srun bind-mount) and validated (basename must look like
+   `rocprof-compute-venv*`, and the resolved path must fall under `$HOME` or
+   `$REPO`) before anything is deleted, so a typo like `VENV=$HOME` or an
+   override outside both roots is rejected instead of silently reinstalling
+   every call or wiping the caller's home directory.
 2. The venv path is fixed, with no python-version suffix, so a venv built
    against one image's `python3` could go stale if a later run uses a
    different `python3` minor version. No special handling for this: the
