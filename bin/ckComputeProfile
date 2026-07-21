@@ -34,7 +34,8 @@ Usage: $(basename "$0") [--arch gfx...] [--base-args <args>]
 
 rocprof-compute is installed (and repaired if broken) automatically via pip
 into a persistent venv, default $HOME/rocprof-compute-venv. VENV= overrides
-must be an absolute "rocprof-compute-venv*"-named path under $HOME or $REPO.
+are canonicalized and must resolve under $HOME or $REPO, keeping the
+"rocprof-compute-venv*" basename.
 Env overrides: REPO=$REPO  ARCH=<gfx...>  IMAGE=<image>
                VENV=<path>  ROCM_WHL_INDEX=<url>
 EOF
@@ -127,28 +128,40 @@ bash "$LIB_DIR/git_exclude_outdir.sh" "$REPO" 2>/dev/null || true
 # invocations can race on it, so install runs under one flock covering
 # re-check + install (same pattern as ckCommon's _ACCT_SETUP_SH), always
 # wiping any partial venv first. VENV= overrides outside $HOME/$REPO aren't
-# bind-mounted on docker/srun, so keep them under one of those two roots.
+# bind-mounted on docker/srun, so they're rejected below.
 ROCM_WHL_INDEX=${ROCM_WHL_INDEX:-https://repo.amd.com/rocm/whl-multi-arch/}
 VENV="${VENV:-$HOME/rocprof-compute-venv}"
-# Canonicalize: collapses ../symlinks (closing a basename-check bypass) and
-# makes a relative override absolute. dx() always runs at cwd=$REPO
-# (ckCommon's _dispatch_run_like) while this script never cd's, so an
-# uncanonicalized relative VENV would resolve to two different files.
-VENV=$(readlink -f -- "$VENV") || {
+# realpath -s -m (not readlink -f): collapses "..", makes a relative override
+# absolute, but does not resolve symlinks. A symlinked $HOME must still compare
+# equal to the literal, unresolved path docker/srun bind-mount (ckCommon's
+# -v "$HOME:$HOME"); readlink -f would silently divert to the symlink's
+# target, a path the container never sees.
+VENV=$(realpath -s -m -- "$VENV") || {
     echo "ERROR: cannot resolve VENV path: $VENV" >&2
     exit 1
 }
-# Named function (not inline) so a bats test can exercise it directly. Rejects
-# anything not shaped like "rocprof-compute-venv*" before the rm -rf below, so
-# e.g. a VENV=$HOME typo can't wipe the caller's home directory.
+# Both named (not inline) so bats can exercise them directly. Basename guards
+# against a typo like VENV=$HOME wiping the caller's home directory; the root
+# check enforces the $HOME/$REPO constraint above before the rm -rf in the
+# dispatched heredoc below.
 _venv_basename_ok() {
     case "$(basename -- "$1")" in
     rocprof-compute-venv*) return 0 ;;
     *) return 1 ;;
     esac
 }
+_venv_under_root_ok() {
+    case "$1" in
+    "$2"/* | "$3"/*) return 0 ;;
+    *) return 1 ;;
+    esac
+}
 _venv_basename_ok "$VENV" || {
     echo "ERROR: VENV must be a 'rocprof-compute-venv'-named directory (got: $VENV)" >&2
+    exit 1
+}
+_venv_under_root_ok "$VENV" "$(realpath -s -m -- "$HOME")" "$(realpath -s -m -- "$REPO")" || {
+    echo "ERROR: VENV must resolve under \$HOME or \$REPO (got: $VENV)" >&2
     exit 1
 }
 RPC="$VENV/bin/rocprof-compute"
@@ -159,7 +172,7 @@ VENV_Q=$(printf '%q' "$VENV")
 RPC_Q=$(printf '%q' "$RPC")
 LOCK_Q=$(printf '%q' "$LOCK")
 PYBIN_Q=$(printf '%q' "$VENV/bin/python")
-WHL_Q=$(printf '%q' "$ROCM_WHL_INDEX")
+ROCM_WHL_INDEX_Q=$(printf '%q' "$ROCM_WHL_INDEX")
 
 # Install/repair template, dispatched via dx() to wherever the venv lives. A
 # quoted heredoc keeps every $VAR below literal here, so it expands once, in
@@ -185,7 +198,7 @@ test -x "$RPC" && "$RPC" --version >/dev/null 2>&1 || { echo 'ERROR: rocprof-com
 SH
 
 if ! dx "test -x $RPC_Q && $RPC_Q --version >/dev/null 2>&1"; then
-    dx "VENV=$VENV_Q; RPC=$RPC_Q; LOCK=$LOCK_Q; PYBIN=$PYBIN_Q; ROCM_WHL_INDEX=$WHL_Q
+    dx "VENV=$VENV_Q; RPC=$RPC_Q; LOCK=$LOCK_Q; PYBIN=$PYBIN_Q; ROCM_WHL_INDEX=$ROCM_WHL_INDEX_Q
 $_ensure_rpc_tmpl" || {
         echo 'ERROR: failed to install/repair rocprof-compute venv.' >&2
         exit 1
@@ -214,6 +227,13 @@ exec {venv_lock_fd}>"$LOCK" || {
 }
 flock -s "$venv_lock_fd" || {
     echo "ERROR: flock failed" >&2
+    exit 1
+}
+# A concurrent reinstall could have wiped $VENV between the health check above
+# and this lock acquisition; re-check now so a broken venv fails clearly here
+# instead of surfacing as an opaque "profile exit: N" below.
+dx "test -x $RPC_Q && $RPC_Q --version >/dev/null 2>&1" || {
+    echo "ERROR: rocprof-compute venv missing or broken after acquiring lock: $VENV" >&2
     exit 1
 }
 
