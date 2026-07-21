@@ -577,31 +577,64 @@ Two complementary `.dot` views:
 
 `compute_profile.sh`. `rocprof-compute` (ROCm Compute Profiler, package
 `rocprofiler-compute`) is the omniperf successor — roofline, speed-of-light, and
-memory-hierarchy panels. Two install facts learned the hard way:
+memory-hierarchy panels. Install facts learned the hard way:
 
-1. The apt package installs only the launcher (`/opt/rocm/bin/rocprof-compute`, a
-   symlink into `libexec/`), often **not on the non-login `docker exec` PATH** —
-   resolve it by path. Every dispatch runs in a fresh, ephemeral `--rm`
-   container, so nothing installed at runtime persists to the next call;
-   `rocprofiler-compute` must already be present in the image (added via a
-   custom Dockerfile layer, a one-time image-build task) on either backend.
-   The script fails fast with a clear error if it is missing rather than
-   attempting an install.
-2. The launcher is a Python app whose deps are **not** in the apt package; the
-   official install runs `pip install -r
-   /opt/rocm/libexec/rocprofiler-compute/requirements.txt`. Ubuntu 24.04 blocks
-   system pip (PEP 668), so the script installs them into a **persistent venv**
-   at `$REPO/ck_profile_out/.venv-rocprof-compute-py<ver>` (python version in
-   the name to avoid interpreter collisions; override `VENV=`; `uv venv`+`uv
-   pip` if `uv` is installed, else `python3 -m venv --system-site-packages`+pip)
-   and runs the launcher with that venv's python. The venv lives under `$REPO`
-   specifically because that is the only host directory bind-mounted at an
-   identical path in every container — `$HOME` is not mounted, so anything
-   written there would vanish with the ephemeral container. The venv is
-   **container-only**: it is built with the container's python (e.g. 3.12) and
-   the host python differs (3.10), so the same venv can't run on the host —
-   and the host has no in-container ROCm to run rocprof-compute regardless.
-   Reversible: delete the dir.
+1. No official ROCm image bundles it, and every dispatch runs in a fresh,
+   ephemeral `--rm` container, so nothing installed at runtime persists to the
+   next call unless it lands somewhere bind-mounted identically across every
+   backend. The script installs it itself via pip — AMD publishes a
+   self-contained `rocm[profiler]` wheel (launcher + its Python deps in one
+   shot) at `https://repo.amd.com/rocm/whl-multi-arch/` (override the index
+   with `ROCM_WHL_INDEX=`) — into a **persistent venv** at
+   `$HOME/rocprof-compute-venv` (override `VENV=`; `uv venv`+`uv pip` if `uv`
+   is installed, else `python3 -m venv --system-site-packages`+pip) and runs
+   the launcher from that venv's own console-script
+   (`$VENV/bin/rocprof-compute`). `$HOME` is bind-mounted at an identical path
+   on every backend — `direct` runs on the host with no container at all, and
+   both `docker` and `srun` build their container flags from the same
+   `_docker_static_flags` in `ckCommon`, which mounts `-v "$HOME:$HOME"`
+   alongside `-v "$REPO:$REPO"` — so the venv persists across runs, run IDs,
+   and even different `$REPO` checkouts, with no image pre-bake needed — as
+   long as `VENV=` resolves under `$HOME` or `$REPO` (anywhere else isn't
+   bind-mounted, so docker/srun would reinstall from scratch every call). A
+   `VENV=` override is canonicalized (`readlink -f`, closing off a relative
+   path or symlink) and validated (basename must look like
+   `rocprof-compute-venv*`) before anything is deleted, so a typo like
+   `VENV=$HOME` is rejected instead of wiping the caller's home directory.
+2. The venv path is fixed, with no python-version suffix, so a venv built
+   against one image's `python3` could go stale if a later run uses a
+   different `python3` minor version. No special handling for this: the
+   existing "does it still work" check (`test -x "$RPC" && "$RPC" --version`)
+   already catches a broken/incompatible venv and triggers a reinstall.
+   Reversible either way: delete the dir (the `$VENV.lock` sidecar it leaves
+   behind is harmless and fine to delete alongside it).
+3. A shared-home-wide path means concurrent invocations (any host, any
+   backend) can race on it, so the check-then-install runs under a single `flock`
+   covering both the re-check and the install (same pattern as `ckCommon`'s
+   `_ACCT_SETUP_SH` for the same shared-`$HOME` problem), and any reinstall
+   always wipes the venv first rather than repairing it in place. Both the
+   `exec` that opens the lock file and the `flock` call itself are
+   error-checked (an unchecked failure would silently skip locking and
+   reintroduce the race).
+4. The exclusive install lock only covers the reinstall; a long profiling run
+   uses the venv for minutes afterward with no protection of its own. Unlike
+   fact #3's lock (taken and released within one dispatched command), this is
+   a different topology: the script holds a **shared** lock directly in its
+   own orchestrating process for the whole `profile`+`analyze` sequence, so a
+   concurrent reinstall's exclusive lock (still inside a dispatched fragment)
+   blocks until every shared holder releases, instead of deleting a venv a
+   sibling run still needs.
+
+   Fully verified on `direct`/`docker` (same host). On `srun` the exclusive
+   lock runs on whichever compute node Slurm allocates while the shared lock
+   is taken in the orchestrator's own process (typically a login node);
+   whether `flock()` contends across two physical hosts sharing `$HOME`
+   depends on the network filesystem's advisory-lock support (NFS, NFSv4,
+   Lustre, GPFS) and can't be verified from source. In the documented
+   workflow, `ckComputeProfile` runs only via `ckRemote`, whose
+   `with_server_lock` (`bin/ckRemote:374-384`) already serializes jobs against
+   the same `SERVER` from the invoking client — so this is a defense-in-depth
+   backstop on `srun`, not the primary guarantee.
 
 `rocprof-compute profile -n <wl> -p <dir> -- <app>` runs the app multi-pass
 (slow) and writes the workload data **directly into `<dir>`** (sysinfo.csv,

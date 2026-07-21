@@ -39,8 +39,8 @@ Six independent modes; the user picks one or several:
   each other."
 - **compute** — `rocprof-compute` (ROCm Compute Profiler): roofline +
   speed-of-light + memory-hierarchy panels. Answers "where in the
-  microarchitecture is the kernel limited." Requires `rocprofiler-compute`
-  pre-baked into the image; fails fast with a clear error if it is missing.
+  microarchitecture is the kernel limited." Installs itself via pip into a
+  persistent venv on first run — no image pre-bake needed.
 
 Modes are independent and may be combined; **graphs (`cfg`, `depgraph`) emit DOT
 only** — preview `.dot` in VS Code's Graphviz extension (no graphviz/SVG).
@@ -269,22 +269,22 @@ ckRemote --no-sync REPO=<remote-repo-path> BIN=build/bin/<target> ARCH=gfx942 BA
 On a docker server, `ARCH` can be omitted (auto-detected from `rocminfo`).
 
 Every dispatch runs in a fresh, ephemeral `--rm` container, so nothing
-installed at runtime would persist to the next call. `rocprofiler-compute`
-must therefore already be present in the image — add it via a custom
-Dockerfile layer on top of the base image (a one-time image-build task); the
-script fails fast with a clear error if it is missing, on either backend. The
-apt package ships only the launcher; its Python deps (`requirements.txt`) are
-**not** apt — the official install uses pip, and Ubuntu 24.04 blocks system pip
-(PEP 668), so the script installs them into a **persistent venv at
-`$REPO/ck_profile_out/.venv-rocprof-compute-py<ver>`** (python version in the
-name; override with `VENV=`; reused across runs, reversible: delete the dir;
-`uv` is used automatically if installed, else stdlib `venv`+`pip`). The venv
-lives under `$REPO` specifically because that is the only host directory
-bind-mounted at an identical path in every container — `$HOME` is not
-mounted, so anything written there would vanish with the container. The venv
-is still built with the **container's** python — the host python differs
-(e.g. 3.10 vs 3.12) and the host cannot run rocprof-compute anyway. It
-profiles into
+installed at runtime would persist to the next call unless it lands
+somewhere bind-mounted identically on every backend. The script installs
+`rocprof-compute` itself via pip (AMD's `rocm[profiler]` wheel index) into a
+**persistent venv at `$HOME/rocprof-compute-venv`** (override with `VENV=`,
+must resolve under `$HOME`/`$REPO` and keep the `rocprof-compute-venv*`
+basename or it's rejected; `uv` is used automatically if installed, else
+stdlib `venv`+`pip`) — `$HOME` is bind-mounted at an identical path on every
+backend (`direct` runs on the host with no container at all; `docker`/`srun`
+build their container flags from `ckCommon`'s `_docker_static_flags`), so the
+venv persists across runs, run IDs, and even different `$REPO` checkouts with
+no image pre-bake needed. Every call does a cheap, unlocked health check
+first; only a *failed* check takes a `flock`-guarded exclusive lock and
+wipes+reinstalls. That same lock is held shared for the whole
+`profile`+`analyze` run, so a concurrent reinstall can't delete the venv
+mid-use (see REFERENCE.md's compute-mode fact #4 for an open `srun` caveat).
+It profiles into
 `ck_profile_out/compute/raw/<wl>`, exports the analysis as per-panel CSVs
 (`analyze --output-format csv`), then `compute_report.py` renders a **styled
 `ck_profile_out/compute/<wl>_report.html` + `<wl>_report.md`** (Speed-of-Light
