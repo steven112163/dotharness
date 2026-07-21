@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # Deep microarchitecture profiling with rocprof-compute: roofline + speed-of-light
-# + memory hierarchy panels. rocprofiler-compute must already be in the image
-# (runtime install is not supported: every dispatch runs a fresh ephemeral
-# --rm container, so nothing installed at runtime would persist).
+# + memory hierarchy panels. Installed via pip into a persistent,
+# shared-home-wide venv on first run (see VENV/flock below), so no image
+# pre-bake is required.
 #
 #   ckComputeProfile [--arch gfx...] [--base-args <args>] [--workload <name>] <bin>
 
@@ -32,9 +32,11 @@ Usage: $(basename "$0") [--arch gfx...] [--base-args <args>]
   --workload <name>  workload label (default: basename of bin)
   <bin>              binary path (relative to REPO root, e.g. build/bin/foo)
 
-rocprofiler-compute must be pre-installed in the image (no runtime install).
+rocprof-compute is installed (and repaired if broken) automatically via pip
+into a persistent venv, default $HOME/rocprof-compute-venv. VENV= overrides
+must be an absolute "rocprof-compute-venv*"-named path under $HOME or $REPO.
 Env overrides: REPO=$REPO  ARCH=<gfx...>  IMAGE=<image>
-               VENV=<path>
+               VENV=<path>  ROCM_WHL_INDEX=<url>
 EOF
     exit 1
 }
@@ -108,9 +110,8 @@ fi
 
 # Each run gets its own immutable runs/<id>/ dir (never rm -rf'd), so past
 # workload profiles/reports survive; "latest" always points at the newest
-# one. The rocprof-compute venv (installed once, reused across runs) stays
-# at the ck_profile_out root, outside both MODE_DIR and runs/. Skipped when
-# the caller overrides OUTDIR directly (a debug/custom-location escape hatch).
+# one. Skipped when the caller overrides OUTDIR directly (a debug/custom-
+# location escape hatch).
 RUN_ID=""
 if [ -z "$OUTDIR" ]; then
     RUN_ID=$(_new_run_dir "$MODE_DIR")
@@ -120,66 +121,120 @@ mkdir -p "$OUTDIR"
 cp "$LIB_DIR/profile_readme.md" "$REPO/ck_profile_out/README.md" 2>/dev/null || true
 bash "$LIB_DIR/git_exclude_outdir.sh" "$REPO" 2>/dev/null || true
 
-# shellcheck disable=SC2016  # template eval'd inside container; must not expand locally
-_resolve_rpc='command -v rocprof-compute 2>/dev/null || for p in /opt/rocm/bin/rocprof-compute /opt/rocm*/bin/rocprof-compute; do [ -x "$p" ] && { echo "$p"; break; }; done'
-RPC=$(dx "$_resolve_rpc" || true)
-[ -z "$RPC" ] && {
-    echo 'ERROR: rocprof-compute not found in the image.' >&2
-    echo '  rocprofiler-compute must be pre-installed in the IMAGE; no official' >&2
-    echo '  ROCm image bundles it. Add it via a custom Dockerfile layer on top of' >&2
-    echo '  the base image (a one-time image-build task); this script cannot' >&2
-    echo '  install it at runtime.' >&2
-    exit 2
+# $HOME is bind-mounted identically on every backend (ckCommon's
+# _docker_static_flags), so the venv persists across runs, repos, and run IDs
+# with no image pre-bake — but the shared path also means concurrent
+# invocations can race on it, so install runs under one flock covering
+# re-check + install (same pattern as ckCommon's _ACCT_SETUP_SH), always
+# wiping any partial venv first. VENV= overrides outside $HOME/$REPO aren't
+# bind-mounted on docker/srun, so keep them under one of those two roots.
+ROCM_WHL_INDEX=${ROCM_WHL_INDEX:-https://repo.amd.com/rocm/whl-multi-arch/}
+VENV="${VENV:-$HOME/rocprof-compute-venv}"
+# Canonicalize: collapses ../symlinks (closing a basename-check bypass) and
+# makes a relative override absolute. dx() always runs at cwd=$REPO
+# (ckCommon's _dispatch_run_like) while this script never cd's, so an
+# uncanonicalized relative VENV would resolve to two different files.
+VENV=$(readlink -f -- "$VENV") || {
+    echo "ERROR: cannot resolve VENV path: $VENV" >&2
+    exit 1
 }
+# Named function (not inline) so a bats test can exercise it directly. Rejects
+# anything not shaped like "rocprof-compute-venv*" before the rm -rf below, so
+# e.g. a VENV=$HOME typo can't wipe the caller's home directory.
+_venv_basename_ok() {
+    case "$(basename -- "$1")" in
+    rocprof-compute-venv*) return 0 ;;
+    *) return 1 ;;
+    esac
+}
+_venv_basename_ok "$VENV" || {
+    echo "ERROR: VENV must be a 'rocprof-compute-venv'-named directory (got: $VENV)" >&2
+    exit 1
+}
+RPC="$VENV/bin/rocprof-compute"
+LOCK="$VENV.lock"
+# %q-escape before splicing into the prelude below: VENV is user-overridable
+# and an apostrophe in it would break naive splicing.
+VENV_Q=$(printf '%q' "$VENV")
+RPC_Q=$(printf '%q' "$RPC")
+LOCK_Q=$(printf '%q' "$LOCK")
+PYBIN_Q=$(printf '%q' "$VENV/bin/python")
+WHL_Q=$(printf '%q' "$ROCM_WHL_INDEX")
 
-RPC_REAL=$(dx "readlink -f '$RPC' 2>/dev/null || echo '$RPC'")
-REQ=$(dx "ls /opt/rocm/libexec/rocprofiler-compute/requirements.txt /opt/rocm*/libexec/rocprofiler-compute/requirements.txt 2>/dev/null | head -1")
-PYVER=$(dx 'python3 -c "import sys;print(f\"{sys.version_info.major}.{sys.version_info.minor}\")" 2>/dev/null')
-# $REPO is bind-mounted identically on every node (shared home), so a venv
-# rooted there is guaranteed to persist and resolve to the same path
-# regardless of backend; keep it there rather than under $HOME.
-VENV="${VENV:-$REPO/ck_profile_out/.venv-rocprof-compute-py$PYVER}"
-PYBIN="$VENV/bin/python"
-if ! dx "test -x '$PYBIN' && '$PYBIN' '$RPC_REAL' --version >/dev/null 2>&1"; then
-    [ -z "$REQ" ] && {
-        echo 'ERROR: requirements.txt not found for rocprof-compute.' >&2
-        exit 2
-    }
-    echo "Installing rocprof-compute python deps into venv $VENV (python $PYVER; one-time) ..."
-    if dx "command -v uv >/dev/null 2>&1"; then
-        dx "uv venv --system-site-packages --python python3 '$VENV' && uv pip install -q --python '$PYBIN' -r '$REQ'" ||
-            {
-                echo 'ERROR: uv failed to build rocprof-compute venv.' >&2
-                exit 2
-            }
-    else
-        dx "python3 -m venv --system-site-packages '$VENV' && '$PYBIN' -m pip install -q --upgrade pip && '$PYBIN' -m pip install -q -r '$REQ'" ||
-            {
-                echo 'ERROR: failed to install rocprof-compute python deps.' >&2
-                exit 2
-            }
-    fi
+# Install/repair template, dispatched via dx() to wherever the venv lives. A
+# quoted heredoc keeps every $VAR below literal here, so it expands once, in
+# the dispatched shell, once the prelude binds VENV/RPC/LOCK/PYBIN/
+# ROCM_WHL_INDEX — cf. ckCommon's _ACCT_SETUP_SH (same template-then-bind split).
+read -r -d '' _ensure_rpc_tmpl <<'SH' || true
+exec {lock_fd}>"$LOCK" || { echo 'ERROR: cannot open venv lock file' >&2; exit 1; }
+flock -x "$lock_fd" || { echo 'ERROR: flock failed' >&2; exit 1; }
+if test -x "$RPC" && "$RPC" --version >/dev/null 2>&1; then
+    exit 0
 fi
-RUN_RPC="'$PYBIN' '$RPC_REAL'"
-echo "rocprof-compute: $(dx "$RUN_RPC --version 2>&1 | head -1")  (venv: $VENV, python $PYVER)"
+echo "Installing or repairing rocprof-compute venv $VENV ..."
+rm -rf "$VENV"
+if command -v uv >/dev/null 2>&1; then
+    uv venv --system-site-packages --python python3 "$VENV" &&
+        uv pip install -q --python "$PYBIN" --index-url "$ROCM_WHL_INDEX" 'rocm[profiler]'
+else
+    python3 -m venv --system-site-packages "$VENV" &&
+        "$PYBIN" -m pip install -q --upgrade pip &&
+        "$PYBIN" -m pip install -q --index-url "$ROCM_WHL_INDEX" 'rocm[profiler]'
+fi
+test -x "$RPC" && "$RPC" --version >/dev/null 2>&1 || { echo 'ERROR: rocprof-compute still broken after reinstall' >&2; exit 1; }
+SH
+
+if ! dx "test -x $RPC_Q && $RPC_Q --version >/dev/null 2>&1"; then
+    dx "VENV=$VENV_Q; RPC=$RPC_Q; LOCK=$LOCK_Q; PYBIN=$PYBIN_Q; ROCM_WHL_INDEX=$WHL_Q
+$_ensure_rpc_tmpl" || {
+        echo 'ERROR: failed to install/repair rocprof-compute venv.' >&2
+        exit 1
+    }
+fi
+ver=$(dx "$RPC_Q --version 2>&1") || ver='(version check failed)'
+ver=${ver%%$'\n'*}
+echo "rocprof-compute: $ver  (venv: $VENV)"
 
 RAW="$OUTDIR/raw"
 mkdir -p "$RAW"
 wl_dir="$RAW/$WORKLOAD"
+WORKLOAD_Q=$(printf '%q' "$WORKLOAD")
+wl_dir_Q=$(printf '%q' "$wl_dir")
+
+# Shared lock for the whole profile+analyze run: the install path above takes
+# this same lock exclusively before rm -rf'ing $VENV, so a concurrent
+# reinstall blocks here instead of racing an in-flight run. Verified for
+# direct/docker (same host); on srun, cross-node flock() propagation can't be
+# verified from source (REFERENCE.md fact #4) — ckRemote's with_server_lock
+# already serializes same-SERVER jobs in the documented ckRemote-only
+# workflow, so this is defense-in-depth there, not the primary guarantee.
+exec {venv_lock_fd}>"$LOCK" || {
+    echo "ERROR: cannot open venv lock file" >&2
+    exit 1
+}
+flock -s "$venv_lock_fd" || {
+    echo "ERROR: flock failed" >&2
+    exit 1
+}
+
 echo "Profiling $BIN with rocprof-compute (multi-pass) ..."
-if dx "$RUN_RPC profile -n '$WORKLOAD' -p '$wl_dir' -- ./$BIN $BASE_ARGS >'$RAW/profile.log' 2>&1"; then pe=0; else pe=$?; fi
+if dx "$RPC_Q profile -n $WORKLOAD_Q -p $wl_dir_Q -- ./$BIN $BASE_ARGS >'$RAW/profile.log' 2>&1"; then pe=0; else pe=$?; fi
 kill_orphans
 echo "profile exit: $pe"
 
 echo "Analyzing (CSV panels + text dump) ..."
 csvname="${WORKLOAD}_csv"
 csvdir="$RAW/$csvname"
-if dx "cd '$RAW' && $RUN_RPC analyze -p '$wl_dir' --output-format csv --output-name '$csvname' >'$RAW/analyze_csv.log' 2>&1"; then ae=0; else ae=$?; fi
+csvname_Q=$(printf '%q' "$csvname")
+csvdir_Q=$(printf '%q' "$csvdir")
+analyze_txt_Q=$(printf '%q' "$RAW/${WORKLOAD}_analyze.txt")
+if dx "cd '$RAW' && $RPC_Q analyze -p $wl_dir_Q --output-format csv --output-name $csvname_Q >'$RAW/analyze_csv.log' 2>&1"; then ae=0; else ae=$?; fi
 echo "analyze exit: $ae"
-dx "$RUN_RPC analyze -p '$wl_dir' >'$RAW/${WORKLOAD}_analyze.txt' 2>&1" || true
+dx "$RPC_Q analyze -p $wl_dir_Q >$analyze_txt_Q 2>&1" || true
+flock -u "$venv_lock_fd" || true # best-effort; the fd (and its lock) closes at exit regardless
 
 echo "Rendering HTML + Markdown report ..."
-if dx "python3 '$LIB_DIR/compute_report.py' --csv '$csvdir' --out '$OUTDIR' --name '$WORKLOAD' --arch '$ARCH'"; then re=0; else re=$?; fi
+if dx "python3 '$LIB_DIR/compute_report.py' --csv $csvdir_Q --out '$OUTDIR' --name $WORKLOAD_Q --arch '$ARCH'"; then re=0; else re=$?; fi
 find "$REPO/.rocprofv3" -mindepth 1 -delete 2>/dev/null || true
 rmdir "$REPO/.rocprofv3" 2>/dev/null || true
 if [ $pe -eq 0 ] && [ $ae -eq 0 ] && [ $re -eq 0 ]; then

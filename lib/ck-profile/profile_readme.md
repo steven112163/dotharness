@@ -23,10 +23,11 @@ invocation writes to its own `<mode>/runs/<UTC-timestamp>/`, and `<mode>/latest`
 is a symlink repointed at the newest one after the run finishes. Old runs stay
 on disk indefinitely (no pruning yet) — a `ckRemote pull` fetches the whole
 `runs/` tree, so any past run's output is available to diff or script against
-locally. Two artifacts are intentionally kept outside `runs/`, reused across
-invocations rather than versioned, since they are not run history: `static/build/`
-(the incremental CMake/Ninja tree) and `.venv-rocprof-compute-py*` at the
-`ck_profile_out/` root (the one-time rocprof-compute install).
+locally. `static/build/` (the incremental CMake/Ninja tree) is similarly kept
+outside `runs/`, reused across invocations rather than versioned, since it is
+not run history. The `rocprof-compute` install lives outside `ck_profile_out/`
+entirely, at `$HOME/rocprof-compute-venv` (override with `VENV=`) — shared
+across repos, not just runs.
 
 `dynamic/runs/*/summary.json` additionally carries a `schema_version` field
 (currently `2`) for anything parsing it programmatically. `schema_version` `2`
