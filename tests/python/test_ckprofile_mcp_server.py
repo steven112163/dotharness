@@ -360,7 +360,11 @@ async def _run_twice_same_server(server, ck_repo):
     return first
 
 
-def test_run_profile_rejects_second_job_on_busy_server(server, ck_repo):
+def test_run_profile_rejects_second_job_on_busy_server(server, ck_repo, monkeypatch):
+    # Without an artificial delay, the first job's zero-sleep run phase can
+    # reach a terminal state before the second call's busy-check runs,
+    # making the rejection racy.
+    monkeypatch.setenv("STUB_CKREMOTE_RUN_SLEEP_S", "5")
     first = asyncio.run(_run_twice_same_server(server, ck_repo))
     assert first["state"] == "running"
 
