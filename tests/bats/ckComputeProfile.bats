@@ -71,3 +71,12 @@ under() {
     run under "${HOME}-evil/rocprof-compute-venv" "$HOME" "/some/repo"
     [ "$status" -eq 1 ]
 }
+
+@test "opens the shared venv lock fd read-write, not write-only" {
+    # Regression guard: over NFS, flock -s (LOCK_SH) on a write-only fd fails
+    # with "Bad file descriptor" (NFS emulates flock via POSIX locks, which
+    # require read access for a shared lock). `<>` avoids that; `>` does not.
+    # shellcheck disable=SC2016 # the $LOCK below is a literal regex match, not an expansion
+    run grep -qE '^exec \{venv_lock_fd\}<>"\$LOCK"' "$SCRIPT"
+    [ "$status" -eq 0 ]
+}

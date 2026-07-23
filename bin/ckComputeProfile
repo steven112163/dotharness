@@ -205,7 +205,10 @@ $_ensure_rpc_tmpl" || {
     }
 fi
 ver=$(dx "$RPC_Q --version 2>&1") || ver='(version check failed)'
-ver=${ver%%$'\n'*}
+# rocprof-compute wraps the version in a "----" banner, so the first line is
+# a bare separator, not the version; take the first line with real content.
+ver=$(grep -m1 '[A-Za-z0-9]' <<<"$ver") || true
+[ -n "$ver" ] || ver='(version check failed)'
 echo "rocprof-compute: $ver  (venv: $VENV)"
 
 RAW="$OUTDIR/raw"
@@ -221,7 +224,11 @@ wl_dir_Q=$(printf '%q' "$wl_dir")
 # verified from source (REFERENCE.md fact #4) — ckRemote's with_server_lock
 # already serializes same-SERVER jobs in the documented ckRemote-only
 # workflow, so this is defense-in-depth there, not the primary guarantee.
-exec {venv_lock_fd}>"$LOCK" || {
+# Opened read-write (<>), not write-only (>): over NFS, flock()'s LOCK_SH is
+# emulated via POSIX locks and rejects a write-only fd with EBADF ("flock: N:
+# Bad file descriptor"), even though the LOCK_EX install lock above tolerates
+# write-only fine (a write lock needs no read access).
+exec {venv_lock_fd}<>"$LOCK" || {
     echo "ERROR: cannot open venv lock file" >&2
     exit 1
 }
