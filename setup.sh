@@ -280,7 +280,13 @@ if command -v npm &>/dev/null; then
         # shell; prepend its bin dir so the rest of the script sees it.
         npm_bin_dir="$(npm prefix -g 2>/dev/null || echo "$HOME/.npm-global")"
         export PATH="$npm_bin_dir/bin:$PATH"
-        if npm install -g @playwright/cli >/dev/null &&
+        # npm root -g is where the package actually lands (e.g. system npm's
+        # /usr/lib/node_modules, root-owned); check it's writable before
+        # trying, rather than failing on a permission error mid-install.
+        npm_root_dir="$(npm root -g 2>/dev/null || echo "$npm_bin_dir/lib/node_modules")"
+        if [ ! -w "$npm_root_dir" ] && [ ! -w "$(dirname "$npm_root_dir")" ]; then
+            echo "    skipped (no write access to npm global dir $npm_root_dir)"
+        elif npm install -g @playwright/cli >/dev/null &&
             playwright-cli install --skills >/dev/null &&
             playwright-cli install-browser >/dev/null; then
             echo "    ok  playwright-cli"

@@ -42,29 +42,47 @@ stub_installer() {
         >"$fresh_dir/bin/$tool_bin"
     chmod +x "$fresh_dir/bin/$tool_bin"
 
-    local locate_arg locate_output
-    case "$name" in
-    npm)
-        locate_arg="prefix"
-        locate_output="$fresh_dir"
-        ;;
-    pipx)
-        locate_arg="environment"
-        locate_output="$fresh_dir/bin"
-        ;;
-    *)
-        echo "stub_installer: unknown installer '$name'" >&2
-        return 1
-        ;;
-    esac
     {
         printf '#!/bin/sh\n'
         printf 'echo "%s $*" >> "%s"\n' "$name" "$LOG_FILE"
         # shellcheck disable=SC2016 # $1 expands in the generated /bin/sh script, not here
-        printf 'if [ "$1" = "%s" ]; then echo "%s"; exit 0; fi\n' "$locate_arg" "$locate_output"
+        case "$name" in
+        npm)
+            # npm root -g reports where the package actually lands; $fresh_dir
+            # itself (already created above) stands in as a writable target.
+            printf 'if [ "$1" = "prefix" ]; then echo "%s"; exit 0; fi\n' "$fresh_dir"
+            # shellcheck disable=SC2016 # $1 expands in the generated /bin/sh script, not here
+            printf 'if [ "$1" = "root" ]; then echo "%s"; exit 0; fi\n' "$fresh_dir"
+            ;;
+        pipx)
+            printf 'if [ "$1" = "environment" ]; then echo "%s"; exit 0; fi\n' "$fresh_dir/bin"
+            ;;
+        *)
+            echo "stub_installer: unknown installer '$name'" >&2
+            return 1
+            ;;
+        esac
         printf 'exit %s\n' "$exit_code"
     } >"$STUB_BIN/$name"
     chmod +x "$STUB_BIN/$name"
+}
+
+# Simulates npm successfully locating its (writable) global dirs but failing
+# on the actual install step - e.g. network error - distinct from the
+# no-write-access skip path, which never reaches npm install at all.
+stub_npm_writable_but_install_fails() {
+    local fresh_dir="$BATS_TEST_TMPDIR/fresh-npm-writable"
+    mkdir -p "$fresh_dir"
+    {
+        printf '#!/bin/sh\n'
+        printf 'echo "npm $*" >> "%s"\n' "$LOG_FILE"
+        # shellcheck disable=SC2016 # $1 expands in the generated /bin/sh script, not here
+        printf 'if [ "$1" = "prefix" ]; then echo "%s"; exit 0; fi\n' "$fresh_dir"
+        # shellcheck disable=SC2016 # $1 expands in the generated /bin/sh script, not here
+        printf 'if [ "$1" = "root" ]; then echo "%s"; exit 0; fi\n' "$fresh_dir"
+        printf 'exit 1\n'
+    } >"$STUB_BIN/npm"
+    chmod +x "$STUB_BIN/npm"
 }
 
 @test "playwright-cli: skipped when npm is absent" {
@@ -96,12 +114,35 @@ stub_installer() {
 }
 
 @test "playwright-cli: warns instead of aborting when install fails" {
-    stub npm 1
+    stub_npm_writable_but_install_fails
     block=$(extract_block '^# --- playwright-cli' '^fi$')
     run env PATH="$STUB_BIN" "$BASH_BIN" -c "set -euo pipefail; $block"
     [ "$status" -eq 0 ]
     [[ "$output" == *"warn: playwright-cli install failed"* ]]
     grep -qF "npm install -g @playwright/cli" "$LOG_FILE"
+}
+
+@test "playwright-cli: skipped when npm global dir is not writable" {
+    local readonly_dir="$BATS_TEST_TMPDIR/readonly-npm-root"
+    mkdir -p "$readonly_dir"
+    chmod 555 "$readonly_dir"
+    {
+        printf '#!/bin/sh\n'
+        printf 'echo "npm $*" >> "%s"\n' "$LOG_FILE"
+        # shellcheck disable=SC2016 # $1 expands in the generated /bin/sh script, not here
+        printf 'if [ "$1" = "prefix" ]; then echo "%s"; exit 0; fi\n' "$BATS_TEST_TMPDIR"
+        # shellcheck disable=SC2016 # $1 expands in the generated /bin/sh script, not here
+        printf 'if [ "$1" = "root" ]; then echo "%s"; exit 0; fi\n' "$readonly_dir"
+        printf 'exit 1\n'
+    } >"$STUB_BIN/npm"
+    chmod +x "$STUB_BIN/npm"
+
+    block=$(extract_block '^# --- playwright-cli' '^fi$')
+    run env PATH="$STUB_BIN" "$BASH_BIN" -c "$block"
+    chmod 755 "$readonly_dir"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"skipped (no write access to npm global dir $readonly_dir)"* ]]
+    [[ "$(cat "$LOG_FILE" 2>/dev/null)" != *"install"* ]]
 }
 
 @test "graphify (Claude): skipped when pipx is absent" {
