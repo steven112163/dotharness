@@ -72,9 +72,11 @@ CK_LOCAL_REPO=${CK_LOCAL_REPO:-$(git rev-parse --show-toplevel 2>/dev/null || tr
 # tooling/output dirs git does not track, so they neither copy nor get --delete'd
 # on the remote. ck_profile_out is git-excluded via .git/info/exclude, not
 # .gitignore, so it must be listed here to protect remote profiling output.
+# graphify-out is likewise only ignored via the global excludesFile (gitignore_global),
+# which rsync's :- .gitignore filter never reads, so it needs the same explicit listing.
 # .claude and .codex hold local agent scratch and session state; exclude so they
 # don't overwrite the remote's own agent context.
-CK_RSYNC_EXCLUDES=${CK_RSYNC_EXCLUDES:-ck_profile_out .venv .pytest_cache .ruff_cache .cache .claude .codex}
+CK_RSYNC_EXCLUDES=${CK_RSYNC_EXCLUDES:-ck_profile_out .venv .pytest_cache .ruff_cache .cache .claude .codex graphify-out}
 CK_SSH_OPTS=${CK_SSH_OPTS:-}
 # Per-server lock dir: serializes this machine's own ckRemote dispatches against a
 # given server (CLI vs. CLI, CLI vs. a future MCP server) so two profiling/run jobs
