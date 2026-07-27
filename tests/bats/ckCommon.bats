@@ -456,6 +456,75 @@ EOF
     [[ "$output" == *"invalid arch"* ]]
 }
 
+# --- _validate_arch_list: ckBuild's multi-arch fat-binary validator ---
+
+@test "_validate_arch_list accepts a single arch" {
+    run bash -c "
+        source '$CKCOMMON'
+        _validate_arch_list gfx942
+    "
+    [ "$status" -eq 0 ]
+}
+
+@test "_validate_arch_list accepts a multi-arch list" {
+    run bash -c "
+        source '$CKCOMMON'
+        _validate_arch_list 'gfx942;gfx950;gfx1250'
+    "
+    [ "$status" -eq 0 ]
+}
+
+@test "_validate_arch_list rejects an empty list" {
+    run bash -c "
+        source '$CKCOMMON'
+        _validate_arch_list ''
+    "
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"invalid arch list"* ]]
+}
+
+@test "_validate_arch_list rejects a malformed entry inside an otherwise-valid list" {
+    run bash -c "
+        source '$CKCOMMON'
+        _validate_arch_list 'gfx942;bogus'
+    "
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"invalid arch list"* ]]
+}
+
+@test "_validate_arch_list rejects a trailing separator" {
+    run bash -c "
+        source '$CKCOMMON'
+        _validate_arch_list 'gfx942;'
+    "
+    [ "$status" -eq 1 ]
+}
+
+@test "_validate_arch_list rejects a leading separator" {
+    run bash -c "
+        source '$CKCOMMON'
+        _validate_arch_list ';gfx942'
+    "
+    [ "$status" -eq 1 ]
+}
+
+@test "_validate_arch_list rejects a doubled separator" {
+    run bash -c "
+        source '$CKCOMMON'
+        _validate_arch_list 'gfx942;;gfx950'
+    "
+    [ "$status" -eq 1 ]
+}
+
+@test "_validate_arch_list rejects a shell-metacharacter payload" {
+    run bash -c "
+        source '$CKCOMMON'
+        _validate_arch_list 'gfx942;touch pwned'
+    "
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"invalid arch list"* ]]
+}
+
 @test "_resolve_arch_or_require rejects an already-set malformed ARCH on srun" {
     run bash -c "
         source '$CKCOMMON'

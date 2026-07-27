@@ -62,6 +62,8 @@ Usage: $(basename "$0") [--scratch] [--minimal] [gfx...] [target...] [-- <extra 
   gfx...        GPU arch (e.g. gfx942); same as ARCH=. Required in srun mode
                 (CPU build node, nothing to probe). Needs --scratch to take
                 effect on an already-configured tree. direct/docker: auto-detect.
+                Pass multiple (gfx942 gfx950 gfx1250) or ARCH=gfx942;gfx950;gfx1250
+                for a single multi-arch fat binary.
   target...     ninja targets to build (default: all)
   -- <args>     extra args forwarded to cmake-ck-dev.sh on (re)configure
                 (each must be space-free; they are re-split on the build node)
@@ -95,7 +97,7 @@ while [ $# -gt 0 ]; do
         echo "Unknown option: $1" >&2
         usage
         ;;
-    gfx*) ARCH="$1" ;;
+    gfx*) ARCH="${ARCH:+$ARCH;}$1" ;;
     *) TARGETS+=("$1") ;;
     esac
     shift
@@ -124,8 +126,14 @@ _require_ck_root
 echo "Backend: $MODE"
 
 # srun builds on CPU nodes (no GPU to probe) require an explicit arch; direct and
-# docker run on a GPU host, so rocminfo can probe it there.
-_resolve_arch_or_require "$MODE" || exit 1
+# docker run on a GPU host, so rocminfo can probe it there. A ;-joined ARCH is a
+# multi-arch fat-binary request (never empty, so auto-detect never applies):
+# validate it directly instead of going through the single-arch resolver.
+if [[ "$ARCH" == *\;* ]]; then
+    _validate_arch_list "$ARCH" || exit 1
+else
+    _resolve_arch_or_require "$MODE" || exit 1
+fi
 [ "$GPU" -eq 1 ] && [ -z "$GRES" ] && GRES=$(_gres_for_arch "$ARCH")
 
 BUILD_ABS="$REPO/$BUILD_DIR"
@@ -167,7 +175,9 @@ if [ "$NEED_CONFIGURE" -eq 1 ]; then
     fi
     echo "Configuring ($ARCH) in $BUILD_ABS ..."
     # Fatal: pipefail alone would let a failed configure fall through to ninja.
-    ../script/cmake-ck-dev.sh $MINIMAL .. $ARCH -G Ninja \$CACHE_FLAGS ${EXTRA_CMAKE[*]:-} || exit 1
+    # $ARCH is quoted: a multi-arch ";"-joined value must survive as one shell
+    # word here, not get parsed as separate statements by the remote bash -c.
+    ../script/cmake-ck-dev.sh $MINIMAL .. "$ARCH" -G Ninja \$CACHE_FLAGS ${EXTRA_CMAKE[*]:-} || exit 1
 fi
 # srun owns the allocation: use the reserved core budget, clamped to what the
 # container actually sees (it is --cpus-capped, so nproc reflects the reservation,
