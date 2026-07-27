@@ -456,6 +456,38 @@ EOF
     [[ "$output" == *"invalid arch"* ]]
 }
 
+@test "_resolve_arch_or_require rejects an already-set malformed ARCH on srun" {
+    run bash -c "
+        source '$CKCOMMON'
+        ARCH='gfx942;touch pwned'
+        _resolve_arch_or_require srun
+    "
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"invalid arch"* ]]
+}
+
+@test "_resolve_arch_or_require with a malformed ARCH stays non-fatal under || true" {
+    run bash -c "
+        source '$CKCOMMON'
+        ARCH='gfx942;touch pwned'
+        _resolve_arch_or_require srun 2>/dev/null || true
+        echo survived
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"survived"* ]]
+}
+
+@test "_resolve_arch_or_require clears ARCH on a malformed value so best-effort callers can't leak it" {
+    run bash -c "
+        source '$CKCOMMON'
+        ARCH='gfx942;touch pwned'
+        _resolve_arch_or_require srun 2>/dev/null || true
+        echo \"ARCH=[\$ARCH]\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ARCH=[]"* ]]
+}
+
 # --- _validate_arch_list: ckBuild's multi-arch fat-binary validator ---
 
 @test "_validate_arch_list accepts a single arch" {
@@ -568,38 +600,6 @@ EOF
     "
     [ "$status" -eq 0 ]
     [[ "$output" == *'echo "gfx942;gfx950;gfx1250" -G Ninja'* ]]
-}
-
-@test "_resolve_arch_or_require rejects an already-set malformed ARCH on srun" {
-    run bash -c "
-        source '$CKCOMMON'
-        ARCH='gfx942;touch pwned'
-        _resolve_arch_or_require srun
-    "
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"invalid arch"* ]]
-}
-
-@test "_resolve_arch_or_require with a malformed ARCH stays non-fatal under || true" {
-    run bash -c "
-        source '$CKCOMMON'
-        ARCH='gfx942;touch pwned'
-        _resolve_arch_or_require srun 2>/dev/null || true
-        echo survived
-    "
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"survived"* ]]
-}
-
-@test "_resolve_arch_or_require clears ARCH on a malformed value so best-effort callers can't leak it" {
-    run bash -c "
-        source '$CKCOMMON'
-        ARCH='gfx942;touch pwned'
-        _resolve_arch_or_require srun 2>/dev/null || true
-        echo \"ARCH=[\$ARCH]\"
-    "
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"ARCH=[]"* ]]
 }
 
 # --- _require_arch_for_srun: hard-required on srun, no-op elsewhere ---
