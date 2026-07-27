@@ -8,7 +8,7 @@
 _CKCOMMON_SOURCED=1
 
 # Cluster-wide defaults. Callers may override any via env before sourcing.
-IMAGE=${IMAGE:-rocm/composable_kernel:ck_ub24.04_rocm7.1.1_develop}
+IMAGE=${IMAGE:-rocm/composable_kernel:ck_ub24.04_rocm7.13_develop}
 CONSTRAINT=${CONSTRAINT:-MARKHAM}
 CPUS=${CPUS:-128}
 SRUN_TIME=${SRUN_TIME:-04:00:00}
@@ -74,6 +74,13 @@ _ensure_image_tar() {
     tar="$IMAGE_DIR/$(_sanitized_image_tag "$image").tar"
     if [ -f "$tar" ]; then
         return 0
+    fi
+    if ! docker image inspect "$image" >/dev/null 2>&1; then
+        echo "Pulling $image (not present locally) ..." >&2
+        if ! docker pull "$image"; then
+            echo "ERROR: docker pull '$image' failed." >&2
+            return 1
+        fi
     fi
     echo "Saving image to $tar (one-time, ~tens of GB) ..." >&2
     mkdir -p "$IMAGE_DIR"
