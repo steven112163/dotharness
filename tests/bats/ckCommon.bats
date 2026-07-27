@@ -474,6 +474,23 @@ EOF
     [ "$status" -eq 0 ]
 }
 
+@test "_validate_arch_list accepts exactly 8 archs (the documented cap)" {
+    run bash -c "
+        source '$CKCOMMON'
+        _validate_arch_list 'gfx900;gfx901;gfx902;gfx903;gfx904;gfx905;gfx906;gfx907'
+    "
+    [ "$status" -eq 0 ]
+}
+
+@test "_validate_arch_list rejects 9 archs (one past the documented cap)" {
+    run bash -c "
+        source '$CKCOMMON'
+        _validate_arch_list 'gfx900;gfx901;gfx902;gfx903;gfx904;gfx905;gfx906;gfx907;gfx908'
+    "
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"invalid arch list"* ]]
+}
+
 @test "_validate_arch_list rejects an empty list" {
     run bash -c "
         source '$CKCOMMON'
@@ -523,6 +540,34 @@ EOF
     "
     [ "$status" -eq 1 ]
     [[ "$output" == *"invalid arch list"* ]]
+}
+
+@test "_gres_for_arch returns empty for a multi-arch list (ckBuild's GPU=1 fallthrough case)" {
+    # No exact-string case in _gres_for_arch matches a ;-joined list, so GPU=1
+    # + multi-arch builds fall through to the existing "GPU=1 but no GRES
+    # mapping" error in _srun_dispatch rather than guessing an arch to map.
+    run bash -c "
+        source '$CKCOMMON'
+        echo \"[\$(_gres_for_arch 'gfx942;gfx950')]\"
+    "
+    [ "$status" -eq 0 ]
+    [ "$output" = "[]" ]
+}
+
+# --- _run_in_container: the docker/srun escaping layer must not unquote a
+# multi-arch ARCH. ckBuild.bats only exercises MODE=direct (no extra escaping
+# layer); this covers the layer docker and srun both add on top of the
+# heredoc-quoted $ARCH, without needing a full docker/srun mock. ---
+
+@test "_run_in_container passes a double-quoted multi-arch value through unchanged (docker/srun layer)" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        IMAGE_DIR='$TMPDIR_TEST'
+        _run_in_container 0 /work 'echo \"gfx942;gfx950;gfx1250\" -G Ninja'
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'echo "gfx942;gfx950;gfx1250" -G Ninja'* ]]
 }
 
 @test "_resolve_arch_or_require rejects an already-set malformed ARCH on srun" {

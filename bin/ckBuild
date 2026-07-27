@@ -62,15 +62,16 @@ Usage: $(basename "$0") [--scratch] [--minimal] [gfx...] [target...] [-- <extra 
   gfx...        GPU arch (e.g. gfx942); same as ARCH=. Required in srun mode
                 (CPU build node, nothing to probe). Needs --scratch to take
                 effect on an already-configured tree. direct/docker: auto-detect.
-                Pass multiple (gfx942 gfx950 gfx1250) or ARCH=gfx942;gfx950;gfx1250
-                for a single multi-arch fat binary.
+                Pass multiple (gfx942 gfx950 gfx1250) or ARCH='gfx942;gfx950;gfx1250'
+                (quoted: unquoted ";" splits into separate shell commands) for a
+                single multi-arch fat binary.
   target...     ninja targets to build (default: all)
   -- <args>     extra args forwarded to cmake-ck-dev.sh on (re)configure
                 (each must be space-free; they are re-split on the build node)
 
 Backend auto-detection (override with MODE): direct | docker | srun
 Env overrides: IMAGE=$IMAGE  REPO=$REPO
-               ARCH=<gfx...>  BUILD_DIR=$BUILD_DIR  MODE=<backend>
+               ARCH=<gfx...>[;<gfx...>...]  BUILD_DIR=$BUILD_DIR  MODE=<backend>
                GPU=$GPU (0 = CPU build node, default; 1 = GPU node, --gres)
                GRES=<gpu:...:1>  CONSTRAINT=$CONSTRAINT (Slurm site; clear to allow any)
                CPUS=$CPUS (srun --cpus-per-task; build uses all of them)
@@ -83,6 +84,8 @@ SCRATCH=0
 MINIMAL=""
 TARGETS=()
 EXTRA_CMAKE=()
+# First gfx* CLI token overrides an inherited ARCH=; later tokens accumulate.
+CLI_ARCH_SEEN=0
 while [ $# -gt 0 ]; do
     case "$1" in
     --scratch) SCRATCH=1 ;;
@@ -97,7 +100,14 @@ while [ $# -gt 0 ]; do
         echo "Unknown option: $1" >&2
         usage
         ;;
-    gfx*) ARCH="${ARCH:+$ARCH;}$1" ;;
+    gfx*)
+        if [ "$CLI_ARCH_SEEN" -eq 0 ]; then
+            ARCH="$1"
+            CLI_ARCH_SEEN=1
+        else
+            ARCH="$ARCH;$1"
+        fi
+        ;;
     *) TARGETS+=("$1") ;;
     esac
     shift
@@ -129,6 +139,8 @@ echo "Backend: $MODE"
 # docker run on a GPU host, so rocminfo can probe it there. A ;-joined ARCH is a
 # multi-arch fat-binary request (never empty, so auto-detect never applies):
 # validate it directly instead of going through the single-arch resolver.
+# \; required here (unlike in the ERE below): unescaped, bash's lexer parses
+# it as a command separator even inside [[ ]] (verified).
 if [[ "$ARCH" == *\;* ]]; then
     _validate_arch_list "$ARCH" || exit 1
 else
