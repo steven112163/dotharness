@@ -373,14 +373,12 @@ _validate_arch() {
     }
 }
 
-# Validate a ;-separated list of gfx archs, for ckBuild's multi-arch fat-binary
-# case only (CK's CMake GPU_TARGETS accepts a ;-joined list in one build).
-# ckRun and the profiling tools run a compiled binary against one physical GPU
-# and must keep using _validate_arch instead. Capped at 8 archs to bound the
-# regex, well above any real CK target list.
+# Validate a ;-separated gfx arch list — ckBuild's multi-arch case only; ckRun
+# and profiling tools keep using _validate_arch (one arch, one physical GPU).
+# Returns (not exits). $1: arch or ;-joined list, capped at 8 archs/16 chars each.
 _validate_arch_list() {
-    [[ "$1" =~ ^gfx[0-9a-z]{1,16}(\;gfx[0-9a-z]{1,16}){0,7}$ ]] || {
-        echo "ERROR: invalid arch list '$1' (expected e.g. gfx942 or gfx942;gfx950)." >&2
+    [[ "$1" =~ ^gfx[0-9a-z]{1,16}(;gfx[0-9a-z]{1,16}){0,7}$ ]] || {
+        echo "ERROR: invalid arch list '$1' (expected e.g. gfx942 or gfx942;gfx950, max 8 archs)." >&2
         return 1
     }
 }

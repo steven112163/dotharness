@@ -72,3 +72,48 @@ teardown() {
     grep -qx "gfx942" "$CMAKE_LOG"
     [ "$(grep -c '^gfx' "$CMAKE_LOG")" -eq 1 ]
 }
+
+@test "ckBuild builds a multi-arch fat binary from a pre-joined ARCH env var alone (no CLI tokens)" {
+    run bash -c "
+        export PATH=\"$TMPDIR_TEST/stubbin:\$PATH\"
+        MODE=direct GPU=0 REPO='$FAKE_REPO' ARCH='gfx942;gfx950;gfx1250' '$CKBUILD' --scratch
+    "
+    [ "$status" -eq 0 ]
+    [ -f "$CMAKE_LOG" ]
+    grep -qx "gfx942;gfx950;gfx1250" "$CMAKE_LOG"
+}
+
+@test "ckBuild rejects a malformed ARCH env var (no CLI tokens)" {
+    run bash -c "
+        export PATH=\"$TMPDIR_TEST/stubbin:\$PATH\"
+        MODE=direct GPU=0 REPO='$FAKE_REPO' ARCH='gfx942;;gfx950' '$CKBUILD' --scratch
+    "
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"invalid arch list"* ]]
+    [ ! -f "$CMAKE_LOG" ]
+}
+
+@test "ckBuild's first CLI gfx token overrides an inherited ARCH env var instead of accumulating onto it" {
+    # ARCH=gfx942 in the environment plus a CLI gfx950 must resolve to gfx950
+    # alone ("same as ARCH=" in usage()), not silently merge into a two-arch
+    # gfx942;gfx950 build the caller never asked for.
+    run bash -c "
+        export PATH=\"$TMPDIR_TEST/stubbin:\$PATH\"
+        MODE=direct GPU=0 REPO='$FAKE_REPO' ARCH=gfx942 '$CKBUILD' gfx950 --scratch
+    "
+    [ "$status" -eq 0 ]
+    [ -f "$CMAKE_LOG" ]
+    # -x: the whole recorded arg is exactly "gfx950", not "gfx942;gfx950" or
+    # any other value containing the overridden env arch.
+    grep -qx "gfx950" "$CMAKE_LOG"
+}
+
+@test "ckBuild's second CLI gfx token still accumulates onto the first (multi-arch via repeated CLI args)" {
+    run bash -c "
+        export PATH=\"$TMPDIR_TEST/stubbin:\$PATH\"
+        MODE=direct GPU=0 REPO='$FAKE_REPO' ARCH=gfx942 '$CKBUILD' gfx950 gfx1250 --scratch
+    "
+    [ "$status" -eq 0 ]
+    [ -f "$CMAKE_LOG" ]
+    grep -qx "gfx950;gfx1250" "$CMAKE_LOG"
+}
