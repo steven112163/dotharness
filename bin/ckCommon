@@ -375,7 +375,10 @@ _validate_arch() {
 
 # Validate a ;-separated gfx arch list — ckBuild's multi-arch case only; ckRun
 # and profiling tools keep using _validate_arch (one arch, one physical GPU).
-# Returns (not exits). $1: arch or ;-joined list, capped at 8 archs/16 chars each.
+# Returns (not exits). $1: arch or ;-joined list. Capped at 8 archs (more than
+# any real CK fat binary spans today) / 16 chars each (real gfx names are ~6
+# chars) to bound the regex. Does not dedup a repeated arch (e.g.
+# gfx942;gfx942); CMake just rebuilds it twice, no correctness impact.
 _validate_arch_list() {
     [[ "$1" =~ ^gfx[0-9a-z]{1,16}(;gfx[0-9a-z]{1,16}){0,7}$ ]] || {
         echo "ERROR: invalid arch list '$1' (expected e.g. gfx942 or gfx942;gfx950, max 8 archs)." >&2

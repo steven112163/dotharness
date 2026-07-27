@@ -106,6 +106,7 @@ teardown() {
     # -x: the whole recorded arg is exactly "gfx950", not "gfx942;gfx950" or
     # any other value containing the overridden env arch.
     grep -qx "gfx950" "$CMAKE_LOG"
+    [ "$(grep -c '^gfx' "$CMAKE_LOG")" -eq 1 ]
 }
 
 @test "ckBuild's second CLI gfx token still accumulates onto the first (multi-arch via repeated CLI args)" {
@@ -116,4 +117,5 @@ teardown() {
     [ "$status" -eq 0 ]
     [ -f "$CMAKE_LOG" ]
     grep -qx "gfx950;gfx1250" "$CMAKE_LOG"
+    [ "$(grep -c '^gfx' "$CMAKE_LOG")" -eq 1 ]
 }

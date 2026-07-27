@@ -59,9 +59,10 @@ Usage: $(basename "$0") [--scratch] [--minimal] [gfx...] [target...] [-- <extra 
 
   --scratch     wipe $BUILD_DIR/ and configure from zero (default: incremental)
   --minimal     pass --minimal to cmake-ck-dev.sh (fewer instances, faster build)
-  gfx...        GPU arch (e.g. gfx942); same as ARCH=. Required in srun mode
-                (CPU build node, nothing to probe). Needs --scratch to take
-                effect on an already-configured tree. direct/docker: auto-detect.
+  gfx...        GPU arch (e.g. gfx942); same as ARCH=, and discards (not merges
+                with) an inherited ARCH= env var. Required in srun mode (CPU
+                build node, nothing to probe). Needs --scratch to take effect
+                on an already-configured tree. direct/docker: auto-detect.
                 Pass multiple (gfx942 gfx950 gfx1250) or ARCH='gfx942;gfx950;gfx1250'
                 (quoted: unquoted ";" splits into separate shell commands) for a
                 single multi-arch fat binary.
@@ -84,8 +85,7 @@ SCRATCH=0
 MINIMAL=""
 TARGETS=()
 EXTRA_CMAKE=()
-# First gfx* CLI token overrides an inherited ARCH=; later tokens accumulate.
-CLI_ARCH_SEEN=0
+CLI_ARCHS=()
 while [ $# -gt 0 ]; do
     case "$1" in
     --scratch) SCRATCH=1 ;;
@@ -100,18 +100,16 @@ while [ $# -gt 0 ]; do
         echo "Unknown option: $1" >&2
         usage
         ;;
-    gfx*)
-        if [ "$CLI_ARCH_SEEN" -eq 0 ]; then
-            ARCH="$1"
-            CLI_ARCH_SEEN=1
-        else
-            ARCH="$ARCH;$1"
-        fi
-        ;;
+    gfx*) CLI_ARCHS+=("$1") ;;
     *) TARGETS+=("$1") ;;
     esac
     shift
 done
+# Any CLI gfx* token fully discards (never merges with) an inherited ARCH env var.
+[ ${#CLI_ARCHS[@]} -gt 0 ] && ARCH=$(
+    IFS=';'
+    echo "${CLI_ARCHS[*]}"
+)
 
 # TARGETS/EXTRA_CMAKE are re-split by word on the build node, so a whitespace-
 # bearing element would silently mangle rather than pass through. Reject it with a
