@@ -4,24 +4,24 @@ set -euo pipefail
 # Build a Composable Kernel (CK) tree inside the CK docker image, auto-detecting
 # how to reach a build node.
 #
-# Two build shapes, one command:
-#   - incremental (default): reuse the existing build/ tree, just rebuild. With
-#     the Ninja generator, ninja itself re-runs CMake when CMakeLists change, so
-#     editing sources or build files needs no manual reconfigure.
-#   - scratch (--scratch): wipe build/ and configure from zero. Use this after
-#     changing the GPU arch, toolchain, or cmake options, where an incremental
-#     reconfigure is unsafe.
+# Two subcommands, kept deliberately separate:
+#   - configure : (re)generate the build/ tree by running cmake-ck-dev.sh.
+#     --scratch wipes build/ first; otherwise the existing tree is reused (cmake
+#     just refreshes the cache). Always runs cmake when invoked.
+#   - build     : run ninja against an already-configured build/ tree. Never
+#     configures; errors out if build/build.ninja is missing, pointing at
+#     `ckBuild configure`.
 #
-# The build runs in a --rm container off the CK image, so the toolchain comes
+# Both run inside a --rm container off the CK image, so the toolchain comes
 # from the image (self-consistent gcc/amdclang++/ccache) rather than the host.
-# That removes host-toolchain skew. CK cross-compiles, so the build needs no GPU.
+# That removes host-toolchain skew. CK cross-compiles, so neither needs a GPU.
 #
 # Backend is auto-detected (override with MODE=direct|docker|srun):
-#   - srun   : a Slurm login node (srun present). Dispatches the build as ONE
-#              srun allocation on a CPU node, running it inside the image via
+#   - srun   : a Slurm login node (srun present). Dispatches as ONE srun
+#              allocation on a CPU node, running it inside the image via
 #              docker run --rm (image distributed as a save/load tarball).
-#   - docker : a shared server with docker but no srun. Runs the build in a
-#              --rm container on this host (image auto-pulled if absent).
+#   - docker : a shared server with docker but no srun. Runs in a --rm
+#              container on this host (image auto-pulled if absent).
 #   - direct : already inside the dev container (/.dockerenv), or a bare box with
 #              local /opt/rocm. Runs inline (the surrounding env IS the toolchain).
 #
@@ -37,8 +37,8 @@ source "$(dirname "$(readlink -f "$0")")/ckCommon"
 REPO=${REPO:-$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")}
 ARCH=${ARCH:-}
 BUILD_DIR=${BUILD_DIR:-build}
-# GPU=0: build on a CPU node (default; container supplies the toolchain, CK
-# cross-compiles). GPU=1: build on a GPU node (--gres).
+# GPU=0: run on a CPU node (default; container supplies the toolchain, CK
+# cross-compiles). GPU=1: run on a GPU node (--gres).
 GPU=${GPU:-0}
 GRES=${GRES:-}
 MODE=${MODE:-}
@@ -55,140 +55,228 @@ esac
 
 usage() {
     cat >&2 <<EOF
-Usage: $(basename "$0") [--scratch] [--minimal] [gfx...] [target...] [-- <extra cmake args>]
+Usage: $(basename "$0") {configure|build} [args...]
 
-  --scratch     wipe $BUILD_DIR/ and configure from zero (default: incremental)
+  configure   (re)generate $BUILD_DIR/ by running cmake-ck-dev.sh
+  build       run ninja against an already-configured $BUILD_DIR/ (never configures)
+
+Run '$(basename "$0") configure -h' or '$(basename "$0") build -h' for subcommand details.
+EOF
+    exit 1
+}
+
+usage_configure() {
+    cat >&2 <<EOF
+Usage: $(basename "$0") configure [--scratch] [--minimal] [gfx...] [-- <extra cmake args>]
+
+  --scratch     wipe $BUILD_DIR/ and configure from zero (default: reuse existing build/ tree)
   --minimal     pass --minimal to cmake-ck-dev.sh (fewer instances, faster build)
   gfx...        GPU arch (e.g. gfx942); same as ARCH=, and discards (not merges
                 with) an inherited ARCH= env var. Required in srun mode (CPU
-                build node, nothing to probe). Needs --scratch to take effect
-                on an already-configured tree. direct/docker: auto-detect.
+                build node, nothing to probe). direct/docker: auto-detect.
                 Pass multiple (gfx942 gfx950 gfx1250) or ARCH='gfx942;gfx950;gfx1250'
                 (quoted: unquoted ";" splits into separate shell commands) for a
                 single multi-arch fat binary.
-  target...     ninja targets to build (default: all)
-  -- <args>     extra args forwarded to cmake-ck-dev.sh on (re)configure
-                (each must be space-free; they are re-split on the build node)
+  -- <args>     extra args forwarded to cmake-ck-dev.sh (each must be space-free;
+                they are re-split on the build node)
 
 Backend auto-detection (override with MODE): direct | docker | srun
 Env overrides: IMAGE=$IMAGE  REPO=$REPO
                ARCH=<gfx...>[;<gfx...>...]  BUILD_DIR=$BUILD_DIR  MODE=<backend>
                GPU=$GPU (0 = CPU build node, default; 1 = GPU node, --gres)
                GRES=<gpu:...:1>  CONSTRAINT=$CONSTRAINT (Slurm site; clear to allow any)
-               CPUS=$CPUS (srun --cpus-per-task; build uses all of them)
-               SRUN_TIME=$SRUN_TIME  SRUN_EXTRA=<srun args>  IMAGE_DIR=$IMAGE_DIR
+               CPUS=$CPUS (srun --cpus-per-task)  SRUN_TIME=$SRUN_TIME  SRUN_EXTRA=<srun args>  IMAGE_DIR=$IMAGE_DIR
 EOF
     exit 1
 }
 
-SCRATCH=0
-MINIMAL=""
-TARGETS=()
-EXTRA_CMAKE=()
-CLI_ARCHS=()
-while [ $# -gt 0 ]; do
-    case "$1" in
-    --scratch) SCRATCH=1 ;;
-    --minimal) MINIMAL="--minimal" ;;
-    -h | --help) usage ;;
-    --)
-        shift
-        EXTRA_CMAKE=("$@")
-        break
-        ;;
-    -*)
-        echo "Unknown option: $1" >&2
-        usage
-        ;;
-    gfx*) CLI_ARCHS+=("$1") ;;
-    *) TARGETS+=("$1") ;;
-    esac
-    shift
-done
-# Any CLI gfx* token fully discards (never merges with) an inherited ARCH env var.
-[ ${#CLI_ARCHS[@]} -gt 0 ] && ARCH=$(
-    IFS=';'
-    echo "${CLI_ARCHS[*]}"
-)
+usage_build() {
+    cat >&2 <<EOF
+Usage: $(basename "$0") build [target...]
+
+  target...     ninja targets to build (default: all). Requires a previously
+                configured $BUILD_DIR/ tree; run '$(basename "$0") configure' first
+                if $BUILD_DIR/build.ninja is missing.
+
+Backend auto-detection (override with MODE): direct | docker | srun
+Env overrides: IMAGE=$IMAGE  REPO=$REPO
+               BUILD_DIR=$BUILD_DIR  MODE=<backend>
+               GPU=$GPU (0 = CPU build node, default; 1 = GPU node, --gres; needs
+               ARCH=<gfx...> or GRES=<gpu:...:1> set, since build takes no arch args)
+               GRES=<gpu:...:1>  CONSTRAINT=$CONSTRAINT (Slurm site; clear to allow any)
+               CPUS=$CPUS (build uses all of them)  SRUN_TIME=$SRUN_TIME  SRUN_EXTRA=<srun args>  IMAGE_DIR=$IMAGE_DIR
+EOF
+    exit 1
+}
 
 # TARGETS/EXTRA_CMAKE are re-split by word on the build node, so a whitespace-
-# bearing element would silently mangle rather than pass through. Reject it with a
-# clear error instead of producing a corrupt command line.
-for _a in ${TARGETS[@]+"${TARGETS[@]}"} ${EXTRA_CMAKE[@]+"${EXTRA_CMAKE[@]}"}; do
-    case "$_a" in
-    *[[:space:]]*)
-        echo "ERROR: argument '$_a' contains whitespace; targets and extra cmake" >&2
-        echo "  args are re-split on the build node and must be space-free." >&2
-        exit 1
-        ;;
-    esac
-done
+# bearing element would silently mangle rather than pass through. Reject it with
+# a clear error instead of producing a corrupt command line. $@: the array(s) to check.
+_reject_whitespace_args() {
+    local _a
+    for _a in "$@"; do
+        case "$_a" in
+        *[[:space:]]*)
+            echo "ERROR: argument '$_a' contains whitespace; targets and extra cmake" >&2
+            echo "  args are re-split on the build node and must be space-free." >&2
+            exit 1
+            ;;
+        esac
+    done
+}
 
-# Resolve REPO to the CK project root even if cwd drifted into a subdir: walk up
-# looking for script/cmake-ck-dev.sh. Fail fast rather than configure in the
-# wrong place.
-_require_ck_root
+cmd_configure() {
+    local SCRATCH=0 MINIMAL="" EXTRA_CMAKE=() CLI_ARCHS=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        --scratch) SCRATCH=1 ;;
+        --minimal) MINIMAL="--minimal" ;;
+        -h | --help) usage_configure ;;
+        --)
+            shift
+            EXTRA_CMAKE=("$@")
+            break
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            usage_configure
+            ;;
+        gfx*) CLI_ARCHS+=("$1") ;;
+        *)
+            echo "ERROR: 'configure' takes no target arguments (got '$1'); targets belong to 'build'." >&2
+            usage_configure
+            ;;
+        esac
+        shift
+    done
+    # Any CLI gfx* token fully discards (never merges with) an inherited ARCH env var.
+    [ ${#CLI_ARCHS[@]} -gt 0 ] && ARCH=$(
+        IFS=';'
+        echo "${CLI_ARCHS[*]}"
+    )
 
-# Pick the backend (see _detect_backend in ckCommon for the precedence rule).
-[ -n "$MODE" ] || MODE=$(_detect_backend build) || exit 1
-echo "Backend: $MODE"
+    _reject_whitespace_args ${EXTRA_CMAKE[@]+"${EXTRA_CMAKE[@]}"}
 
-# srun builds on CPU nodes (no GPU to probe) require an explicit arch; direct and
-# docker run on a GPU host, so rocminfo can probe it there. A ;-joined ARCH is a
-# multi-arch fat-binary request (never empty, so auto-detect never applies):
-# validate it directly instead of going through the single-arch resolver.
-# \; required here (unlike in the ERE below): unescaped, bash's lexer parses
-# it as a command separator even inside [[ ]] (verified).
-if [[ "$ARCH" == *\;* ]]; then
-    _validate_arch_list "$ARCH" || exit 1
-else
-    _resolve_arch_or_require "$MODE" || exit 1
-fi
-[ "$GPU" -eq 1 ] && [ -z "$GRES" ] && GRES=$(_gres_for_arch "$ARCH")
+    # Resolve REPO to the CK project root even if cwd drifted into a subdir: walk
+    # up looking for script/cmake-ck-dev.sh. Fail fast rather than configure in
+    # the wrong place.
+    _require_ck_root
 
-BUILD_ABS="$REPO/$BUILD_DIR"
+    # Pick the backend (see _detect_backend in ckCommon for the precedence rule).
+    [ -n "$MODE" ] || MODE=$(_detect_backend build) || exit 1
+    echo "Backend: $MODE"
 
-# Touch the shared filesystem here, not on the build node.
-if [ "$SCRATCH" -eq 1 ]; then
-    echo "Scratch build: removing $BUILD_ABS"
-    rm -rf "$BUILD_ABS"
-fi
-mkdir -p "$BUILD_ABS"
+    # srun builds on CPU nodes (no GPU to probe) require an explicit arch; direct
+    # and docker run on a GPU host, so rocminfo can probe it there. A ;-joined
+    # ARCH is a multi-arch fat-binary request (never empty, so auto-detect never
+    # applies): validate it directly instead of going through the single-arch
+    # resolver. \; required here (unlike in the ERE below): unescaped, bash's
+    # lexer parses it as a command separator even inside [[ ]] (verified).
+    if [[ "$ARCH" == *\;* ]]; then
+        _validate_arch_list "$ARCH" || exit 1
+    else
+        _resolve_arch_or_require "$MODE" || exit 1
+    fi
+    [ "$GPU" -eq 1 ] && [ -z "$GRES" ] && GRES=$(_gres_for_arch "$ARCH")
 
-# Configure on scratch or first run; ninja auto-reconfigures incrementally.
-if [ "$SCRATCH" -eq 1 ] || [ ! -f "$BUILD_ABS/build.ninja" ]; then
-    NEED_CONFIGURE=1
-else
-    NEED_CONFIGURE=0
-    echo "Incremental build: reusing $BUILD_ABS"
-fi
+    local build_abs="$REPO/$BUILD_DIR"
 
-# Program run on the build node (inside the container under srun, inline under
-# direct). Host vars ($REPO, $BUILD_ABS, $ARCH, $MINIMAL, $MODE, $NEED_CONFIGURE,
-# the arrays) expand now, when the heredoc is built; \$VARS stay literal and are
-# evaluated on the build node.
-REMOTE_PROG=$(
-    cat <<EOF
+    # Touch the shared filesystem here, not on the build node.
+    if [ "$SCRATCH" -eq 1 ]; then
+        echo "Scratch configure: removing $build_abs"
+        rm -rf "$build_abs"
+    fi
+    mkdir -p "$build_abs"
+
+    # Program run on the build node (inside the container under srun, inline
+    # under direct). Host vars ($REPO, $build_abs, $ARCH, $MINIMAL, the arrays)
+    # expand now, when the heredoc is built; \$VARS stay literal and are
+    # evaluated on the build node.
+    local remote_prog
+    remote_prog=$(
+        cat <<EOF
 set -o pipefail
 if [ ! -e "$REPO/script/cmake-ck-dev.sh" ]; then
     echo "ERROR: repo not visible on \$(hostname -s) ($REPO missing)." >&2
     echo "  Landed on a node without your shared home; srun mode auto-retries." >&2
     exit $REPO_MISSING_RC
 fi
-cd "$BUILD_ABS"
-if [ "$NEED_CONFIGURE" -eq 1 ]; then
-    CACHE_FLAGS=""
-    if command -v ccache >/dev/null 2>&1; then
-        CACHE_FLAGS="-DCMAKE_HIP_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache"
-    elif command -v sccache >/dev/null 2>&1; then
-        CACHE_FLAGS="-DCMAKE_HIP_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_C_COMPILER_LAUNCHER=sccache"
-    fi
-    echo "Configuring ($ARCH) in $BUILD_ABS ..."
-    # Fatal: pipefail alone would let a failed configure fall through to ninja.
-    # $ARCH is quoted: a multi-arch ";"-joined value must survive as one shell
-    # word here, not get parsed as separate statements by the remote bash -c.
-    ../script/cmake-ck-dev.sh $MINIMAL .. "$ARCH" -G Ninja \$CACHE_FLAGS ${EXTRA_CMAKE[*]:-} || exit 1
+cd "$build_abs"
+CACHE_FLAGS=""
+if command -v ccache >/dev/null 2>&1; then
+    CACHE_FLAGS="-DCMAKE_HIP_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache"
+elif command -v sccache >/dev/null 2>&1; then
+    CACHE_FLAGS="-DCMAKE_HIP_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_C_COMPILER_LAUNCHER=sccache"
 fi
+echo "Configuring ($ARCH) in $build_abs ..."
+# \$ARCH is quoted: a multi-arch ";"-joined value must survive as one shell
+# word here, not get parsed as separate statements by the remote bash -c.
+../script/cmake-ck-dev.sh $MINIMAL .. "$ARCH" -G Ninja \$CACHE_FLAGS ${EXTRA_CMAKE[*]:-}
+EOF
+    )
+
+    if _dispatch_build_like 0 "$build_abs" "$remote_prog"; then
+        echo "Configure successful ($build_abs)"
+    else
+        echo "Configure failed ($build_abs)" >&2
+        exit 1
+    fi
+}
+
+cmd_build() {
+    local TARGETS=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        -h | --help) usage_build ;;
+        --scratch | --minimal | --)
+            echo "ERROR: '$1' is a 'configure' option, not a 'build' option." >&2
+            usage_build
+            ;;
+        gfx*)
+            echo "ERROR: 'build' takes no arch arguments (got '$1'); pass arch to 'configure'." >&2
+            usage_build
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            usage_build
+            ;;
+        *) TARGETS+=("$1") ;;
+        esac
+        shift
+    done
+
+    _reject_whitespace_args ${TARGETS[@]+"${TARGETS[@]}"}
+
+    _require_ck_root
+
+    [ -n "$MODE" ] || MODE=$(_detect_backend build) || exit 1
+    echo "Backend: $MODE"
+
+    # build takes no CLI arch token; GRES (when GPU=1) can only come from an
+    # ARCH env var the caller set, or GRES set directly.
+    [ "$GPU" -eq 1 ] && [ -z "$GRES" ] && [ -n "$ARCH" ] && GRES=$(_gres_for_arch "$ARCH")
+
+    local build_abs="$REPO/$BUILD_DIR"
+    if [ ! -f "$build_abs/build.ninja" ]; then
+        echo "ERROR: $build_abs is not configured (no build.ninja)." >&2
+        echo "  Run '$(basename "$0") configure [gfx...]' first." >&2
+        exit 1
+    fi
+
+    # Program run on the build node (inside the container under srun, inline
+    # under direct). Host vars ($build_abs, $MODE, $CPUS, the arrays) expand
+    # now, when the heredoc is built; \$VARS stay literal and are evaluated on
+    # the build node.
+    local remote_prog
+    remote_prog=$(
+        cat <<EOF
+set -o pipefail
+if [ ! -e "$REPO/script/cmake-ck-dev.sh" ]; then
+    echo "ERROR: repo not visible on \$(hostname -s) ($REPO missing)." >&2
+    echo "  Landed on a node without your shared home; srun mode auto-retries." >&2
+    exit $REPO_MISSING_RC
+fi
+cd "$build_abs"
 # srun owns the allocation: use the reserved core budget, clamped to what the
 # container actually sees (it is --cpus-capped, so nproc reflects the reservation,
 # but clamp anyway in case the cap is absent). direct shares the box, so use half
@@ -203,19 +291,32 @@ fi
 echo "Building ${TARGETS[*]:-all} with -j\$JOBS ..."
 ninja -j\$JOBS ${TARGETS[*]:-} 2>&1 | tee build.log
 EOF
-)
+    )
 
-run_build() {
-    # No GPU device needed (CPU cross-compile).
-    _dispatch_build_like 0 "$BUILD_ABS" "$REMOTE_PROG"
+    # NFS caveat: artifacts written by the container on a compute node take a few
+    # seconds to appear on the login node (attribute caching). Trust the dispatch
+    # exit code; do not stat/read build/ outputs immediately to "verify" success.
+    if _dispatch_build_like 0 "$build_abs" "$remote_prog"; then
+        echo "Build successful (log: $build_abs/build.log)"
+    else
+        echo "Build failed (log: $build_abs/build.log)" >&2
+        exit 1
+    fi
 }
 
-# NFS caveat: artifacts written by the container on a compute node take a few
-# seconds to appear on the login node (attribute caching). Trust run_build's exit
-# code; do not stat/read build/ outputs immediately to "verify" success.
-if run_build; then
-    echo "Build successful (log: $BUILD_ABS/build.log)"
-else
-    echo "Build failed (log: $BUILD_ABS/build.log)" >&2
-    exit 1
-fi
+[ $# -gt 0 ] || usage
+case "$1" in
+configure)
+    shift
+    cmd_configure "$@"
+    ;;
+build)
+    shift
+    cmd_build "$@"
+    ;;
+-h | --help) usage ;;
+*)
+    echo "ERROR: unknown subcommand '$1' (want configure|build)." >&2
+    usage
+    ;;
+esac
