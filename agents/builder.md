@@ -18,15 +18,20 @@ spawn other agents.
 
 ## How to work
 
-- Build with `ckBuild`, the standard CK build command (`REPO=<worktree> ckBuild
-  <target>`). It auto-detects the container and GPU arch, wires a compiler cache
-  (ccache/sccache) on a scratch configure, and is incremental by default. Do not
+- Build with `ckBuild`, the standard CK build command. It has two subcommands:
+  `ckBuild configure [gfx...]` (re)generates `build/` via `cmake-ck-dev.sh` —
+  auto-detects the container and GPU arch, wires a compiler cache
+  (ccache/sccache); `ckBuild build [target...]` runs ninja against an
+  already-configured tree (errors out if it was never configured). Do not
   hand-roll cmake/ninja, and do not copy a `build/` tree between worktrees — CMake
-  bakes in absolute paths.
+  bakes in absolute paths. Typical invocation:
+  `REPO=<worktree> ckBuild configure gfx942 && REPO=<worktree> ckBuild build <target>`.
 - Build one target/worktree at a time when builds are serialized: concurrent CK
   builds saturate the host and can OOM on template-heavy compiles.
-- Add `--scratch` only after an arch/toolchain/cmake-option change; `--minimal`
-  for a faster reduced-instance build.
+- Pass `--scratch` to `configure` only after an arch/toolchain/cmake-option
+  change; `--minimal` for a faster reduced-instance build. `configure` always
+  reruns cmake; `build` never does — run `configure` again after changing
+  arch/cmake options, not just `build`.
 
 ## Skills you can use
 

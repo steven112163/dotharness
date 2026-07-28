@@ -102,8 +102,8 @@ path the container bind-mounts. The local checkout path is irrelevant. Do not us
 `REPO=/home/you/composable_kernel`.
 
 1. **GPU arch.** Pass `ARCH=gfx942` explicitly (required on Slurm; auto-detected on
-   docker servers from `rocminfo`). For `ckRemote ckBuild gfx942 <target>`, the arch
-   is also a positional argument.
+   docker servers from `rocminfo`). For `ckRemote ckBuild configure gfx942`, the
+   arch is also a positional argument.
 
 Every mode auto-adds `ck_profile_out/` to the repo's **`.git/info/exclude`** via
 `git_exclude_outdir.sh` in `~/lib/ck-profile/` (idempotent, worktree-correct), so the output never
@@ -140,11 +140,13 @@ worst offenders. The occupancy cliff to watch is **129 effective VGPRs**
    cache — delegate it, logs are large):
 
    ```bash
-   ckRemote ckBuild gfx942 --minimal <target>
+   ckRemote ckBuild configure gfx942 --minimal
+   ckRemote ckBuild build <target>
    ```
 
-   `ckBuild` is incremental by default (reuses `build/`); add `--scratch` only after
-   an arch/toolchain/cmake-option change.
+   `ckBuild configure` always reruns cmake; re-run it (with `--scratch`) only after
+   an arch/toolchain/cmake-option change. `ckBuild build` never reconfigures — it
+   errors if the tree was never configured.
 2. **Profile.** The harness writes per-run CSVs under
    `ck_profile_out/dynamic/raw/<variant>/run_NN/` and is robust to PMC counter-capacity
    crashes (each run dispatches in its own ephemeral `--rm` container, so a

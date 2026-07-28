@@ -415,7 +415,7 @@ The lead decides whether this phase runs — skip it for straightforward tasks.
 | Aggregate group input | Coordinator | Report dissent, not just the synthesized verdict |
 | Get research | Any agent → Lead | Lead spawns a research group (principal-researcher + researchers); they deliver to the requester, then the lead stops them |
 | Fan out candidates | Lead | 2–3 distinct directions, one worktree/branch each off the baseline (2 max without ccache/sccache) |
-| Build / run a candidate | builder / tester | `ckRemote ckBuild gfx942 <target>` to build, `ckRemote ckRun --arch gfx942 <cmd>` to run on a GPU (never hand-roll cmake/ninja) |
+| Build / run a candidate | builder / tester | `ckRemote ckBuild configure gfx942 && ckRemote ckBuild build <target>` to build, `ckRemote ckRun --arch gfx942 <cmd>` to run on a GPU (never hand-roll cmake/ninja) |
 | Hold a GPU for fast runs | Lead | `ckRemote ckHold --arch gfx942` at startup when runs go through Slurm; `ckRemote ckHold stop` in Phase 6 |
 | Request code review | Lead | On a passing build, spawn software-architect + reviewers; they deliver the review to the implementer; lead stops them |
 | Report build error | builder → implementer | Direct, no intermediary |
@@ -504,11 +504,12 @@ independent on-disk checkout sharing the same `.git` object store.
   between worktrees — CMake/Ninja bake in absolute paths and it will reconfigure
   anyway.
 - **Build with `ckRemote ckBuild`; the shared cache makes cold builds cheap.**
-  `ckRemote ckBuild gfx942 <target>` rsyncs source and builds on the remote; on a
-  first/scratch configure it adds a compiler-launcher (prefers ccache, falls back to
-  sccache) pointed at one persistent cache dir. The user's pre-build warms it, so each
-  candidate's cold build reuses cached objects. Refining a candidate **in place** in
-  its own worktree is a true incremental build — only the first build per candidate is
+  `ckRemote ckBuild configure gfx942` then `ckRemote ckBuild build <target>` rsyncs
+  source and builds on the remote; configure adds a compiler-launcher (prefers
+  ccache, falls back to sccache) pointed at one persistent cache dir. The user's
+  pre-build warms it, so each candidate's cold build reuses cached objects.
+  Refining a candidate **in place** in its own worktree only needs `ckBuild build`
+  again (no reconfigure) — only the first build per candidate is
   cold.
 - **Serialize the shared stages.** Implementation is parallel; **build and profile
   are queued** (CPU saturation; one GPU profiling run at a time). Disk for N CK build

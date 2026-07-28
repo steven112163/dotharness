@@ -5,7 +5,7 @@ Internal Python libs and data files live in `lib/ck-profile/` — see `../lib/ck
 
 ## Composable Kernel build/run
 
-- **ckBuild** — build inside the CK docker image; no GPU needed (CK cross-compiles). Auto-detects backend: `direct` (in container), `docker` (shared host), `srun` (Slurm login node). Used by the `builder` agent and the `ck-profile` / `dev-team` skills.
+- **ckBuild** — build inside the CK docker image; no GPU needed (CK cross-compiles). Two subcommands: `ckBuild configure [gfx...]` (re)generates `build/` via `cmake-ck-dev.sh`; `ckBuild build [target...]` runs ninja against an already-configured tree (errors out if `build/build.ninja` is missing). Auto-detects backend: `direct` (in container), `docker` (shared host), `srun` (Slurm login node). Used by the `builder` agent and the `ck-profile` / `dev-team` skills.
 - **ckRun** — run a command on a GPU inside the CK image. Under `srun`, overlaps into a running `ckHold` allocation for instant dispatch; falls back to a fresh GPU job.
 - **ckHold** — hold one persistent GPU allocation on Slurm (`sleep infinity` batch job) so `ckRun` calls land instantly. `start` / `status` / `stop`.
 - **ckRemote** — drive remote CK work from a local checkout. Rsyncs source, picks the first reachable/capable server from `~/.config/ckremote`, runs the `ck*` command over SSH. `ckRemote pull` rsyncs `ck_profile_out/` back locally after profiling.
@@ -14,7 +14,7 @@ Internal Python libs and data files live in `lib/ck-profile/` — see `../lib/ck
 
 ## Composable Kernel profiling
 
-All profiling binaries follow the same CLI style as `ckBuild`/`ckRun`: `REPO` auto-detected from git, `--arch gfx942`, positional binary/target. Invoke via `ckRemote --no-sync <cmd> --arch gfx942 <bin>`.
+All profiling binaries follow the same CLI style as `ckBuild build`/`ckRun`: `REPO` auto-detected from git, `--arch gfx942`, positional binary/target. Invoke via `ckRemote --no-sync <cmd> --arch gfx942 <bin>`.
 
 - **ckStaticProfile** — compile-time resource analysis (`-Rpass-analysis=kernel-resource-usage`). Accepts `<target>` (CMake target name). No GPU run; CPU-only srun fallback on Slurm.
 - **ckRunProfile** — dynamic profiling with rocprofv3 (kernel trace + PMC multipass). Accepts `<bin>`, `--sweep <flag>=<v1,v2,...>`, `--nruns N`, `--base-args`. Writes each run to an immutable `ck_profile_out/dynamic/runs/<timestamp>/`, repoints `dynamic/latest` at it, and auto-invokes `ckAggregate` at the end of the run.

@@ -25,10 +25,11 @@ yourself — you cannot spawn other agents.
 - Follow the project's loaded conventions: CLAUDE.md and the path-scoped rules for
   the files you touch (C++/HIP idioms, naming, error-handling, performance). Match
   existing patterns; do not add abstractions the task does not need.
-- Build and self-check before declaring done. For CK targets build with `ckBuild`
-  (`REPO=<worktree> ckBuild <target>`); do not hand-roll cmake/ninja. Run the built
-  binary on a GPU for a quick self-check with `ckRun`
-  (`REPO=<worktree> ckRun --arch <gfx> <cmd>`).
+- Build and self-check before declaring done. For CK targets build with `ckBuild`:
+  `ckBuild configure gfx942` (only needed once, or after an arch/cmake-option
+  change) then `ckBuild build <target>` (`REPO=<worktree> ckBuild build <target>`);
+  do not hand-roll cmake/ninja. Run the built binary on a GPU for a quick
+  self-check with `ckRun` (`REPO=<worktree> ckRun --arch <gfx> <cmd>`).
 - If you need information you cannot determine yourself — a hardware spec, an API
   behavior, an unknown design tradeoff — do not guess. Ask the requester (in a
   team, the lead) to get you research; you cannot spawn researchers yourself.
