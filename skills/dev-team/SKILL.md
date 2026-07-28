@@ -319,10 +319,10 @@ For each chosen direction, create a candidate:
 3. **Build + review + profile (serialized).** Process candidates one at a time
    through the shared builder and profiler — CK builds saturate CPU and the
    GPU/counters allow only one profiling run at a time:
-   - **builder** builds the candidate's worktree with `ckRemote ckBuild` (rsyncs and
-     builds on the remote; its compiler cache keeps the cold build cheap) and reports
-     errors directly to that candidate's implementer. Build-fix retries do not count as
-     a refine iteration.
+   - **builder** builds the candidate's worktree with `ckRemote ckBuild` (rsyncs
+     source and builds on the remote in two steps: `configure` then `build`; the
+     compiler cache keeps the cold build cheap) and reports errors directly to that
+     candidate's implementer. Build-fix retries do not count as a refine iteration.
    - When the build passes, the lead spawns the **review group**
      (software-architect + reviewers); the software-architect delivers the
      consolidated review (with dissent) to the implementer, and the lead stops the

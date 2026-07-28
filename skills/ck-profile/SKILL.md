@@ -144,9 +144,9 @@ worst offenders. The occupancy cliff to watch is **129 effective VGPRs**
    ckRemote ckBuild build <target>
    ```
 
-   `ckBuild configure` always reruns cmake; re-run it (with `--scratch`) only after
-   an arch/toolchain/cmake-option change. `ckBuild build` never reconfigures — it
-   errors if the tree was never configured.
+   `ckBuild configure` always reruns cmake; `--scratch` (full wipe) is only needed
+   after an arch/toolchain/cmake-option change. `ckBuild build` never
+   reconfigures — it errors if the tree was never configured.
 2. **Profile.** The harness writes per-run CSVs under
    `ck_profile_out/dynamic/raw/<variant>/run_NN/` and is robust to PMC counter-capacity
    crashes (each run dispatches in its own ephemeral `--rm` container, so a
