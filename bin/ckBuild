@@ -256,6 +256,12 @@ cmd_build() {
     # ARCH env var the caller set, or GRES set directly.
     [ "$GPU" -eq 1 ] && [ -z "$GRES" ] && [ -n "$ARCH" ] && GRES=$(_gres_for_arch "$ARCH")
 
+    # NFS caveat, mirroring the one below for build outputs: under srun, a
+    # `configure` dispatched moments ago on a different compute node may not
+    # have its build.ninja write visible here yet (attribute caching). This
+    # stat can then spuriously report "not configured" right after a
+    # successful configure; retry `build` if that happens. Not hit under
+    # direct/docker (no separate remote node), which is all that's tested today.
     local build_abs="$REPO/$BUILD_DIR"
     if [ ! -f "$build_abs/build.ninja" ]; then
         echo "ERROR: $build_abs is not configured (no build.ninja)." >&2
