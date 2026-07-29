@@ -44,12 +44,14 @@ set -euo pipefail
 # preserved.
 #
 # Config: env, or a sourced file at $CK_REMOTE_CONF / ~/.config/ckremote. Define
-# an ordered server list plus one entry per server in four associative arrays:
+# an ordered server list plus one entry per server in five associative arrays:
 #
 #   CK_SERVERS=(shared slurm)            # priority order, highest first
-#   declare -A CK_SSH CK_REPO CK_TYPE CK_GPUS
+#   declare -A CK_SSH CK_REPO CK_TYPE CK_GPUS CK_KEY
 #   CK_SSH[shared]="user@sharedbox";  CK_REPO[shared]="/scratch/you/composable_kernel"
 #   CK_TYPE[shared]="normal";         CK_GPUS[shared]="gfx942"
+#   CK_KEY[shared]="$HOME/.ssh/shared_key"  # optional; omit/empty to use ssh's default
+#                                            # (unquoted expansion: no literal "~", use $HOME)
 #   CK_SSH[slurm]="user@login";       CK_REPO[slurm]="/home/you/ck/composable_kernel"
 #   CK_TYPE[slurm]="slurm";           CK_GPUS[slurm]="all"   # "all" = any arch
 #
@@ -64,7 +66,7 @@ CONF=${CK_REMOTE_CONF:-$HOME/.config/ckremote}
 
 # Ensure the config arrays exist even if the file omitted them, so references are
 # safe under `set -u`. `declare -A` on an already-defined array preserves it.
-declare -A CK_SSH CK_REPO CK_TYPE CK_GPUS
+declare -A CK_SSH CK_REPO CK_TYPE CK_GPUS CK_KEY
 [ -n "${CK_SERVERS+x}" ] || CK_SERVERS=()
 
 CK_LOCAL_REPO=${CK_LOCAL_REPO:-$(git rev-parse --show-toplevel 2>/dev/null || true)}
@@ -101,6 +103,7 @@ fi
 SERVER=""
 CK_REMOTE=""
 CK_REMOTE_REPO=""
+CK_KEY_OPT=""
 
 usage() {
     cat >&2 <<'EOF'
@@ -172,12 +175,19 @@ _detect_arch() {
     echo ""
 }
 
+# Echoes "-i <key>" for server $1 if CK_KEY[$1] is set, else empty. Word-split
+# unquoted into ssh/rsync -e like the rest of this file's $CK_SSH_OPTS usage.
+_key_opt() {
+    local key="${CK_KEY[$1]:-}"
+    [ -n "$key" ] && echo "-i $key"
+}
+
 # One ssh probe: rc 0 = reachable and backend present; 255 = unreachable;
 # other = reachable but backend missing.
 _probe() {
-    local sshtgt="$1" bin="$2"
+    local sshtgt="$1" bin="$2" key_opt="$3"
     # shellcheck disable=SC2086
-    ssh $CK_SSH_OPTS -o BatchMode=yes -o ConnectTimeout=5 "$sshtgt" \
+    ssh $CK_SSH_OPTS $key_opt -o BatchMode=yes -o ConnectTimeout=5 "$sshtgt" \
         "command -v $bin >/dev/null 2>&1"
 }
 
@@ -187,10 +197,10 @@ _probe() {
 # Returns 0 if rocminfo absent or SSH failed (cannot verify, don't penalize);
 # 1 if rocminfo ran but no matching gfx token found (verifiably absent).
 _probe_gpu_arch() {
-    local arch="$1" sshtgt="$2"
+    local arch="$1" sshtgt="$2" key_opt="$3"
     local out rc=0
     # shellcheck disable=SC2086
-    out=$(ssh $CK_SSH_OPTS -o BatchMode=yes -o ConnectTimeout=10 "$sshtgt" \
+    out=$(ssh $CK_SSH_OPTS $key_opt -o BatchMode=yes -o ConnectTimeout=10 "$sshtgt" \
         "if command -v rocminfo >/dev/null 2>&1; then timeout 15 rocminfo 2>/dev/null; else echo __ROCM_ABSENT__; fi" \
         2>/dev/null) || rc=$?
     [ "$rc" -ne 0 ] && return 0 # SSH failed (already screened by _probe): don't penalize
@@ -222,7 +232,7 @@ _ensure_hold() {
     # ConnectTimeout bounds TCP; timeout 5 guards against a hung slurmctld.
     local running
     # shellcheck disable=SC2086
-    running=$(ssh $CK_SSH_OPTS -o ConnectTimeout=10 "$CK_REMOTE" \
+    running=$(ssh $CK_SSH_OPTS $CK_KEY_OPT -o ConnectTimeout=10 "$CK_REMOTE" \
         'hn="ckhold-$USER"; timeout 5 squeue -h -u "$USER" -n "$hn" -t RUNNING -o "%i" 2>/dev/null | head -1') ||
         true
     if [ -n "$running" ]; then
@@ -234,7 +244,7 @@ _ensure_hold() {
     local arch_q
     arch_q=$(printf '%q' "$arch")
     # shellcheck disable=SC2086,SC2029
-    if ! ssh $CK_SSH_OPTS -o ConnectTimeout=10 "$CK_REMOTE" \
+    if ! ssh $CK_SSH_OPTS $CK_KEY_OPT -o ConnectTimeout=10 "$CK_REMOTE" \
         "export PATH=\"\$HOME/bin:\$PATH\"; ckHold start --arch $arch_q"; then
         echo "Warning: ckHold start failed on $SERVER; proceeding without hold." >&2
     fi
@@ -244,6 +254,7 @@ _apply_server() {
     SERVER="$1"
     CK_REMOTE="${CK_SSH[$1]:-}"
     CK_REMOTE_REPO="${CK_REPO[$1]:-}"
+    CK_KEY_OPT=$(_key_opt "$1")
     [ -n "$CK_REMOTE" ] || die "server '$1': CK_SSH[$1] not set in $CONF."
     [ -n "$CK_REMOTE_REPO" ] || die "server '$1': CK_REPO[$1] not set in $CONF."
 }
@@ -271,7 +282,7 @@ select_server() {
         [ -n "$bin" ] || die "server '$s': bad CK_TYPE '${CK_TYPE[$s]:-}' (want normal|slurm)."
         echo "  probe $s (${CK_SSH[$s]:-no-ssh})..." >&2
         rc=0
-        _probe "${CK_SSH[$s]:-}" "$bin" || rc=$?
+        _probe "${CK_SSH[$s]:-}" "$bin" "$(_key_opt "$s")" || rc=$?
         case "$rc" in
         0) ;;
         255)
@@ -286,7 +297,7 @@ select_server() {
         # For normal (docker) servers, verify the GPU arch is actually present via
         # rocminfo. Slurm servers skip this: the scheduler handles GPU placement.
         if [ -n "$arch" ] && [ "${CK_TYPE[$s]:-}" = normal ]; then
-            if ! _probe_gpu_arch "$arch" "${CK_SSH[$s]:-}"; then
+            if ! _probe_gpu_arch "$arch" "${CK_SSH[$s]:-}" "$(_key_opt "$s")"; then
                 echo "  skip $s: $arch not found by rocminfo" >&2
                 continue
             fi
@@ -324,7 +335,7 @@ pull_artifacts() {
         echo "Pulling $p <- $SERVER:$remote_path ..."
         mkdir -p "$local_path"
         # shellcheck disable=SC2086
-        rsync -avz --info=progress2 ${CK_SSH_OPTS:+-e "ssh $CK_SSH_OPTS"} \
+        rsync -avz --info=progress2 -e "ssh $CK_SSH_OPTS $CK_KEY_OPT" \
             "$CK_REMOTE:$remote_path/" "$local_path/"
     done
 }
@@ -335,7 +346,7 @@ sync_source() {
     for e in $CK_RSYNC_EXCLUDES; do excludes+=(--exclude "$e"); done
     # The %q quoting is computed locally and sent literally, which is intended.
     # shellcheck disable=SC2086,SC2029
-    ssh $CK_SSH_OPTS "$CK_REMOTE" "mkdir -p $(printf '%q' "$CK_REMOTE_REPO")"
+    ssh $CK_SSH_OPTS $CK_KEY_OPT "$CK_REMOTE" "mkdir -p $(printf '%q' "$CK_REMOTE_REPO")"
     echo "Syncing $CK_LOCAL_REPO/ -> $CK_REMOTE:$CK_REMOTE_REPO/ ..."
     # Honor the repo's .gitignore (per-directory, nested rules included) so anything
     # git ignores — build/, _build/, __pycache__, CMakeUserPresets.json, ... — is
@@ -346,7 +357,7 @@ sync_source() {
     # copied nor deleted, so remote build artifacts and profiling output survive.
     # shellcheck disable=SC2086
     rsync -avz --delete --info=progress2,stats2 \
-        --stats ${CK_SSH_OPTS:+-e "ssh $CK_SSH_OPTS"} \
+        --stats -e "ssh $CK_SSH_OPTS $CK_KEY_OPT" \
         --filter=':- .gitignore' --exclude=.git \
         "${excludes[@]}" "$CK_LOCAL_REPO/" "$CK_REMOTE:$CK_REMOTE_REPO/"
 }
@@ -366,7 +377,7 @@ remote_exec() {
     cmd=$(printf '%q ' "$@")
     echo "→ $SERVER:$(_remote_workdir)\$ $*" >&2
     # shellcheck disable=SC2086
-    ssh $CK_SSH_OPTS -t "$CK_REMOTE" \
+    ssh $CK_SSH_OPTS $CK_KEY_OPT -t "$CK_REMOTE" \
         "export PATH=\"\$HOME/bin:\$PATH\"; cd $(printf '%q' "$(_remote_workdir)") || exit 1; $cmd"
 }
 
@@ -448,7 +459,7 @@ pull)
     ;;
 shell)
     # shellcheck disable=SC2086
-    ssh $CK_SSH_OPTS -t "$CK_REMOTE" "cd $(printf '%q' "$(_remote_workdir)") 2>/dev/null; exec \$SHELL -l"
+    ssh $CK_SSH_OPTS $CK_KEY_OPT -t "$CK_REMOTE" "cd $(printf '%q' "$(_remote_workdir)") 2>/dev/null; exec \$SHELL -l"
     ;;
 *)
     with_server_lock _dispatch_default "$@"
