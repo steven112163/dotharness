@@ -54,9 +54,9 @@ _detect_backend() {
 # single-GPU; a multi-GPU sweep overrides GRES wholesale. Extend as new parts appear.
 _gres_for_arch() {
     case "$1" in
-    gfx942) echo "gpu:gfx942-mi300x:1" ;;
-    gfx950) echo "gpu:gfx950-mi350x:1" ;;
-    gfx90a) echo "gpu:gfx90a-mi210x:1" ;;
+    gfx942) echo "shard:gfx942:1" ;;
+    gfx950) echo "shard:gfx950:1" ;;
+    gfx90a) echo "shard:gfx90a:1" ;;
     *) echo "" ;;
     esac
 }
