@@ -21,6 +21,11 @@ set -euo pipefail
 #   ckRun --arch gfx942 rocminfo
 #   ckRun --arch gfx942 bash -c 'ls build/bin | head'
 
+# ckRun executes an already-built binary; it doesn't compile, so it doesn't need
+# ckCommon's build-sized CPUS default (128). Set before sourcing ckCommon so this
+# wins over that default.
+CPUS=${CPUS:-32}
+
 # shellcheck source=bin/ckCommon disable=SC1091
 source "$(dirname "$(readlink -f "$0")")/ckCommon"
 

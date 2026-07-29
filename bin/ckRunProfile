@@ -12,6 +12,11 @@ set -euo pipefail
 
 SELF_DIR=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 
+# Profiles an already-built binary; doesn't compile, so it doesn't need
+# ckCommon's build-sized CPUS default (128). Set before sourcing ckExec (which
+# sources ckCommon) so this wins over that default.
+CPUS=${CPUS:-32}
+
 # shellcheck source=bin/ckExec disable=SC1091
 source "$SELF_DIR/ckExec"
 
