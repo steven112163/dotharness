@@ -11,10 +11,9 @@ set -euo pipefail
 #   ckHold status                    show the holder's job id, node, time left
 #   ckHold stop                      cancel the holder
 #
-# The holder is a batch job named "$HOLD_NAME" running `sleep infinity`. It omits
-# --time so the scheduler picks the walltime; the site may cap it (e.g. 4h) and
-# allocate the GPU node whole regardless of --cpus-per-task. Set SRUN_TIME to
-# request a specific walltime. Override anything via env.
+# The holder is a batch job named "$HOLD_NAME" running `sleep infinity`, sized
+# by ckCommon's shared SRUN_TIME default (2h) like ckBuild/ckRun. Set SRUN_TIME
+# to request a different walltime. Override anything via env.
 
 # The holder serves ckRun/ck*Profile, which are GPU-bound, not CPU-heavy builds;
 # match their 32-CPU default so overlap dispatches into this holder fit. Must be
@@ -27,7 +26,7 @@ source "$(dirname "$(readlink -f "$0")")/ckCommon"
 
 ARCH=${ARCH:-}
 GRES=${GRES:-}
-# No default --time: inherit the partition default. Set SRUN_TIME to override.
+# SRUN_TIME is already defaulted by ckCommon (2h); HOLD_TIME just aliases it.
 HOLD_TIME=${SRUN_TIME:-}
 
 # HOLD_NAME is defined in the sourced ckCommon; pre-commit runs shellcheck
@@ -44,7 +43,7 @@ Usage: $(basename "$0") [start|status|stop] [--arch gfx...]
 
 Env overrides: HOLD_NAME=$HOLD_NAME  ARCH=<gfx...>  GRES=<gpu:...:1>
                CONSTRAINT=$CONSTRAINT (clear to allow any)  CPUS=$CPUS
-               SRUN_TIME=<walltime> (default: partition default, ~12h)
+               SRUN_TIME=<walltime> (default: $SRUN_TIME)
 EOF
     exit 1
 }
