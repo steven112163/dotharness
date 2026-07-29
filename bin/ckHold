@@ -16,14 +16,16 @@ set -euo pipefail
 # allocate the GPU node whole regardless of --cpus-per-task. Set SRUN_TIME to
 # request a specific walltime. Override anything via env.
 
+# The holder serves ckRun, which is GPU-bound; a few CPUs suffice. Override CPUS
+# for CPU-heavy overlapping work. Must be set before sourcing ckCommon, whose
+# own default (128, sized for builds) would otherwise win.
+CPUS=${CPUS:-16}
+
 # shellcheck source=bin/ckCommon disable=SC1091
 source "$(dirname "$(readlink -f "$0")")/ckCommon"
 
 ARCH=${ARCH:-}
 GRES=${GRES:-}
-# The holder serves ckRun, which is GPU-bound; a few CPUs suffice. Override CPUS
-# for CPU-heavy overlapping work.
-CPUS=${CPUS:-16}
 # No default --time: inherit the partition default. Set SRUN_TIME to override.
 HOLD_TIME=${SRUN_TIME:-}
 
