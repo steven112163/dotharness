@@ -37,21 +37,7 @@ source "$(dirname "$(readlink -f "$0")")/ckCommon"
 REPO=${REPO:-$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")}
 ARCH=${ARCH:-}
 BUILD_DIR=${BUILD_DIR:-build}
-# GPU=0: run on a CPU node (default; container supplies the toolchain, CK
-# cross-compiles). GPU=1: run on a GPU node (--gres).
-GPU=${GPU:-0}
-GRES=${GRES:-}
 MODE=${MODE:-}
-
-# Guard early: a non-numeric GPU (e.g. GPU=true) would make `[ "$GPU" -eq 1 ]`
-# error to stderr yet fall through as if GPU=0, silently dropping --gres.
-case "$GPU" in
-0 | 1) ;;
-*)
-    echo "ERROR: GPU must be 0 or 1 (got '$GPU')." >&2
-    exit 1
-    ;;
-esac
 
 usage() {
     cat >&2 <<EOF
@@ -83,9 +69,9 @@ Usage: $(basename "$0") configure [--scratch] [--minimal] [gfx...] [-- <extra cm
 Backend auto-detection (override with MODE): direct | docker | srun
 Env overrides: IMAGE=$IMAGE  REPO=$REPO
                ARCH=<gfx...>[;<gfx...>...]  BUILD_DIR=$BUILD_DIR  MODE=<backend>
-               GPU=$GPU (0 = CPU build node, default; 1 = GPU node, --gres)
-               GRES=<gpu:...:1>  CONSTRAINT=$CONSTRAINT (Slurm site; clear to allow any)
-               CPUS=$CPUS (srun --cpus-per-task)  SRUN_TIME=$SRUN_TIME  SRUN_EXTRA=<srun args>  IMAGE_DIR=$IMAGE_DIR
+               CONSTRAINT=$CONSTRAINT (Slurm site; clear to allow any)
+               CPUS=$CPUS (srun --cpus-per-task)  SRUN_EXTRA=<srun args>  IMAGE_DIR=$IMAGE_DIR
+               (no --time limit on srun; builds are one-shot, not holder-bound)
 EOF
     exit 1
 }
@@ -101,10 +87,9 @@ Usage: $(basename "$0") build [target...]
 Backend auto-detection (override with MODE): direct | docker | srun
 Env overrides: IMAGE=$IMAGE  REPO=$REPO
                BUILD_DIR=$BUILD_DIR  MODE=<backend>
-               GPU=$GPU (0 = CPU build node, default; 1 = GPU node, --gres; needs
-               ARCH=<gfx...> or GRES=<gpu:...:1> set, since build takes no arch args)
-               GRES=<gpu:...:1>  CONSTRAINT=$CONSTRAINT (Slurm site; clear to allow any)
-               CPUS=$CPUS (build uses all of them)  SRUN_TIME=$SRUN_TIME  SRUN_EXTRA=<srun args>  IMAGE_DIR=$IMAGE_DIR
+               CONSTRAINT=$CONSTRAINT (Slurm site; clear to allow any)
+               CPUS=$CPUS (build uses all of them)  SRUN_EXTRA=<srun args>  IMAGE_DIR=$IMAGE_DIR
+               (no --time limit on srun; builds are one-shot, not holder-bound)
 EOF
     exit 1
 }
@@ -177,7 +162,6 @@ cmd_configure() {
     else
         _resolve_arch_or_require "$MODE" || exit 1
     fi
-    [ "$GPU" -eq 1 ] && [ -z "$GRES" ] && GRES=$(_gres_for_arch "$ARCH")
 
     local build_abs="$REPO/$BUILD_DIR"
 
@@ -251,10 +235,6 @@ cmd_build() {
 
     [ -n "$MODE" ] || MODE=$(_detect_backend build) || exit 1
     echo "Backend: $MODE"
-
-    # build takes no CLI arch token; GRES (when GPU=1) can only come from an
-    # ARCH env var the caller set, or GRES set directly.
-    [ "$GPU" -eq 1 ] && [ -z "$GRES" ] && [ -n "$ARCH" ] && GRES=$(_gres_for_arch "$ARCH")
 
     # NFS caveat, mirroring the one below for build outputs: under srun, a
     # `configure` dispatched moments ago on a different compute node may not

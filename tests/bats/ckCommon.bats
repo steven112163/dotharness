@@ -80,19 +80,18 @@ teardown() {
     [[ "$output" == *"srun-called:GPU=0:"* ]]
 }
 
-@test "_dispatch_build_like on srun does not clobber a caller-set GPU (ckBuild's GPU-build-node case)" {
+@test "_dispatch_build_like on srun ignores an ambient GPU and uses the call-site gpu argument (no GPU-build-node feature)" {
     run bash -c "
         source '$CKCOMMON'
         MODE=srun
         GPU=1
-        GRES='gpu:gfx942-mi300x:1'
         _ensure_image_tar() { return 0; }
         _run_in_container() { echo container-snippet; }
         srun() { echo \"srun-called:GPU=\$GPU:\$*\"; }
         _dispatch_build_like 0 /work prog
     "
     [ "$status" -eq 0 ]
-    [[ "$output" == *"srun-called:GPU=1:"* ]]
+    [[ "$output" == *"srun-called:GPU=0:"* ]]
 }
 
 @test "_dispatch_build_like on an unknown MODE exits 1" {
@@ -118,6 +117,35 @@ teardown() {
     "
     [ "$status" -eq 0 ]
     [[ "$output" == *"GPU=[unset]"* ]]
+}
+
+@test "_dispatch_build_like on srun omits --time (one-shot builds use the partition default)" {
+    run bash -c "
+        source '$CKCOMMON'
+        MODE=srun
+        SRUN_TIME=02:00:00
+        _ensure_image_tar() { return 0; }
+        _run_in_container() { echo container-snippet; }
+        srun() { echo \"srun-args:\$*\"; }
+        _dispatch_build_like 0 /work prog
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"--time"* ]]
+}
+
+@test "_dispatch_build_like on srun does not leak the cleared SRUN_TIME past the call" {
+    run bash -c "
+        source '$CKCOMMON'
+        MODE=srun
+        SRUN_TIME=02:00:00
+        _ensure_image_tar() { return 0; }
+        _run_in_container() { echo container-snippet; }
+        _srun_dispatch() { return 0; }
+        _dispatch_build_like 0 /work prog
+        echo \"SRUN_TIME=[\$SRUN_TIME]\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"SRUN_TIME=[02:00:00]"* ]]
 }
 
 @test "_dispatch_build_like on direct aborts a multi-line remote_prog entirely when cd fails" {
@@ -185,6 +213,23 @@ teardown() {
     "
     [ "$status" -eq 0 ]
     [ "$output" = "fresh:snippet" ]
+}
+
+@test "_dispatch_run_like's real srun fresh-dispatch keeps --time (holder-bound, unlike build-like)" {
+    run bash -c "
+        source '$CKCOMMON'
+        MODE=srun
+        GPU=1
+        GRES='gpu:gfx942-mi300x:1'
+        ARCH=gfx942
+        _ensure_image_tar() { return 0; }
+        _run_in_container() { echo container-snippet; }
+        _hold_jobid() { echo ''; }
+        srun() { echo \"srun-args:\$*\" >&2; }
+        _dispatch_run_like 1 /work prog
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--time=02:00:00"* ]]
 }
 
 @test "_dispatch_run_like's real srun fresh-dispatch path does not pollute captured stdout" {
@@ -574,9 +619,9 @@ EOF
     [[ "$output" == *"invalid arch list"* ]]
 }
 
-@test "_gres_for_arch returns empty for a multi-arch list (ckBuild's GPU=1 fallthrough case)" {
-    # No exact-string case in _gres_for_arch matches a ;-joined list, so GPU=1
-    # + multi-arch builds fall through to the existing "GPU=1 but no GRES
+@test "_gres_for_arch returns empty for a multi-arch list" {
+    # No exact-string case in _gres_for_arch matches a ;-joined list, so a
+    # multi-arch ARCH falls through to the existing "GPU=1 but no GRES
     # mapping" error in _srun_dispatch rather than guessing an arch to map.
     run bash -c "
         source '$CKCOMMON'

@@ -46,7 +46,7 @@ teardown() {
 @test "ckBuild configure joins multiple gfx tokens and passes them as one quoted arg to cmake-ck-dev.sh" {
     run bash -c "
         export PATH=\"$TMPDIR_TEST/stubbin:\$PATH\"
-        MODE=direct GPU=0 REPO='$FAKE_REPO' '$CKBUILD' configure gfx942 gfx950 gfx1250 --scratch
+        MODE=direct REPO='$FAKE_REPO' '$CKBUILD' configure gfx942 gfx950 gfx1250 --scratch
     "
     [ "$status" -eq 0 ]
     [ -f "$CMAKE_LOG" ]
@@ -61,7 +61,7 @@ teardown() {
     # multi-arch validator rather than the target-rejection path.
     run bash -c "
         export PATH=\"$TMPDIR_TEST/stubbin:\$PATH\"
-        MODE=direct GPU=0 REPO='$FAKE_REPO' '$CKBUILD' configure gfx942 gfx --scratch
+        MODE=direct REPO='$FAKE_REPO' '$CKBUILD' configure gfx942 gfx --scratch
     "
     [ "$status" -ne 0 ]
     [[ "$output" == *"invalid arch list"* ]]
@@ -71,7 +71,7 @@ teardown() {
 @test "ckBuild configure still configures a single arch unchanged" {
     run bash -c "
         export PATH=\"$TMPDIR_TEST/stubbin:\$PATH\"
-        MODE=direct GPU=0 REPO='$FAKE_REPO' '$CKBUILD' configure gfx942 --scratch
+        MODE=direct REPO='$FAKE_REPO' '$CKBUILD' configure gfx942 --scratch
     "
     [ "$status" -eq 0 ]
     [ -f "$CMAKE_LOG" ]
@@ -82,7 +82,7 @@ teardown() {
 @test "ckBuild configure builds a multi-arch fat binary from a pre-joined ARCH env var alone (no CLI tokens)" {
     run bash -c "
         export PATH=\"$TMPDIR_TEST/stubbin:\$PATH\"
-        MODE=direct GPU=0 REPO='$FAKE_REPO' ARCH='gfx942;gfx950;gfx1250' '$CKBUILD' configure --scratch
+        MODE=direct REPO='$FAKE_REPO' ARCH='gfx942;gfx950;gfx1250' '$CKBUILD' configure --scratch
     "
     [ "$status" -eq 0 ]
     [ -f "$CMAKE_LOG" ]
@@ -92,7 +92,7 @@ teardown() {
 @test "ckBuild configure rejects a malformed ARCH env var (no CLI tokens)" {
     run bash -c "
         export PATH=\"$TMPDIR_TEST/stubbin:\$PATH\"
-        MODE=direct GPU=0 REPO='$FAKE_REPO' ARCH='gfx942;;gfx950' '$CKBUILD' configure --scratch
+        MODE=direct REPO='$FAKE_REPO' ARCH='gfx942;;gfx950' '$CKBUILD' configure --scratch
     "
     [ "$status" -ne 0 ]
     [[ "$output" == *"invalid arch list"* ]]
@@ -105,7 +105,7 @@ teardown() {
     # two-arch gfx942;gfx950 build the caller never asked for.
     run bash -c "
         export PATH=\"$TMPDIR_TEST/stubbin:\$PATH\"
-        MODE=direct GPU=0 REPO='$FAKE_REPO' ARCH=gfx942 '$CKBUILD' configure gfx950 --scratch
+        MODE=direct REPO='$FAKE_REPO' ARCH=gfx942 '$CKBUILD' configure gfx950 --scratch
     "
     [ "$status" -eq 0 ]
     [ -f "$CMAKE_LOG" ]
@@ -118,7 +118,7 @@ teardown() {
 @test "ckBuild configure's second CLI gfx token still accumulates onto the first (multi-arch via repeated CLI args)" {
     run bash -c "
         export PATH=\"$TMPDIR_TEST/stubbin:\$PATH\"
-        MODE=direct GPU=0 REPO='$FAKE_REPO' ARCH=gfx942 '$CKBUILD' configure gfx950 gfx1250 --scratch
+        MODE=direct REPO='$FAKE_REPO' ARCH=gfx942 '$CKBUILD' configure gfx950 gfx1250 --scratch
     "
     [ "$status" -eq 0 ]
     [ -f "$CMAKE_LOG" ]
@@ -129,7 +129,7 @@ teardown() {
 @test "ckBuild configure rejects a stray positional target argument" {
     run bash -c "
         export PATH=\"$TMPDIR_TEST/stubbin:\$PATH\"
-        MODE=direct GPU=0 REPO='$FAKE_REPO' '$CKBUILD' configure gfx942 my_target
+        MODE=direct REPO='$FAKE_REPO' '$CKBUILD' configure gfx942 my_target
     "
     [ "$status" -ne 0 ]
     [[ "$output" == *"'configure' takes no target arguments"* ]]
@@ -139,7 +139,7 @@ teardown() {
 @test "ckBuild build refuses an unconfigured tree without touching ninja" {
     run bash -c "
         export PATH=\"$TMPDIR_TEST/stubbin:\$PATH\"
-        MODE=direct GPU=0 REPO='$FAKE_REPO' '$CKBUILD' build my_target
+        MODE=direct REPO='$FAKE_REPO' '$CKBUILD' build my_target
     "
     [ "$status" -ne 0 ]
     [[ "$output" == *"is not configured"* ]]
@@ -150,7 +150,7 @@ teardown() {
 @test "ckBuild build rejects a gfx arch argument, pointing at configure" {
     run bash -c "
         export PATH=\"$TMPDIR_TEST/stubbin:\$PATH\"
-        MODE=direct GPU=0 REPO='$FAKE_REPO' '$CKBUILD' build gfx942
+        MODE=direct REPO='$FAKE_REPO' '$CKBUILD' build gfx942
     "
     [ "$status" -ne 0 ]
     [[ "$output" == *"'build' takes no arch arguments"* ]]
@@ -160,8 +160,8 @@ teardown() {
 @test "ckBuild build runs ninja on a target after configure ran" {
     run bash -c "
         export PATH=\"$TMPDIR_TEST/stubbin:\$PATH\"
-        MODE=direct GPU=0 REPO='$FAKE_REPO' '$CKBUILD' configure gfx942 --scratch &&
-        MODE=direct GPU=0 REPO='$FAKE_REPO' '$CKBUILD' build my_target
+        MODE=direct REPO='$FAKE_REPO' '$CKBUILD' configure gfx942 --scratch &&
+        MODE=direct REPO='$FAKE_REPO' '$CKBUILD' build my_target
     "
     [ "$status" -eq 0 ]
     [ -f "$NINJA_LOG" ]
@@ -171,8 +171,8 @@ teardown() {
 @test "ckBuild build defaults to building all targets when none are given" {
     run bash -c "
         export PATH=\"$TMPDIR_TEST/stubbin:\$PATH\"
-        MODE=direct GPU=0 REPO='$FAKE_REPO' '$CKBUILD' configure gfx942 --scratch &&
-        MODE=direct GPU=0 REPO='$FAKE_REPO' '$CKBUILD' build
+        MODE=direct REPO='$FAKE_REPO' '$CKBUILD' configure gfx942 --scratch &&
+        MODE=direct REPO='$FAKE_REPO' '$CKBUILD' build
     "
     [ "$status" -eq 0 ]
     [ -f "$NINJA_LOG" ]
@@ -185,7 +185,7 @@ teardown() {
 @test "ckBuild with no subcommand is a usage error" {
     run bash -c "
         export PATH=\"$TMPDIR_TEST/stubbin:\$PATH\"
-        MODE=direct GPU=0 REPO='$FAKE_REPO' '$CKBUILD' gfx942
+        MODE=direct REPO='$FAKE_REPO' '$CKBUILD' gfx942
     "
     [ "$status" -ne 0 ]
     [[ "$output" == *"unknown subcommand"* ]]

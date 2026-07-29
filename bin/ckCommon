@@ -237,9 +237,11 @@ _srun_overlap_dispatch() {
 }
 
 # Dispatch a program via srun with node-exclude retry. Reads GPU/GRES/CONSTRAINT/
-# CPUS/SRUN_TIME/SRUN_EXTRA/MAX_NODE_RETRIES/REPO_MISSING_RC. Returns the program's
-# rc. On REPO_MISSING_RC it excludes the offending node and retries (some MARKHAM
-# nodes have a local /home without the shared repo).
+# CPUS/SRUN_TIME/SRUN_EXTRA/MAX_NODE_RETRIES/REPO_MISSING_RC. SRUN_TIME empty
+# omits --time (partition default applies); _dispatch_build_like clears it since
+# one-shot builds don't need the holder-bound run-like time limit. Returns the
+# program's rc. On REPO_MISSING_RC it excludes the offending node and retries
+# (some MARKHAM nodes have a local /home without the shared repo).
 _srun_dispatch() {
     local remote_prog="$1"
     local GRES_FLAG=""
@@ -252,6 +254,10 @@ _srun_dispatch() {
     fi
     local CON_FLAG=""
     [ -n "$CONSTRAINT" ] && CON_FLAG="--constraint=$CONSTRAINT"
+    # Empty SRUN_TIME (set by build-like callers) omits --time so the
+    # partition's own default limit applies instead.
+    local TIME_FLAG=""
+    [ -n "$SRUN_TIME" ] && TIME_FLAG="--time=$SRUN_TIME"
     local EXCLUDE="" rc=0
     local local_log
     local_log=$(mktemp) || {
@@ -262,7 +268,7 @@ _srun_dispatch() {
     for _ in $(seq "$MAX_NODE_RETRIES"); do
         local EX_FLAG=""
         [ -n "$EXCLUDE" ] && EX_FLAG="--exclude=$EXCLUDE"
-        echo "Dispatching via srun (${GRES_FLAG:-no-gpu} ${CON_FLAG:-no-constraint} ${EX_FLAG:+$EX_FLAG }--cpus-per-task=$CPUS --time=$SRUN_TIME) ..." >&2
+        echo "Dispatching via srun (${GRES_FLAG:-no-gpu} ${CON_FLAG:-no-constraint} ${EX_FLAG:+$EX_FLAG }--cpus-per-task=$CPUS ${TIME_FLAG:-no-time-limit}) ..." >&2
         # Only stderr is teed/logged (the retry grep needs it); stdout stays a
         # clean passthrough for $(...) callers. `wait` lets the tee subshell
         # flush before we grep $local_log. Bare `wait` blocks on every
@@ -276,7 +282,7 @@ _srun_dispatch() {
         # command in a conditional (set -e's documented exemption) so rc is
         # always captured regardless of the caller's shielding.
         # shellcheck disable=SC2086
-        if srun $GRES_FLAG $CON_FLAG $EX_FLAG --cpus-per-task="$CPUS" --time="$SRUN_TIME" $SRUN_EXTRA bash -c "$remote_prog" 2> >(tee "$local_log" >&2); then
+        if srun $GRES_FLAG $CON_FLAG $EX_FLAG --cpus-per-task="$CPUS" $TIME_FLAG $SRUN_EXTRA bash -c "$remote_prog" 2> >(tee "$local_log" >&2); then
             rc=0
         else
             rc=$?
@@ -308,15 +314,16 @@ _dispatch_build_like() {
         _docker_run_local "$gpu" "$workdir" "$remote_prog"
         ;;
     srun)
-        # gpu (container device passthrough) and GPU (node-scheduling/--gres)
-        # are deliberately decoupled here: ckBuild's own GPU-build-node
-        # feature passes gpu=0 (no device passthrough needed to build) while
-        # having already set the global GPU=1 (schedule on a GPU node,
-        # request --gres) before calling this function. Only default GPU
-        # from gpu when the caller has not already set it. local (not a bare
-        # global assignment) so this never leaks a mutated GPU into the
-        # caller's remaining script, symmetric with _dispatch_run_like below.
-        local GPU=${GPU:-$gpu}
+        # Build-like jobs never schedule on a GPU node (CK cross-compiles, so
+        # neither the container nor the node needs one). local (not a bare
+        # global assignment) so this never leaks into the caller's remaining
+        # script, symmetric with _dispatch_run_like below.
+        local GPU=$gpu
+        # Build-like jobs are one-shot (no holder/overlap reuse), so let the
+        # partition's own default time limit apply instead of the shared
+        # SRUN_TIME default meant for holder-bound run-like dispatch. local,
+        # so this doesn't leak past this call (same reasoning as GPU above).
+        local SRUN_TIME=""
         _ensure_image_tar "$IMAGE" || return 1
         _srun_dispatch "$(_run_in_container "$gpu" "$workdir" "$remote_prog")"
         ;;
