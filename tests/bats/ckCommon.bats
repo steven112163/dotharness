@@ -623,7 +623,7 @@ EOF
         echo \"GRES=\$GRES\"
     "
     [ "$status" -eq 0 ]
-    [[ "$output" == *"GRES=shard:gfx942:1"* ]]
+    [[ "$output" == *"GRES=gpu:gfx942-mi300x:1"* ]]
 }
 
 @test "_require_arch_for_srun does not overwrite a caller-set GRES" {
