@@ -333,10 +333,22 @@ pull_artifacts() {
         remote_path="$(_remote_workdir)/$p"
         local local_path="$local_workdir/$p"
         echo "Pulling $p <- $SERVER:$remote_path ..."
-        mkdir -p "$local_path"
-        # shellcheck disable=SC2086
-        rsync -avz --info=progress2 -e "ssh $CK_SSH_OPTS $CK_KEY_OPT" \
-            "$CK_REMOTE:$remote_path/" "$local_path/"
+        # A directory is synced into a same-named local dir (trailing slashes on
+        # both sides copy contents, not the dir itself); a file is copied as-is.
+        # Forcing directory semantics unconditionally broke single-file pulls:
+        # rsync's remote sender tries to chdir into the "directory" and fails.
+        # shellcheck disable=SC2086,SC2029
+        if ssh $CK_SSH_OPTS $CK_KEY_OPT "$CK_REMOTE" "[ -d $(printf '%q' "$remote_path") ]"; then
+            mkdir -p "$local_path"
+            # shellcheck disable=SC2086
+            rsync -avz --info=progress2 -e "ssh $CK_SSH_OPTS $CK_KEY_OPT" \
+                "$CK_REMOTE:$remote_path/" "$local_path/"
+        else
+            mkdir -p "$(dirname "$local_path")"
+            # shellcheck disable=SC2086
+            rsync -avz --info=progress2 -e "ssh $CK_SSH_OPTS $CK_KEY_OPT" \
+                "$CK_REMOTE:$remote_path" "$local_path"
+        fi
     done
 }
 
