@@ -108,7 +108,7 @@ def test_run_profile_happy_path_reaches_done(server, ck_repo, monkeypatch):
     monkeypatch.delenv("STUB_CKREMOTE_PULL_RC", raising=False)
 
     result, status = asyncio.run(
-        _run_and_wait(server, "ckRunProfile", "test_gemm", ck_repo)
+        _run_and_wait(server, "ckDynamicProfile", "test_gemm", ck_repo)
     )
 
     assert result["server"] == "stubserver"
@@ -121,7 +121,7 @@ def test_run_profile_happy_path_reaches_done(server, ck_repo, monkeypatch):
         "stubserver",
         "-a",
         "gfx942",
-        "ckRunProfile",
+        "ckDynamicProfile",
         "--arch",
         "gfx942",
         "test_gemm",
@@ -135,7 +135,7 @@ def test_run_and_pull_stdout_redirected_to_job_log(server, ck_repo, monkeypatch)
     monkeypatch.delenv("STUB_CKREMOTE_PULL_RC", raising=False)
 
     result, status = asyncio.run(
-        _run_and_wait(server, "ckRunProfile", "test_gemm", ck_repo)
+        _run_and_wait(server, "ckDynamicProfile", "test_gemm", ck_repo)
     )
     assert status["state"] == "done"
 
@@ -168,7 +168,7 @@ def test_subprocess_calls_set_stdin_devnull(server, ck_repo, monkeypatch):
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spying_create)
 
-    asyncio.run(_run_and_wait(server, "ckRunProfile", "test_gemm", ck_repo))
+    asyncio.run(_run_and_wait(server, "ckDynamicProfile", "test_gemm", ck_repo))
 
     assert len(seen_stdins) == 3  # select, run dispatch, pull dispatch
     assert all(s == asyncio.subprocess.DEVNULL for s in seen_stdins)
@@ -177,7 +177,9 @@ def test_subprocess_calls_set_stdin_devnull(server, ck_repo, monkeypatch):
 def test_run_profile_pull_failure_marks_pull_failed(server, ck_repo, monkeypatch):
     monkeypatch.setenv("STUB_CKREMOTE_PULL_RC", "1")
 
-    _, status = asyncio.run(_run_and_wait(server, "ckRunProfile", "test_gemm", ck_repo))
+    _, status = asyncio.run(
+        _run_and_wait(server, "ckDynamicProfile", "test_gemm", ck_repo)
+    )
     assert status["state"] == "pull_failed"
 
 
@@ -255,7 +257,7 @@ def test_get_summary_path_frozen_survives_later_latest_repoint(
 
     async def run():
         result = await server.run_profile(
-            "ckRunProfile", "gfx942", "test_gemm", str(ck_repo)
+            "ckDynamicProfile", "gfx942", "test_gemm", str(ck_repo)
         )
         # Point "latest" at run1 before the job's pull phase finishes, so its
         # summary_path capture resolves through the symlink like real ckRemote.
@@ -294,12 +296,12 @@ def test_cancelled_task_kills_subprocess_and_marks_terminal(
 
     async def run():
         job_id = server._store.create(
-            "ckRunProfile", "gfx942", "test_gemm", str(ck_repo), "stubserver"
+            "ckDynamicProfile", "gfx942", "test_gemm", str(ck_repo), "stubserver"
         )
         task = asyncio.create_task(
             server._run_job(
                 job_id,
-                "ckRunProfile",
+                "ckDynamicProfile",
                 "gfx942",
                 "test_gemm",
                 str(ck_repo),
@@ -338,11 +340,11 @@ def test_run_job_body_kills_subprocess_on_exception_before_timeout_branch(
 
     async def run():
         job_id = server._store.create(
-            "ckRunProfile", "gfx942", "test_gemm", str(ck_repo), "stubserver"
+            "ckDynamicProfile", "gfx942", "test_gemm", str(ck_repo), "stubserver"
         )
         await server._run_job(
             job_id,
-            "ckRunProfile",
+            "ckDynamicProfile",
             "gfx942",
             "test_gemm",
             str(ck_repo),
@@ -358,10 +360,12 @@ def test_run_job_body_kills_subprocess_on_exception_before_timeout_branch(
 
 async def _run_twice_same_server(server, ck_repo):
     first = await server.run_profile(
-        "ckRunProfile", "gfx942", "test_gemm", str(ck_repo)
+        "ckDynamicProfile", "gfx942", "test_gemm", str(ck_repo)
     )
     with pytest.raises(ValueError, match="rejected"):
-        await server.run_profile("ckRunProfile", "gfx942", "test_gemm2", str(ck_repo))
+        await server.run_profile(
+            "ckDynamicProfile", "gfx942", "test_gemm2", str(ck_repo)
+        )
     return first
 
 
@@ -378,7 +382,7 @@ def test_run_profile_rejects_invalid_target(server, ck_repo):
     async def run():
         with pytest.raises(ValueError, match="invalid target"):
             await server.run_profile(
-                "ckRunProfile", "gfx942", "bad; rm -rf /", str(ck_repo)
+                "ckDynamicProfile", "gfx942", "bad; rm -rf /", str(ck_repo)
             )
 
     asyncio.run(run())
@@ -403,7 +407,7 @@ def test_get_summary_reads_dynamic_summary_json(server, ck_repo, monkeypatch):
         _run_and_get_summary(
             server,
             ck_repo,
-            "ckRunProfile",
+            "ckDynamicProfile",
             {"schema_version": 2, "verdict": "compute_bound"},
         )
     )
@@ -415,7 +419,9 @@ def test_get_summary_missing_json_raises_actionable_error(server, ck_repo, monke
     monkeypatch.delenv("STUB_CKREMOTE_RUN_RC", raising=False)
     monkeypatch.delenv("STUB_CKREMOTE_PULL_RC", raising=False)
 
-    result = asyncio.run(_run_and_get_summary(server, ck_repo, "ckRunProfile", None))
+    result = asyncio.run(
+        _run_and_get_summary(server, ck_repo, "ckDynamicProfile", None)
+    )
     with pytest.raises(ValueError, match="no summary.json"):
         server.get_summary(result["job_id"])
 
@@ -423,7 +429,7 @@ def test_get_summary_missing_json_raises_actionable_error(server, ck_repo, monke
 def test_get_summary_not_done_raises(server, ck_repo):
     async def run():
         result = await server.run_profile(
-            "ckRunProfile", "gfx942", "test_gemm", str(ck_repo)
+            "ckDynamicProfile", "gfx942", "test_gemm", str(ck_repo)
         )
         with pytest.raises(ValueError, match="not 'done'"):
             server.get_summary(result["job_id"])
@@ -442,11 +448,11 @@ def test_run_job_exception_before_set_running_reaches_failed(
 
     async def run():
         job_id = server._store.create(
-            "ckRunProfile", "gfx942", "test_gemm", str(ck_repo), "stubserver"
+            "ckDynamicProfile", "gfx942", "test_gemm", str(ck_repo), "stubserver"
         )
         await server._run_job(
             job_id,
-            "ckRunProfile",
+            "ckDynamicProfile",
             "gfx942",
             "test_gemm",
             str(ck_repo),

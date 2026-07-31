@@ -17,7 +17,7 @@ def store(tmp_path):
     return JobStore(tmp_path / "mcp-jobs")
 
 
-def _create(store, server="shared", mode="ckRunProfile"):
+def _create(store, server="shared", mode="ckDynamicProfile"):
     return store.create(mode, "gfx942", "test_gemm", "/repo", server)
 
 
@@ -26,7 +26,7 @@ def test_create_writes_running_state_with_no_pid(store):
     status = store.get_status(job_id)
     assert status["state"] == "running"
     assert status["pid"] is None
-    assert status["mode"] == "ckRunProfile"
+    assert status["mode"] == "ckDynamicProfile"
     assert status["timeout_s"] == 60 * 60
 
 

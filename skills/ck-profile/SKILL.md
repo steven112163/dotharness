@@ -85,7 +85,7 @@ ckRemote ckHold --arch gfx942   # start once; keeps a GPU allocation alive
 Then invoke profile scripts via `ckRemote`:
 
 ```bash
-ckRemote --no-sync REPO=<remote-repo-path> BIN=build/bin/<target> ARCH=gfx942 ckRunProfile
+ckRemote --no-sync REPO=<remote-repo-path> BIN=build/bin/<target> ARCH=gfx942 ckDynamicProfile
 ```
 
 **Normal docker server (non-Slurm):** no setup step needed — every dispatch
@@ -93,7 +93,7 @@ runs in its own fresh, ephemeral `--rm` container (auto-pulled/loaded as
 needed), so there is no persistent container to start or name:
 
 ```bash
-ckRemote --no-sync REPO=<remote-repo-path> BIN=build/bin/<target> ckRunProfile
+ckRemote --no-sync REPO=<remote-repo-path> BIN=build/bin/<target> ckDynamicProfile
 ```
 
 **`REPO`** must be the **remote** absolute path to the CK project root — the same
@@ -156,7 +156,7 @@ worst offenders. The occupancy cliff to watch is **129 effective VGPRs**
    ```bash
    ckRemote ckHold --arch gfx942   # keep GPU allocated
    ckRemote --no-sync REPO=<remote-repo-path> BIN=build/bin/<target> ARCH=gfx942 \
-     BASE_ARGS=-v=0 SWEEP_FLAG=<flag> SWEEP_VALS=<v1,v2,...> NRUNS=<n> ckRunProfile
+     BASE_ARGS=-v=0 SWEEP_FLAG=<flag> SWEEP_VALS=<v1,v2,...> NRUNS=<n> ckDynamicProfile
    ```
 
    On a docker server, `ARCH` can be omitted (auto-detected from `rocminfo`).

@@ -35,7 +35,7 @@ def validate_arch(arch):
 
 def validate_repo(repo):
     # Same two markers as bin/ckCommon::_require_ck_root, so a repo accepted
-    # here is also accepted by the ckRemote/ckRunProfile calls it feeds into.
+    # here is also accepted by the ckRemote/ckDynamicProfile calls it feeds into.
     path = Path(repo)
     if not path.is_dir():
         raise ValueError(f"repo '{repo}' is not a directory")

@@ -321,7 +321,7 @@ require_local() {
 # workdir remote_exec runs commands in, i.e. CK_REMOTE_REPO/CK_REL. This
 # matters in a monorepo: ck*Profile scripts write ck_profile_out under $REPO,
 # which is the CK project subdir, not necessarily the git toplevel. Useful
-# after ckRunProfile/ckStaticProfile.
+# after ckDynamicProfile/ckStaticProfile.
 pull_artifacts() {
     require_local
     local paths=("$@")
@@ -412,7 +412,7 @@ with_server_lock() {
 # Default-dispatch critical section: sync, ensure a GPU holder (slurm), then run.
 _dispatch_default() {
     [ "$DO_SYNC" -eq 1 ] && sync_source
-    if [[ "$1" =~ ^(ckRun|ckRunProfile|ckTraceProfile|ckComputeProfile)$ ]] && [ "${CK_TYPE[$SERVER]:-}" = slurm ]; then
+    if [[ "$1" =~ ^(ckRun|ckDynamicProfile|ckTraceProfile|ckComputeProfile)$ ]] && [ "${CK_TYPE[$SERVER]:-}" = slurm ]; then
         _ensure_hold "${ARCH:-}"
     fi
     remote_exec "$@"

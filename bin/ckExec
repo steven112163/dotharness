@@ -38,7 +38,7 @@ arch_from_container() {
     _dispatch_run_like 1 "$REPO" "$_ARCH_PROBE_CMD"
 }
 
-# Shared by the run-like profiling scripts (ckRunProfile/ckTraceProfile/
+# Shared by the run-like profiling scripts (ckDynamicProfile/ckTraceProfile/
 # ckComputeProfile): dispatch shorthand for their repeated gpu=1/$REPO calls.
 # Reads REPO (dynamically scoped from the caller, as with arch_from_container).
 dx() { _dispatch_run_like 1 "$REPO" "$1"; }
