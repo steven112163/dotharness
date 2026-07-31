@@ -150,6 +150,7 @@ cmd_configure() {
     # Pick the backend (see _detect_backend in ckCommon for the precedence rule).
     [ -n "$MODE" ] || MODE=$(_detect_backend build) || exit 1
     echo "Backend: $MODE"
+    echo "Image: $IMAGE"
 
     # srun builds on CPU nodes (no GPU to probe) require an explicit arch; direct
     # and docker run on a GPU host, so rocminfo can probe it there. A ;-joined
@@ -235,6 +236,7 @@ cmd_build() {
 
     [ -n "$MODE" ] || MODE=$(_detect_backend build) || exit 1
     echo "Backend: $MODE"
+    echo "Image: $IMAGE"
 
     # NFS caveat, mirroring the one below for build outputs: under srun, a
     # `configure` dispatched moments ago on a different compute node may not
