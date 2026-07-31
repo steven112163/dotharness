@@ -51,6 +51,10 @@ Env overrides: IMAGE=$IMAGE  REPO=$REPO  ARCH=<gfx...>  WORKDIR=<dir>
                GRES=<gpu:...:1>  CONSTRAINT=$CONSTRAINT
                CPUS=$CPUS  SRUN_TIME=$SRUN_TIME  SRUN_EXTRA=<srun args>
                IMAGE_DIR=$IMAGE_DIR
+               DOCKER_SETUP_CMD=<cmd> or DOCKER_SETUP_CMD_FILE=$DOCKER_SETUP_CMD_FILE
+               (one-time root setup baked into a derived image via docker
+               commit, e.g. installing rocm[devel]; see template/ckdockersetup.example;
+               file missing and var unset: no-op)
 EOF
     exit 1
 }

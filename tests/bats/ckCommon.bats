@@ -391,6 +391,246 @@ teardown() {
     [[ "$output" == *"unknown MODE"* ]]
 }
 
+# --- DOCKER_SETUP_CMD default resolution: read from DOCKER_SETUP_CMD_FILE
+# (same config-file strategy as ckRemote's server list), same safety property
+# as a missing $CK_REMOTE_CONF: file absent (the default, fresh checkout) ->
+# empty, no derived image. These source ckCommon fresh per test (the
+# resolution runs at source time, not inside a function). ---
+
+@test "DOCKER_SETUP_CMD defaults to empty when DOCKER_SETUP_CMD_FILE is absent (safe default)" {
+    run bash -c "
+        DOCKER_SETUP_CMD_FILE='$TMPDIR_TEST/no-such-file'
+        source '$CKCOMMON'
+        echo \"[\$DOCKER_SETUP_CMD]\"
+    "
+    [ "$status" -eq 0 ]
+    [ "$output" = "[]" ]
+}
+
+@test "DOCKER_SETUP_CMD is read from DOCKER_SETUP_CMD_FILE when present" {
+    printf 'line-one\nline-two\n' >"$TMPDIR_TEST/setup-cmd"
+    run bash -c "
+        DOCKER_SETUP_CMD_FILE='$TMPDIR_TEST/setup-cmd'
+        source '$CKCOMMON'
+        echo \"[\$DOCKER_SETUP_CMD]\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"line-one"* ]]
+    [[ "$output" == *"line-two"* ]]
+}
+
+@test "an explicit empty DOCKER_SETUP_CMD opts out even when DOCKER_SETUP_CMD_FILE exists" {
+    echo 'echo should-not-be-used' >"$TMPDIR_TEST/setup-cmd"
+    run bash -c "
+        DOCKER_SETUP_CMD_FILE='$TMPDIR_TEST/setup-cmd'
+        DOCKER_SETUP_CMD=''
+        source '$CKCOMMON'
+        echo \"[\$DOCKER_SETUP_CMD]\"
+    "
+    [ "$status" -eq 0 ]
+    [ "$output" = "[]" ]
+}
+
+@test "an explicit DOCKER_SETUP_CMD overrides DOCKER_SETUP_CMD_FILE content" {
+    echo 'echo should-not-be-used' >"$TMPDIR_TEST/setup-cmd"
+    run bash -c "
+        DOCKER_SETUP_CMD_FILE='$TMPDIR_TEST/setup-cmd'
+        DOCKER_SETUP_CMD='echo custom'
+        source '$CKCOMMON'
+        echo \"[\$DOCKER_SETUP_CMD]\"
+    "
+    [ "$status" -eq 0 ]
+    [ "$output" = "[echo custom]" ]
+}
+
+# --- _docker_setup_image_tag / _ensure_docker_setup_image: bake DOCKER_SETUP_CMD
+# into a derived image via docker commit, once per unique (IMAGE,
+# DOCKER_SETUP_CMD) pair. All docker calls stubbed; no real docker needed. ---
+
+@test "_docker_setup_image_tag is deterministic and changes when DOCKER_SETUP_CMD changes" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        USER=alice
+        DOCKER_SETUP_CMD=cmd-a
+        t1=\$(_docker_setup_image_tag)
+        t1b=\$(_docker_setup_image_tag)
+        DOCKER_SETUP_CMD=cmd-b
+        t2=\$(_docker_setup_image_tag)
+        echo \"t1=[\$t1] t1b=[\$t1b] t2=[\$t2]\"
+        [ \"\$t1\" = \"\$t1b\" ]
+        [ \"\$t1\" != \"\$t2\" ]
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"t1=[test-image-alice-"* ]]
+}
+
+@test "_ensure_docker_setup_image echoes IMAGE unchanged when DOCKER_SETUP_CMD is empty (default, no-op)" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD=''
+        docker() { echo 'ERROR: docker must not be called' >&2; return 1; }
+        _ensure_docker_setup_image
+    "
+    [ "$status" -eq 0 ]
+    [ "$output" = "test-image" ]
+}
+
+@test "_ensure_docker_setup_image builds and commits a derived image when the tag is missing" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD='echo setup'
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        callfile='$TMPDIR_TEST/docker-calls'
+        : >\"\$callfile\"
+        docker() {
+            echo \"\$*\" >>\"\$callfile\"
+            [ \"\$1\" = image ] && return 1
+            return 0
+        }
+        tag=\$(_ensure_docker_setup_image)
+        echo \"tag=[\$tag]\"
+        cat \"\$callfile\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"tag=[test-image-"*"]"* ]]
+    [[ "$output" == *"image inspect"* ]]
+    [[ "$output" == *"run -u 0 --name ck-setup-"* ]]
+    [[ "$output" == *"commit ck-setup-"* ]]
+    [[ "$output" == *"rm -f ck-setup-"* ]]
+}
+
+@test "_ensure_docker_setup_image reuses an existing derived image without rebuilding" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD='echo setup'
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        callfile='$TMPDIR_TEST/docker-calls'
+        : >\"\$callfile\"
+        docker() {
+            echo \"\$*\" >>\"\$callfile\"
+            [ \"\$1\" = image ] && return 0
+            return 1
+        }
+        tag=\$(_ensure_docker_setup_image)
+        echo \"tag=[\$tag]\"
+        echo \"calls=[\$(wc -l <\"\$callfile\")]\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"calls=[1]"* ]]
+}
+
+@test "_ensure_docker_setup_image does not commit and returns nonzero when DOCKER_SETUP_CMD fails" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD=false
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        callfile='$TMPDIR_TEST/docker-calls'
+        : >\"\$callfile\"
+        docker() {
+            echo \"\$*\" >>\"\$callfile\"
+            case \"\$1\" in
+            image) return 1 ;;
+            run) return 1 ;;
+            rm) return 0 ;;
+            commit) echo 'ERROR: commit must not be called after a failed setup' >&2; return 1 ;;
+            esac
+        }
+        _ensure_docker_setup_image
+        rc=\$?
+        cat \"\$callfile\"
+        exit \$rc
+    "
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"rm -f ck-setup-"* ]]
+    [[ "$output" != *"commit"* ]]
+}
+
+@test "_docker_run_local dispatches against IMAGE unchanged when DOCKER_SETUP_CMD is empty (regression)" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD=''
+        REPO=/repo
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        CCACHE_DIR='$TMPDIR_TEST/ccache'
+        callfile='$TMPDIR_TEST/docker-calls'
+        : >\"\$callfile\"
+        docker() { echo \"\$*\" >>\"\$callfile\"; return 0; }
+        _docker_run_local 0 /repo 'echo hi' >/dev/null
+        cat \"\$callfile\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"image inspect"* ]]
+    [[ "$output" != *"-u 0"* ]]
+    [[ "$output" == *"test-image bash -c"* ]]
+}
+
+@test "_docker_run_local dispatches against the derived tag, not IMAGE, when DOCKER_SETUP_CMD is set" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD='echo setup'
+        REPO=/repo
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        CCACHE_DIR='$TMPDIR_TEST/ccache'
+        callfile='$TMPDIR_TEST/docker-calls'
+        : >\"\$callfile\"
+        docker() {
+            echo \"\$*\" >>\"\$callfile\"
+            [ \"\$1\" = image ] && return 0
+            return 0
+        }
+        _docker_run_local 0 /repo 'echo hi' >/dev/null
+        cat \"\$callfile\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"-u 0"* ]]
+    [[ "$output" != *"commit"* ]]
+    [[ "$output" != *"test-image cat"* ]]
+    [[ "$output" != *"test-image bash -c"* ]]
+    [[ "$output" == *"bash -c"* ]]
+}
+
+@test "_dispatch_build_like on srun resolves the derived setup image before ensuring the tarball" {
+    run bash -c "
+        source '$CKCOMMON'
+        MODE=srun
+        IMAGE=test-image
+        DOCKER_SETUP_CMD='echo setup'
+        _ensure_docker_setup_image() { echo derived-tag; }
+        _ensure_image_tar() { echo \"ensure_image_tar:\$1\"; }
+        _run_in_container() { echo \"run_in_container:IMAGE=\$IMAGE\"; }
+        _srun_dispatch() { echo \"srun_dispatch:\$1\"; }
+        _dispatch_build_like 0 /work prog
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ensure_image_tar:derived-tag"* ]]
+    [[ "$output" == *"srun_dispatch:run_in_container:IMAGE=derived-tag"* ]]
+}
+
+@test "_dispatch_run_like on srun resolves the derived setup image before ensuring the tarball" {
+    run bash -c "
+        source '$CKCOMMON'
+        MODE=srun
+        IMAGE=test-image
+        DOCKER_SETUP_CMD='echo setup'
+        _ensure_docker_setup_image() { echo derived-tag; }
+        _ensure_image_tar() { echo \"ensure_image_tar:\$1\"; }
+        _run_in_container() { echo \"run_in_container:IMAGE=\$IMAGE\"; }
+        _hold_jobid() { echo ''; }
+        _srun_dispatch() { echo \"srun_dispatch:\$1\"; }
+        _dispatch_run_like 1 /work prog
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ensure_image_tar:derived-tag"* ]]
+    [[ "$output" == *"srun_dispatch:run_in_container:IMAGE=derived-tag"* ]]
+}
+
 # --- _resolve_arch_or_require: hard error on srun, probe on direct/docker ---
 
 @test "_resolve_arch_or_require errors on srun with no arch" {

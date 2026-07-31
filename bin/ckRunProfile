@@ -5,7 +5,7 @@ set -euo pipefail
 # resources) and PMC multipass (L2 hit ratio, HBM fetch/write, occupancy, VALU).
 #
 #   ckRunProfile [--arch gfx...] [--sweep <flag>=<v1,v2,...>] [--nruns N]
-#                [--base-args <args>] <bin>
+#                    [--base-args <args>] <bin>
 #
 # <bin> is a path to the binary, either absolute or relative to REPO.
 # The default is build/bin/<last-path-component> if not a full path.
@@ -45,6 +45,8 @@ Usage: $(basename "$0") [--arch gfx...] [--sweep <flag>=<v1,...>]
 
 Env overrides: REPO=$REPO  ARCH=<gfx...>  IMAGE=<image>
                BIN=  SWEEP_FLAG=  SWEEP_VALS=  NRUNS=  BASE_ARGS=  OUTDIR=
+               DOCKER_SETUP_CMD_FILE=<path> (one-time root image setup; see
+               template/ckdockersetup.example)
 EOF
     exit 1
 }

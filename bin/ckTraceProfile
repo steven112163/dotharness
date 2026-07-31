@@ -45,6 +45,8 @@ Usage: $(basename "$0") [--arch gfx...] [--sweep <flag>=<v1,...>]
 
 Env overrides: REPO=$REPO  ARCH=<gfx...>  IMAGE=<image>
                PC_SAMPLING_INTERVAL=<instructions between samples, default: $PC_SAMPLING_INTERVAL>
+               DOCKER_SETUP_CMD_FILE=<path> (one-time root image setup; see
+               template/ckdockersetup.example)
 EOF
     exit 1
 }

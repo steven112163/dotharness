@@ -43,6 +43,8 @@ are canonicalized and must resolve under $HOME or $REPO, keeping the
 "rocprof-compute-venv*" basename.
 Env overrides: REPO=$REPO  ARCH=<gfx...>  IMAGE=<image>
                VENV=<path>  ROCM_WHL_INDEX=<url>
+               DOCKER_SETUP_CMD_FILE=<path> (one-time root image setup; see
+               template/ckdockersetup.example)
 EOF
     exit 1
 }

@@ -29,6 +29,8 @@ Usage: $(basename "$0") [--arch gfx...] <target>
   <target>       CMake target name (e.g. tile_example_ssd_fwd)
 
 Env overrides: REPO=$REPO  ARCH=<gfx...>  IMAGE=<image>
+               DOCKER_SETUP_CMD_FILE=<path> (one-time root image setup; see
+               template/ckdockersetup.example)
 EOF
     exit 1
 }

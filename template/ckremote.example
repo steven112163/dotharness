@@ -1,0 +1,17 @@
+# Config for bin/ckRemote: an ordered server list plus one entry per server in
+# five associative arrays. Copy to ~/.config/ckremote (or point
+# CK_REMOTE_CONF elsewhere) and fill in your own servers.
+
+CK_SERVERS=(shared slurm) # priority order, highest first
+declare -A CK_SSH CK_REPO CK_TYPE CK_GPUS CK_KEY
+
+CK_SSH[shared]="user@sharedbox"
+CK_REPO[shared]="/scratch/you/composable_kernel"
+CK_TYPE[shared]="normal"
+CK_GPUS[shared]="gfx942"
+CK_KEY[shared]="$HOME/.ssh/shared_key" # optional; omit/empty to use ssh's default
+
+CK_SSH[slurm]="user@login"
+CK_REPO[slurm]="/home/you/ck/composable_kernel"
+CK_TYPE[slurm]="slurm"
+CK_GPUS[slurm]="all" # "all" = any arch
