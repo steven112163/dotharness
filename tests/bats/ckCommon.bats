@@ -13,6 +13,11 @@ setup() {
     REPO_ROOT=$(cd "${BATS_TEST_DIRNAME}/../.." && pwd)
     mkdir -p "$REPO_ROOT/tmp"
     TMPDIR_TEST=$(mktemp -d "$REPO_ROOT/tmp/ckCommon-bats-XXXXXX")
+    # Isolate from the real $HOME: a real ~/.config/ckdockersetup on the dev
+    # machine running these tests must never leak in and trigger a real
+    # docker build. Tests that exercise DOCKER_SETUP_CMD_FILE resolution set
+    # it explicitly per-test, overriding this default.
+    export DOCKER_SETUP_CMD_FILE="$TMPDIR_TEST/no-ckdockersetup-by-default"
 }
 
 teardown() {
@@ -443,6 +448,59 @@ teardown() {
     [ "$output" = "[echo custom]" ]
 }
 
+@test "an existing but unreadable DOCKER_SETUP_CMD_FILE fails loudly instead of silently defaulting to empty" {
+    [ "$(id -u)" -eq 0 ] && skip "root ignores file permissions"
+    echo 'echo should-not-be-used' >"$TMPDIR_TEST/setup-cmd"
+    chmod 000 "$TMPDIR_TEST/setup-cmd"
+    run bash -c "
+        DOCKER_SETUP_CMD_FILE='$TMPDIR_TEST/setup-cmd'
+        source '$CKCOMMON'
+    "
+    chmod 644 "$TMPDIR_TEST/setup-cmd"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"exists but could not be read"* ]]
+}
+
+@test "a DOCKER_SETUP_CMD_FILE that is a directory fails loudly instead of silently defaulting to empty" {
+    mkdir -p "$TMPDIR_TEST/setup-cmd-dir"
+    run bash -c "
+        DOCKER_SETUP_CMD_FILE='$TMPDIR_TEST/setup-cmd-dir'
+        source '$CKCOMMON'
+    "
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"exists but could not be read"* ]]
+}
+
+@test "sourcing ckCommon again after fixing an unreadable DOCKER_SETUP_CMD_FILE succeeds instead of silently no-op'ing" {
+    [ "$(id -u)" -eq 0 ] && skip "root ignores file permissions"
+    echo 'echo should-not-be-used' >"$TMPDIR_TEST/setup-cmd"
+    chmod 000 "$TMPDIR_TEST/setup-cmd"
+    run bash -c "
+        DOCKER_SETUP_CMD_FILE='$TMPDIR_TEST/setup-cmd'
+        source '$CKCOMMON' || true
+        chmod 644 '$TMPDIR_TEST/setup-cmd'
+        source '$CKCOMMON'
+        echo \"[\$DOCKER_SETUP_CMD]\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"should-not-be-used"* ]]
+}
+
+@test "an unreadable DOCKER_SETUP_CMD_FILE is not consulted at all when DOCKER_SETUP_CMD is already set (env still wins)" {
+    [ "$(id -u)" -eq 0 ] && skip "root ignores file permissions"
+    echo 'echo should-not-be-used' >"$TMPDIR_TEST/setup-cmd"
+    chmod 000 "$TMPDIR_TEST/setup-cmd"
+    run bash -c "
+        DOCKER_SETUP_CMD_FILE='$TMPDIR_TEST/setup-cmd'
+        DOCKER_SETUP_CMD='echo custom'
+        source '$CKCOMMON'
+        echo \"[\$DOCKER_SETUP_CMD]\"
+    "
+    chmod 644 "$TMPDIR_TEST/setup-cmd"
+    [ "$status" -eq 0 ]
+    [ "$output" = "[echo custom]" ]
+}
+
 # --- _docker_setup_image_tag / _ensure_docker_setup_image: bake DOCKER_SETUP_CMD
 # into a derived image via docker commit, once per unique (IMAGE,
 # DOCKER_SETUP_CMD) pair. All docker calls stubbed; no real docker needed. ---
@@ -453,6 +511,7 @@ teardown() {
         IMAGE=test-image
         USER=alice
         DOCKER_SETUP_CMD=cmd-a
+        docker() { return 1; }
         t1=\$(_docker_setup_image_tag)
         t1b=\$(_docker_setup_image_tag)
         DOCKER_SETUP_CMD=cmd-b
@@ -460,6 +519,60 @@ teardown() {
         echo \"t1=[\$t1] t1b=[\$t1b] t2=[\$t2]\"
         [ \"\$t1\" = \"\$t1b\" ]
         [ \"\$t1\" != \"\$t2\" ]
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"t1=[test-image-alice-"* ]]
+}
+
+@test "_docker_setup_image_tag lowercases \$USER (docker repo names must be lowercase)" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        USER=Alice
+        DOCKER_SETUP_CMD=cmd-a
+        docker() { return 1; }
+        _docker_setup_image_tag
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == "test-image-alice-"* ]]
+}
+
+@test "_docker_setup_image_tag changes when the resolved image ID changes even though IMAGE/DOCKER_SETUP_CMD do not (rolling-tag safety)" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        USER=alice
+        DOCKER_SETUP_CMD=cmd-a
+        docker() { echo 'sha256:aaa'; return 0; }
+        t1=\$(_docker_setup_image_tag)
+        docker() { echo 'sha256:bbb'; return 0; }
+        t2=\$(_docker_setup_image_tag)
+        echo \"t1=[\$t1] t2=[\$t2]\"
+        [ \"\$t1\" != \"\$t2\" ]
+    "
+    [ "$status" -eq 0 ]
+}
+
+@test "_docker_setup_image_tag is stable across the not-yet-pulled to pulled transition (cold-host regression)" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        USER=alice
+        DOCKER_SETUP_CMD=cmd-a
+        pulled=0
+        docker() {
+            case \"\$1\" in
+            pull) pulled=1; return 0 ;;
+            image)
+                [ \"\$pulled\" -eq 1 ] && { echo 'sha256:fixed'; return 0; }
+                return 1
+                ;;
+            esac
+        }
+        t1=\$(_docker_setup_image_tag)
+        t2=\$(_docker_setup_image_tag)
+        echo \"t1=[\$t1] t2=[\$t2]\"
+        [ \"\$t1\" = \"\$t2\" ]
     "
     [ "$status" -eq 0 ]
     [[ "$output" == *"t1=[test-image-alice-"* ]]
@@ -520,7 +633,219 @@ teardown() {
         echo \"calls=[\$(wc -l <\"\$callfile\")]\"
     "
     [ "$status" -eq 0 ]
-    [[ "$output" == *"calls=[1]"* ]]
+    # 2, not 1: one docker image inspect from _docker_setup_image_tag's own
+    # digest resolution, one from the tag-exists check. No build/commit/rm.
+    [[ "$output" == *"calls=[2]"* ]]
+}
+
+@test "_ensure_docker_setup_image does not leak DOCKER_SETUP_CMD's own stdout into the captured tag" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD='echo setup'
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        docker() {
+            case \"\$1\" in
+            image) return 1 ;;
+            run)
+                echo 'Collecting rocm...'
+                echo 'Successfully installed rocm'
+                return 0
+                ;;
+            commit) return 0 ;;
+            rm) return 0 ;;
+            esac
+        }
+        tag=\$(_ensure_docker_setup_image 2>/dev/null)
+        echo \"tag=[\$tag]\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == "tag=[test-image-"*"]" ]]
+}
+
+@test "_ensure_docker_setup_image returns nonzero and does not echo a tag when docker commit fails" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD='echo setup'
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        callfile='$TMPDIR_TEST/docker-calls'
+        : >\"\$callfile\"
+        docker() {
+            echo \"\$*\" >>\"\$callfile\"
+            case \"\$1\" in
+            image) return 1 ;;
+            run) return 0 ;;
+            commit) return 1 ;;
+            rm) return 0 ;;
+            esac
+        }
+        tag=\$(_ensure_docker_setup_image 2>/dev/null)
+        rc=\$?
+        echo \"tag=[\$tag]\"
+        cat \"\$callfile\"
+        exit \$rc
+    "
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"tag=[]"* ]]
+    [[ "$output" == *"commit ck-setup-"* ]]
+    [[ "$output" == *"rm -f ck-setup-"* ]]
+}
+
+@test "_ensure_docker_setup_image aborts and never commits when DOCKER_SETUP_CMD fails partway (bash -euo pipefail exercised for real)" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD='false; echo ok'
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        callfile='$TMPDIR_TEST/docker-calls'
+        : >\"\$callfile\"
+        docker() {
+            echo \"\$*\" >>\"\$callfile\"
+            case \"\$1\" in
+            image) return 1 ;;
+            run)
+                # Actually execute the trailing 'bash -euo pipefail -c CMD'
+                # (the last 5 args) instead of an unconditional stub return,
+                # so this exercises bash's real -e semantics: 'false' aborts
+                # the script before 'echo ok' ever runs.
+                \"\${@: -5}\"
+                ;;
+            commit) echo 'ERROR: commit must not be called after a failed setup' >&2; return 1 ;;
+            rm) return 0 ;;
+            esac
+        }
+        _ensure_docker_setup_image
+        rc=\$?
+        cat \"\$callfile\"
+        exit \$rc
+    "
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"bash -euo pipefail -c false; echo ok"* ]]
+    [[ "$output" == *"rm -f ck-setup-"* ]]
+    [[ "$output" != *"commit ck-setup-"* ]]
+}
+
+@test "_ensure_docker_setup_image removes a stale leftover container before building (self-heal)" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD='echo setup'
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        callfile='$TMPDIR_TEST/docker-calls'
+        : >\"\$callfile\"
+        docker() {
+            echo \"\$*\" >>\"\$callfile\"
+            case \"\$1\" in
+            image) return 1 ;;
+            run) return 0 ;;
+            commit) return 0 ;;
+            rm) return 0 ;;
+            esac
+        }
+        _ensure_docker_setup_image >/dev/null
+        cat \"\$callfile\"
+    "
+    [ "$status" -eq 0 ]
+    rm_line=$(grep -n '^rm -f ck-setup-' <<<"$output" | head -1 | cut -d: -f1)
+    run_line=$(grep -n '^run -u 0' <<<"$output" | head -1 | cut -d: -f1)
+    [ -n "$rm_line" ]
+    [ -n "$run_line" ]
+    [ "$rm_line" -lt "$run_line" ]
+}
+
+@test "_ensure_docker_setup_image skips the self-heal removal when no stale container exists" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD='echo setup'
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        callfile='$TMPDIR_TEST/docker-calls'
+        : >\"\$callfile\"
+        docker() {
+            echo \"\$*\" >>\"\$callfile\"
+            case \"\$1\" in
+            image) return 1 ;;
+            container) return 1 ;;
+            run) return 0 ;;
+            commit) return 0 ;;
+            rm) return 0 ;;
+            esac
+        }
+        tag=\$(_ensure_docker_setup_image)
+        echo \"tag=[\$tag]\"
+        cat \"\$callfile\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"container inspect ck-setup-"* ]]
+    # Exactly one rm -f: the unconditional post-commit cleanup. The self-heal
+    # rm before run is skipped since docker container inspect said absent.
+    rm_count=$(grep -c '^rm -f ck-setup-' <<<"$output")
+    [ "$rm_count" -eq 1 ]
+}
+
+@test "_ensure_docker_setup_image aborts with a specific error when removing a real stale container fails" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD='echo setup'
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        docker() {
+            case \"\$1\" in
+            image) return 1 ;;
+            container) return 0 ;;
+            rm) return 1 ;;
+            run) echo 'ERROR: run must not be called when stale-container removal failed' >&2; return 1 ;;
+            commit) echo 'ERROR: commit must not be called when stale-container removal failed' >&2; return 1 ;;
+            esac
+        }
+        _ensure_docker_setup_image
+    "
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"failed to remove stale container"* ]]
+}
+
+@test "_ensure_docker_setup_image warns but still succeeds when the final container-removal fails (tag already committed)" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD='echo setup'
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        docker() {
+            case \"\$1\" in
+            image) return 1 ;;
+            container) return 1 ;;
+            run) return 0 ;;
+            commit) return 0 ;;
+            rm) return 1 ;;
+            esac
+        }
+        _ensure_docker_setup_image
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"test-image-"* ]]
+    [[ "$output" == *"WARNING"* ]]
+}
+
+@test "_ensure_docker_setup_image's container name is tag-scoped, not a bare PID (collision safety)" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        USER=alice
+        DOCKER_SETUP_CMD='echo setup'
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        docker() {
+            case \"\$1\" in
+            image) return 1 ;;
+            run) echo \"container=\$5\"; return 0 ;;
+            commit) return 0 ;;
+            rm) return 0 ;;
+            esac
+        }
+        _ensure_docker_setup_image >/dev/null
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"container=ck-setup-test-image-alice-"* ]]
 }
 
 @test "_ensure_docker_setup_image does not commit and returns nonzero when DOCKER_SETUP_CMD fails" {
@@ -548,6 +873,56 @@ teardown() {
     [ "$status" -eq 1 ]
     [[ "$output" == *"rm -f ck-setup-"* ]]
     [[ "$output" != *"commit"* ]]
+}
+
+# --- _ACCT_SETUP_SH: merges the image's own /etc/passwd|group with the real
+# host getent entry at our uid/gid, so LDAP/SSSD (or any) uid resolves to a
+# name inside the container. `docker` stubbed to fake `cat /etc/passwd`/
+# `/etc/group` output for the image-fetch calls only; the real host `getent`
+# still runs (it's not a docker call), so assertions use the real caller's
+# $(id -u)/$(id -un). ---
+
+@test "_ACCT_SETUP_SH replaces an image-baked user that collides with the host uid, instead of shadowing it (WSL whoami bug)" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        docker() {
+            case \"\${@: -1}\" in
+            /etc/passwd) printf 'root:x:0:0:root:/root:/bin/bash\nubuntu:x:%s:%s:Ubuntu:/home/ubuntu:/bin/bash\n' \"\$(id -u)\" \"\$(id -g)\" ;;
+            /etc/group) printf 'root:x:0:\nubuntu:x:%s:\n' \"\$(id -g)\" ;;
+            esac
+        }
+        _ACCT_GPU=0 _ACCT_FLAGS=''
+        eval \"\$_ACCT_SETUP_SH\"
+        cat \"\$ACCT_DIR/passwd-\$(id -u)\"
+        cat \"\$ACCT_DIR/group-\$(id -g)\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"$(id -un):x:$(id -u):$(id -g):"* ]]
+    [[ "$output" != *"ubuntu:x:$(id -u):"* ]]
+    [[ "$output" != *"ubuntu:x:$(id -g):"* ]]
+}
+
+@test "_ACCT_SETUP_SH appends the host's getent entry when the image has no user at that uid (regression, no collision)" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        docker() {
+            case \"\${@: -1}\" in
+            /etc/passwd) printf 'root:x:0:0:root:/root:/bin/bash\n' ;;
+            /etc/group) printf 'root:x:0:\n' ;;
+            esac
+        }
+        _ACCT_GPU=0 _ACCT_FLAGS=''
+        eval \"\$_ACCT_SETUP_SH\"
+        cat \"\$ACCT_DIR/passwd-\$(id -u)\"
+        cat \"\$ACCT_DIR/group-\$(id -g)\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"root:x:0:0:root:/root:/bin/bash"* ]]
+    [[ "$output" == *"$(id -un):x:$(id -u):$(id -g):"* ]]
 }
 
 @test "_docker_run_local dispatches against IMAGE unchanged when DOCKER_SETUP_CMD is empty (regression)" {
