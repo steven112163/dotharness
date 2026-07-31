@@ -27,11 +27,25 @@ CCACHE_DIR=${CCACHE_DIR:-$HOME/.cache/ckBuild-ccache}
 # ckRemote's server config — see template/ckdockersetup.example. Missing
 # file (default) or explicit DOCKER_SETUP_CMD="": empty, no derived image.
 DOCKER_SETUP_CMD_FILE=${DOCKER_SETUP_CMD_FILE:-$HOME/.config/ckdockersetup}
-# `-` not `:-`: only an unset var reads the file; an explicit "" opts out
-# even if the file exists. `|| true`: set -e (ckBuild/ckRun) must not abort
-# just because the file is missing.
-DOCKER_SETUP_CMD=${DOCKER_SETUP_CMD-$(cat "$DOCKER_SETUP_CMD_FILE" 2>/dev/null || true)}
-# Where generated passwd/group files live (regenerated per run, per uid).
+# `-` not `:-`: only an unset var reads the file; explicit "" opts out even
+# if the file exists. Unreadable-but-present (perms, dir, dangling symlink)
+# is misconfigured, not "unconfigured" — cat's own exit status catches all
+# three. On failure, unset both _CKCOMMON_SOURCED (so a swallowed failure can
+# re-source after the fix) and DOCKER_SETUP_CMD (cat already assigned "" —
+# left set, a retry would wrongly treat that as a deliberate empty opt-out).
+if [ -z "${DOCKER_SETUP_CMD+x}" ]; then
+    if [ -e "$DOCKER_SETUP_CMD_FILE" ]; then
+        DOCKER_SETUP_CMD=$(cat "$DOCKER_SETUP_CMD_FILE" 2>/dev/null) || {
+            echo "ERROR: $DOCKER_SETUP_CMD_FILE exists but could not be read." >&2
+            unset _CKCOMMON_SOURCED DOCKER_SETUP_CMD
+            return 1
+        }
+    else
+        DOCKER_SETUP_CMD=""
+    fi
+fi
+# Where generated passwd/group files, and _ensure_docker_setup_image's
+# per-tag build locks, live (regenerated per run, per uid/tag).
 ACCT_DIR=${ACCT_DIR:-$HOME/.cache/ckCommon}
 # Slurm job name of the persistent GPU holder (ckHold). When one is running,
 # ckRun dispatches into it via `srun --jobid --overlap` (instant, no queue wait).
@@ -106,11 +120,20 @@ _ensure_image_tar() {
 }
 
 # Content-addressed, $USER-scoped tag for the DOCKER_SETUP_CMD-derived image.
-# Hash covers IMAGE+DOCKER_SETUP_CMD, so changing either invalidates the cache.
+# Hashes the resolved digest (pulling first if absent, so every call this
+# invocation hashes the same digest instead of racing an unpulled-name vs.
+# pulled-digest split — the old cause of a double build on cold hosts) plus
+# DOCKER_SETUP_CMD. Only catches IMAGE already re-pulled between builds, not
+# a stale local rolling tag. $USER lowercased (docker repo names require it);
+# 12 hex chars of sha256 is ample for a per-user cache.
 _docker_setup_image_tag() {
-    local hash
-    hash=$(printf '%s|%s' "$IMAGE" "$DOCKER_SETUP_CMD" | sha256sum | cut -c1-12)
-    echo "$(_sanitized_image_tag "$IMAGE")-$USER-$hash"
+    local hash image_id
+    if ! image_id=$(docker image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null); then
+        docker pull -q "$IMAGE" >/dev/null 2>&1 || true
+        image_id=$(docker image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null) || image_id="$IMAGE"
+    fi
+    hash=$(printf '%s|%s' "$image_id" "$DOCKER_SETUP_CMD" | sha256sum | cut -c1-12)
+    echo "$(_sanitized_image_tag "$IMAGE")-${USER,,}-$hash"
 }
 
 # Echo the image to dispatch: $IMAGE unchanged if DOCKER_SETUP_CMD is empty,
@@ -132,14 +155,40 @@ _ensure_docker_setup_image() {
         return 0
     fi
     echo "Building derived image $tag (running DOCKER_SETUP_CMD once) ..." >&2
-    container="ck-setup-$$"
-    if ! docker run -u 0 --name "$container" "$IMAGE" bash -c "$DOCKER_SETUP_CMD"; then
+    # Tag-scoped name (not bare $$, reusable across a killed PID): remove any
+    # stale leftover so a prior killed attempt can't collide with "name
+    # already in use". Only remove a container that actually exists; a real
+    # removal failure aborts here with a specific message instead of
+    # surfacing later as a misleading "DOCKER_SETUP_CMD failed" from docker
+    # run's name collision.
+    container="ck-setup-$tag"
+    if docker container inspect "$container" >/dev/null 2>&1; then
+        docker rm -f "$container" >/dev/null 2>&1 || {
+            echo "ERROR: failed to remove stale container $container; remove it manually (docker rm -f $container) and retry." >&2
+            return 1
+        }
+    fi
+    # >&2: docker run streams the container's own stdout back here, and this
+    # function's result is captured via $(...) — any of DOCKER_SETUP_CMD's own
+    # stdout (e.g. pip/rocm-sdk output) would otherwise land in the captured
+    # tag. -euo pipefail: a multi-statement DOCKER_SETUP_CMD only reports the
+    # *last* command's exit status by default; this makes any failing command
+    # abort the whole script instead of a partial setup getting cached as success.
+    if ! docker run -u 0 --name "$container" "$IMAGE" bash -euo pipefail -c "$DOCKER_SETUP_CMD" >&2; then
         echo "ERROR: DOCKER_SETUP_CMD failed inside $IMAGE; derived image not built." >&2
         docker rm -f "$container" >/dev/null 2>&1
         return 1
     fi
-    docker commit "$container" "$tag" >/dev/null
-    docker rm -f "$container" >/dev/null 2>&1
+    if ! docker commit "$container" "$tag" >/dev/null; then
+        echo "ERROR: docker commit failed for $tag; derived image not built." >&2
+        docker rm -f "$container" >/dev/null 2>&1
+        return 1
+    fi
+    # The tag now exists, so a future call short-circuits on the cache-hit
+    # check above and never retries this cleanup: a failure here permanently
+    # leaks the (large) stopped container, so warn rather than silently drop it.
+    docker rm -f "$container" >/dev/null 2>&1 ||
+        echo "WARNING: failed to remove setup container $container; remove it manually (docker rm -f $container)." >&2
     echo "$tag"
 }
 
@@ -201,8 +250,17 @@ flock -x "$_lock_fd" || { echo "ckCommon: flock failed" >&2; exit 1; }
 # leaves a partial account file that a later run would trust.
 _t=$(mktemp "$_pw.XXXXXX") && docker run --rm "$IMAGE" cat /etc/passwd >"$_t" && mv -f "$_t" "$_pw"
 _t=$(mktemp "$_gr.XXXXXX") && docker run --rm "$IMAGE" cat /etc/group >"$_t" && mv -f "$_t" "$_gr"
-cut -d: -f3 "$_pw" | grep -qx "$_u" || getent passwd "$_u" >>"$_pw"
-cut -d: -f3 "$_gr" | grep -qx "$_g" || getent group "$_g" >>"$_gr"
+# Install this host's real getent entry at our uid/gid, replacing (not
+# skipping) any unrelated user the image ships there — rocm/pytorch bakes in
+# "ubuntu" at uid 1000, the same uid Debian/WSL give the first real user, so
+# a WSL host's own user would otherwise be silently shadowed and whoami
+# would report "ubuntu" instead.
+if _pw_entry=$(getent passwd "$_u"); then
+    _t=$(mktemp "$_pw.XXXXXX") && awk -F: -v u="$_u" '$3!=u' "$_pw" >"$_t" && printf '%s\n' "$_pw_entry" >>"$_t" && mv -f "$_t" "$_pw"
+fi
+if _gr_entry=$(getent group "$_g"); then
+    _t=$(mktemp "$_gr.XXXXXX") && awk -F: -v g="$_g" '$3!=g' "$_gr" >"$_t" && printf '%s\n' "$_gr_entry" >>"$_t" && mv -f "$_t" "$_gr"
+fi
 _ACCT_FLAGS="-v $_pw:/etc/passwd:ro -v $_gr:/etc/group:ro"
 if [ "${_ACCT_GPU:-0}" -eq 1 ]; then
     for _grp in render video; do

@@ -6,13 +6,25 @@
 # Copy to ~/.config/ckdockersetup (or point DOCKER_SETUP_CMD_FILE elsewhere)
 # to enable. Missing file (the default): no derived image, no-op.
 #
+# Derived images are never auto-pruned (each IMAGE/DOCKER_SETUP_CMD pair adds
+# one, tens of GB apiece). `docker images | grep '^<sanitized-image>-'` then
+# `docker rmi` stale ones manually if disk space becomes an issue.
+#
 # Below: the rocm[devel,profiler] install this repo's default pytorch IMAGE
 # (rocm/pytorch:rocm7.14_ubuntu26.04_py3.14_pytorch_release_2.12.0) needs.
 # PYVER/ROCM_VER are read from the image itself, not hardcoded, so the same
 # command works if IMAGE is overridden to a compatible image.
+#
+# set -euo pipefail: without it, only the *last* command's exit status counts
+# (bash's default for a multi-statement script), so an earlier failure (e.g. a
+# network blip during pip install) would go unnoticed and get docker-committed
+# and cached as if setup had succeeded. Redundant with ckCommon's own
+# `bash -euo pipefail -c "$DOCKER_SETUP_CMD"` wrapper — kept anyway as
+# belt-and-suspenders in case this file is ever run outside that wrapper.
+set -euo pipefail
 source /opt/venv/bin/activate
 PYVER=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
-ROCM_VER=$(cat /opt/rocm/.info/version)
+ROCM_VER=$(cat /opt/venv/lib/python$PYVER/site-packages/_rocm_sdk_core/.info/version)
 python3 -m pip install --index-url https://repo.amd.com/rocm/whl-multi-arch/ "rocm[devel,profiler]==$ROCM_VER"
 rocm-sdk init
 ln -sfn /opt/venv/lib/python$PYVER/site-packages/_rocm_sdk_devel /opt/rocm
