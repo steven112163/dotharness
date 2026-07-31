@@ -54,7 +54,8 @@ Env overrides: IMAGE=$IMAGE  REPO=$REPO  ARCH=<gfx...>  WORKDIR=<dir>
                DOCKER_SETUP_CMD=<cmd> or DOCKER_SETUP_CMD_FILE=$DOCKER_SETUP_CMD_FILE
                (one-time root setup baked into a derived image via docker
                commit, e.g. installing rocm[devel]; see template/ckdockersetup.example;
-               file missing and var unset: no-op)
+               file missing and var unset: no-op — NOTE: the default IMAGE needs
+               this configured, or rocm[devel]/rocm-sdk will be missing)
 EOF
     exit 1
 }
