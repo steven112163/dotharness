@@ -61,7 +61,7 @@ citing the specific numbers that justify it.
 |-------|----------|---------|-------|
 | mode | yes | — | One or more of `static`, `dynamic`, `trace`, `cfg`, `depgraph`, `compute`. Ask if unspecified. |
 | target | yes | — | CMake target, e.g. `tile_example_ssd_fwd`. No default. |
-| image | no | `rocm/composable_kernel:ck_ub24.04_rocm7.13_develop` | Container image. Used by both paths: the named container on docker servers, and the ephemeral `--rm` containers on Slurm (loaded from tarball on the compute node). |
+| image | no | `rocm/pytorch:rocm7.14_ubuntu26.04_py3.14_pytorch_release_2.12.0` | Container image. Used by both paths: the named container on docker servers, and the ephemeral `--rm` containers on Slurm (loaded from tarball on the compute node). A one-time root setup (`DOCKER_SETUP_CMD`/`~/.config/ckdockersetup`, see `template/ckdockersetup.example`) is baked into a derived image via `docker commit` before first use, if configured. |
 | base args | no | `-v=0` | `dynamic`/`trace`/`compute`; passed every run (`-v=0` skips CPU verify). |
 | sweep | no | none | `dynamic`/`trace`. A flag + comma values, e.g. `-prec=fp32,fp16,bf16` or `-B=1,2,4`. |
 | nruns | no | 20 (dynamic), 1 (trace) | Runs per variant. |

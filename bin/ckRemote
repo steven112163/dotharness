@@ -43,8 +43,9 @@ set -euo pipefail
 # wrote them. .git is excluded too. rsync keeps mtimes, so incremental builds are
 # preserved.
 #
-# Config: env, or a sourced file at $CK_REMOTE_CONF / ~/.config/ckremote. Define
-# an ordered server list plus one entry per server in five associative arrays:
+# Config: env, or a sourced file at $CK_REMOTE_CONF / ~/.config/ckremote. See
+# template/ckremote.example for a copyable starting point. Define an ordered
+# server list plus one entry per server in five associative arrays:
 #
 #   CK_SERVERS=(shared slurm)            # priority order, highest first
 #   declare -A CK_SSH CK_REPO CK_TYPE CK_GPUS CK_KEY

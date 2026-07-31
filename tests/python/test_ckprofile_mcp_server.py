@@ -341,7 +341,12 @@ def test_run_job_body_kills_subprocess_on_exception_before_timeout_branch(
             "ckRunProfile", "gfx942", "test_gemm", str(ck_repo), "stubserver"
         )
         await server._run_job(
-            job_id, "ckRunProfile", "gfx942", "test_gemm", str(ck_repo), "stubserver"
+            job_id,
+            "ckRunProfile",
+            "gfx942",
+            "test_gemm",
+            str(ck_repo),
+            "stubserver",
         )
         return job_id
 
@@ -440,7 +445,12 @@ def test_run_job_exception_before_set_running_reaches_failed(
             "ckRunProfile", "gfx942", "test_gemm", str(ck_repo), "stubserver"
         )
         await server._run_job(
-            job_id, "ckRunProfile", "gfx942", "test_gemm", str(ck_repo), "stubserver"
+            job_id,
+            "ckRunProfile",
+            "gfx942",
+            "test_gemm",
+            str(ck_repo),
+            "stubserver",
         )
         return job_id
 

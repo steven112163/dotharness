@@ -8,7 +8,7 @@
 _CKCOMMON_SOURCED=1
 
 # Cluster-wide defaults. Callers may override any via env before sourcing.
-IMAGE=${IMAGE:-rocm/composable_kernel:ck_ub24.04_rocm7.13_develop}
+IMAGE=${IMAGE:-rocm/pytorch:rocm7.14_ubuntu26.04_py3.14_pytorch_release_2.12.0}
 CONSTRAINT=${CONSTRAINT:-MARKHAM}
 CPUS=${CPUS:-128}
 SRUN_TIME=${SRUN_TIME:-02:00:00}
@@ -22,6 +22,15 @@ IMAGE_DIR=${IMAGE_DIR:-$HOME/images}
 # ccache dir. The image defaults to /root/.cache/ccache, unwritable to the
 # --user uid; point it at writable shared home (also persists across srun nodes).
 CCACHE_DIR=${CCACHE_DIR:-$HOME/.cache/ckBuild-ccache}
+# One-time root-privileged setup command baked into a derived image via
+# docker commit (see _ensure_docker_setup_image). Read from a file, like
+# ckRemote's server config — see template/ckdockersetup.example. Missing
+# file (default) or explicit DOCKER_SETUP_CMD="": empty, no derived image.
+DOCKER_SETUP_CMD_FILE=${DOCKER_SETUP_CMD_FILE:-$HOME/.config/ckdockersetup}
+# `-` not `:-`: only an unset var reads the file; an explicit "" opts out
+# even if the file exists. `|| true`: set -e (ckBuild/ckRun) must not abort
+# just because the file is missing.
+DOCKER_SETUP_CMD=${DOCKER_SETUP_CMD-$(cat "$DOCKER_SETUP_CMD_FILE" 2>/dev/null || true)}
 # Where generated passwd/group files live (regenerated per run, per uid).
 ACCT_DIR=${ACCT_DIR:-$HOME/.cache/ckCommon}
 # Slurm job name of the persistent GPU holder (ckHold). When one is running,
@@ -94,6 +103,44 @@ _ensure_image_tar() {
         return 1
     fi
     mv -f "$tmp" "$tar"
+}
+
+# Content-addressed, $USER-scoped tag for the DOCKER_SETUP_CMD-derived image.
+# Hash covers IMAGE+DOCKER_SETUP_CMD, so changing either invalidates the cache.
+_docker_setup_image_tag() {
+    local hash
+    hash=$(printf '%s|%s' "$IMAGE" "$DOCKER_SETUP_CMD" | sha256sum | cut -c1-12)
+    echo "$(_sanitized_image_tag "$IMAGE")-$USER-$hash"
+}
+
+# Echo the image to dispatch: $IMAGE unchanged if DOCKER_SETUP_CMD is empty,
+# else the docker-commit derived tag (built once per (IMAGE, DOCKER_SETUP_CMD)
+# pair, reused thereafter). flock serializes concurrent builds of a missing
+# tag; the fd is scoped to this function's $(...) subshell.
+_ensure_docker_setup_image() {
+    [ -z "$DOCKER_SETUP_CMD" ] && {
+        echo "$IMAGE"
+        return 0
+    }
+    local tag lock_fd container
+    tag=$(_docker_setup_image_tag)
+    mkdir -p "$ACCT_DIR"
+    exec {lock_fd}>"$ACCT_DIR/.docker-setup-lock-$tag" || return 1
+    flock -x "$lock_fd" || return 1
+    if docker image inspect "$tag" >/dev/null 2>&1; then
+        echo "$tag"
+        return 0
+    fi
+    echo "Building derived image $tag (running DOCKER_SETUP_CMD once) ..." >&2
+    container="ck-setup-$$"
+    if ! docker run -u 0 --name "$container" "$IMAGE" bash -c "$DOCKER_SETUP_CMD"; then
+        echo "ERROR: DOCKER_SETUP_CMD failed inside $IMAGE; derived image not built." >&2
+        docker rm -f "$container" >/dev/null 2>&1
+        return 1
+    fi
+    docker commit "$container" "$tag" >/dev/null
+    docker rm -f "$container" >/dev/null 2>&1
+    echo "$tag"
 }
 
 # Build the STATIC docker run flags into the global array DOCKER_FLAGS. These are
@@ -208,6 +255,12 @@ EOF
 # auto-pulled by docker run if absent (no tarball). Returns the program's rc.
 _docker_run_local() {
     local gpu="$1" workdir="$2" remote_prog="$3" _ACCT_GPU="$1" _ACCT_FLAGS=""
+    # Resolve first, then shadow IMAGE (`local IMAGE; IMAGE=$(...)` would
+    # unset it before the subshell forks): _ACCT_SETUP_SH below reads $IMAGE
+    # too, so account files come from the derived image as well.
+    local resolved_image
+    resolved_image=$(_ensure_docker_setup_image) || return 1
+    local IMAGE="$resolved_image"
     _docker_static_flags "$gpu" "$workdir"
     eval "$_ACCT_SETUP_SH"
     # --cpus is local only: under srun the cgroupv2 cgroup is threaded and docker
@@ -324,6 +377,11 @@ _dispatch_build_like() {
         # SRUN_TIME default meant for holder-bound run-like dispatch. local,
         # so this doesn't leak past this call (same reasoning as GPU above).
         local SRUN_TIME=""
+        # Shadow IMAGE (see _docker_run_local for the resolve-then-shadow
+        # order) so _ensure_image_tar/_run_in_container use the derived tag.
+        local resolved_image
+        resolved_image=$(_ensure_docker_setup_image) || return 1
+        local IMAGE="$resolved_image"
         _ensure_image_tar "$IMAGE" || return 1
         _srun_dispatch "$(_run_in_container "$gpu" "$workdir" "$remote_prog")"
         ;;
@@ -356,6 +414,11 @@ _dispatch_run_like() {
         # set in the shell (e.g. left over from an unrelated ckBuild/ckRun
         # call), rather than deferring to it.
         local GPU=$gpu
+        # Shadow IMAGE (see _docker_run_local for the resolve-then-shadow
+        # order) so _ensure_image_tar/_run_in_container use the derived tag.
+        local resolved_image
+        resolved_image=$(_ensure_docker_setup_image) || return 1
+        local IMAGE="$resolved_image"
         _ensure_image_tar "$IMAGE" || return 1
         local snippet
         snippet=$(_run_in_container "$gpu" "$workdir" "$remote_prog")

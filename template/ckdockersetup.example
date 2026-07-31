@@ -1,0 +1,18 @@
+# DOCKER_SETUP_CMD for bin/ckCommon: a one-time, root-privileged setup step
+# baked into a derived image via `docker commit` (see _ensure_docker_setup_image
+# in bin/ckCommon), run once per unique (IMAGE, DOCKER_SETUP_CMD) pair and
+# cached forever after under a content-addressed tag.
+#
+# Copy to ~/.config/ckdockersetup (or point DOCKER_SETUP_CMD_FILE elsewhere)
+# to enable. Missing file (the default): no derived image, no-op.
+#
+# Below: the rocm[devel,profiler] install this repo's default pytorch IMAGE
+# (rocm/pytorch:rocm7.14_ubuntu26.04_py3.14_pytorch_release_2.12.0) needs.
+# PYVER/ROCM_VER are read from the image itself, not hardcoded, so the same
+# command works if IMAGE is overridden to a compatible image.
+source /opt/venv/bin/activate
+PYVER=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
+ROCM_VER=$(cat /opt/rocm/.info/version)
+python3 -m pip install --index-url https://repo.amd.com/rocm/whl-multi-arch/ "rocm[devel,profiler]==$ROCM_VER"
+rocm-sdk init
+ln -sfn /opt/venv/lib/python$PYVER/site-packages/_rocm_sdk_devel /opt/rocm
