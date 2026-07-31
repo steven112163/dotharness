@@ -35,7 +35,8 @@ lib/                   → internal libraries, symlinked to ~/lib/
 tests/                 → bats + pytest suites                              (tests/README.md)
 third-party/
   mattpocock-skills/   → git submodule (engineering + productivity skills)
-template/              → templates for plan/implementation-notes/test-notes docs
+template/              → templates for plan/implementation-notes/test-notes docs, and copyable
+                         config (ckremote.example, ckdockersetup.example)
 statusline.sh          → compact status line, symlinked to ~/.claude/
 gitignore_global       → global git ignore patterns, symlinked to ~/.gitignore_global
 setup.sh               → symlinks, hooks, output style, plugins, pre-commit provisioning

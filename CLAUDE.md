@@ -146,6 +146,9 @@ Symlinked into `~/lib/` by `setup.sh`. Not on PATH — imported programmatically
   `plan.md`, `implementation-notes.md`, `test-notes.md`. Real, per-task files go in `plans/` and
   `notes/` (both gitignored, local-only) as `<date>-<slug>.md`. Plan first and get it reviewed,
   then log implementation deviations and test notes as work happens, not retroactively.
+- `template/` also holds copyable config: `ckremote.example` (`~/.config/ckremote`, server list)
+  and `ckdockersetup.example` (`~/.config/ckdockersetup`, `DOCKER_SETUP_CMD` for `ckCommon`'s
+  one-time docker-commit setup step).
 
 ## graphify
 

@@ -9,7 +9,7 @@ Internal Python libs and data files live in `lib/ck-profile/` — see `../lib/ck
 - **ckRun** — run a command on a GPU inside the CK image. Under `srun`, overlaps into a running `ckHold` allocation for instant dispatch; falls back to a fresh GPU job.
 - **ckHold** — hold one persistent GPU allocation on Slurm (`sleep infinity` batch job) so `ckRun` calls land instantly. `start` / `status` / `stop`.
 - **ckRemote** — drive remote CK work from a local checkout. Rsyncs source, picks the first reachable/capable server from `~/.config/ckremote`, runs the `ck*` command over SSH. `ckRemote pull` rsyncs `ck_profile_out/` back locally after profiling.
-- **ckCommon** — sourced by `ckBuild`/`ckRun`/`ckHold`/`dockerRun`; not executed directly. Defines cluster defaults, docker-flag assembly, LDAP/SSSD account files, GPU-holder dispatch, and `srun` node-exclude retry.
+- **ckCommon** — sourced by `ckBuild`/`ckRun`/`ckHold`/`dockerRun`; not executed directly. Defines cluster defaults, docker-flag assembly, LDAP/SSSD account files, GPU-holder dispatch, `srun` node-exclude retry, and an optional one-time `DOCKER_SETUP_CMD` root setup step baked into a derived image via `docker commit` (see `template/ckdockersetup.example`).
 - **ckExec** — sourced by all `ck*Profile` scripts; not executed directly. Provides `arch_from_container()`, and sets `LIB_DIR` pointing at `lib/ck-profile/`. Generic dispatch (direct/docker/srun) lives in `ckCommon` via `_dispatch_build_like`/`_dispatch_run_like`.
 
 ## Composable Kernel profiling
