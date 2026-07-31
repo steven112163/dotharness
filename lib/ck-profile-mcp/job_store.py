@@ -40,7 +40,7 @@ MODES = MappingProxyType(
             "output_dir": "cfg",
             "emits_summary": False,
         },
-        "ckRunProfile": {
+        "ckDynamicProfile": {
             "timeout_s": 60 * 60,
             "output_dir": "dynamic",
             "emits_summary": True,

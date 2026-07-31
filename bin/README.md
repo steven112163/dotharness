@@ -17,11 +17,11 @@ Internal Python libs and data files live in `lib/ck-profile/` — see `../lib/ck
 All profiling binaries follow the same CLI style as `ckBuild build`/`ckRun`: `REPO` auto-detected from git, `--arch gfx942`, positional binary/target. Invoke via `ckRemote --no-sync <cmd> --arch gfx942 <bin>`.
 
 - **ckStaticProfile** — compile-time resource analysis (`-Rpass-analysis=kernel-resource-usage`). Accepts `<target>` (CMake target name). No GPU run; CPU-only srun fallback on Slurm.
-- **ckRunProfile** — dynamic profiling with rocprofv3 (kernel trace + PMC multipass). Accepts `<bin>`, `--sweep <flag>=<v1,v2,...>`, `--nruns N`, `--base-args`. Writes each run to an immutable `ck_profile_out/dynamic/runs/<timestamp>/`, repoints `dynamic/latest` at it, and auto-invokes `ckAggregate` at the end of the run.
-- **ckTraceProfile** — rocprofv3 `--sys-trace` → perfetto `.pftrace` + offline HTML timeline. Same sweep/nruns flags as `ckRunProfile`. `--no-pc-sampling` to skip PC sampling.
+- **ckDynamicProfile** — dynamic profiling with rocprofv3 (kernel trace + PMC multipass). Accepts `<bin>`, `--sweep <flag>=<v1,v2,...>`, `--nruns N`, `--base-args`. Writes each run to an immutable `ck_profile_out/dynamic/runs/<timestamp>/`, repoints `dynamic/latest` at it, and auto-invokes `ckAggregate` at the end of the run.
+- **ckTraceProfile** — rocprofv3 `--sys-trace` → perfetto `.pftrace` + offline HTML timeline. Same sweep/nruns flags as `ckDynamicProfile`. `--no-pc-sampling` to skip PC sampling.
 - **ckCfgProfile** — ISA CFG as Graphviz DOT via `llvm-objdump`. No GPU run.
 - **ckComputeProfile** — deep microarchitecture analysis with rocprof-compute. Accepts `--workload <name>`. Installs (and repairs if broken) `rocprof-compute` itself via pip into a persistent venv at `$HOME/rocprof-compute-venv` — no image pre-bake needed.
-- **ckAggregate** — aggregate raw rocprofv3 output from `ckRunProfile` into a summary report (markdown + HTML + CSV + JSON). Run automatically by `ckRunProfile`; re-run manually (e.g. after `ckRemote pull`, or with different `--arch`/`--peak-gbs`) to re-aggregate existing raw output. `summary.json` carries a `schema_version` field for downstream consumers (e.g. the planned MCP server's `get_summary` tool).
+- **ckAggregate** — aggregate raw rocprofv3 output from `ckDynamicProfile` into a summary report (markdown + HTML + CSV + JSON). Run automatically by `ckDynamicProfile`; re-run manually (e.g. after `ckRemote pull`, or with different `--arch`/`--peak-gbs`) to re-aggregate existing raw output. `summary.json` carries a `schema_version` field for downstream consumers (e.g. the planned MCP server's `get_summary` tool).
 - **ckDepgraph** — emit kernel dependency graphs as Graphviz DOT (logical data-dependency DAG and runtime dispatch graph from a kernel trace CSV).
 
 ## Other

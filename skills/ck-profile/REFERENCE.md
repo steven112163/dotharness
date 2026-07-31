@@ -665,7 +665,7 @@ shells out to `ckRemote` exactly as a human would; no remote-side changes.
 Tools:
 
 - `run_profile(mode, arch, target, repo, server?)` — starts one of `ckStaticProfile`
-  `ckRunProfile`, `ckTraceProfile`, `ckCfgProfile`, `ckComputeProfile` as a background
+  `ckDynamicProfile`, `ckTraceProfile`, `ckCfgProfile`, `ckComputeProfile` as a background
   job and returns a `job_id`. `repo` must be a CK project root (has both
   `script/cmake-ck-dev.sh` and `CMakeLists.txt`); `server`, if omitted, is
   auto-selected the same way `ckRemote` would. Rejected outright (no queue) if the
@@ -675,7 +675,7 @@ Tools:
   `pull_failed` means it succeeded but `ckRemote pull` failed; `timeout` is
   mode-aware (10 min for static/cfg, 1 hour for run/trace/compute).
 - `get_summary(job_id)` — reads `summary.json` for a finished job. Only
-  `ckRunProfile` (dynamic mode) currently emits one; other modes raise, pointing at
+  `ckDynamicProfile` (dynamic mode) currently emits one; other modes raise, pointing at
   the HTML/MD report to read instead.
 
 `compare_runs`/`list_runs` are not implemented yet — read successive `runs/<id>/`

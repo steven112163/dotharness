@@ -47,7 +47,7 @@ added.
 
 ## Measured occupancy sample (`dynamic/*/summary.json`'s `occ_sample`)
 
-`ckRunProfile` joins its own run with a sibling `compute/latest/` run (if one exists
+`ckDynamicProfile` joins its own run with a sibling `compute/latest/` run (if one exists
 for the same binary, matched by basename) and adds an `occ_sample` block to
 `summary.{json,html,md}`: the *top kernel by time*'s measured VGPR/AGPR/SGPR/LDS/
 wavefronts from rocprof-compute's Launch Stats panel, next to the arch's

@@ -4,7 +4,7 @@ set -euo pipefail
 # Runtime-profile a CK binary with rocprofv3: kernel trace (runtime + static
 # resources) and PMC multipass (L2 hit ratio, HBM fetch/write, occupancy, VALU).
 #
-#   ckRunProfile [--arch gfx...] [--sweep <flag>=<v1,v2,...>] [--nruns N]
+#   ckDynamicProfile [--arch gfx...] [--sweep <flag>=<v1,v2,...>] [--nruns N]
 #                    [--base-args <args>] <bin>
 #
 # <bin> is a path to the binary, either absolute or relative to REPO.

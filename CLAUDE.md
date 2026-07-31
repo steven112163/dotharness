@@ -118,7 +118,7 @@ All files symlinked into `~/bin/` and available on PATH from any repo.
 
 **CK build/run:** `ckBuild`, `ckRun`, `ckHold`, `ckRemote`, `ckCommon`, `ckExec`, `dockerRun`. Always invoke via `ckRemote` from a local dev machine (no local GPU/Docker). `ckRemote pull` rsyncs `ck_profile_out/` back locally after profiling.
 
-**CK profiling:** `ckStaticProfile`, `ckRunProfile`, `ckTraceProfile`, `ckCfgProfile`, `ckComputeProfile`. Same CLI style as `ckBuild`/`ckRun`: `REPO` auto-detected from git, `--arch gfx942`, positional binary/target. `ckExec` (sourced internally) auto-detects `srun`/`docker` backend and sets `LIB_DIR` pointing at `lib/ck-profile/`.
+**CK profiling:** `ckStaticProfile`, `ckDynamicProfile`, `ckTraceProfile`, `ckCfgProfile`, `ckComputeProfile`. Same CLI style as `ckBuild`/`ckRun`: `REPO` auto-detected from git, `--arch gfx942`, positional binary/target. `ckExec` (sourced internally) auto-detects `srun`/`docker` backend and sets `LIB_DIR` pointing at `lib/ck-profile/`.
 
 **CK post-processing:** `ckAggregate` (aggregate rocprofv3 raw output into summary), `ckDepgraph` (kernel dependency graphs as Graphviz DOT). Run locally after `ckRemote pull`.
 

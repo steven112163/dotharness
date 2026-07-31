@@ -19,6 +19,6 @@ any repo on the host.
 
 ## Data files
 
-- **counters.txt** — rocprofv3 PMC counter list for `ckRunProfile`.
+- **counters.txt** — rocprofv3 PMC counter list for `ckDynamicProfile`.
 - **git_exclude_outdir.sh** — adds `ck_profile_out/` to `.git/info/exclude` (idempotent, worktree-correct). Called by all `ck*Profile` scripts.
 - **profile_readme.md** — README written to `ck_profile_out/README.md` when any profile run starts.

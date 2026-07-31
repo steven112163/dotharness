@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Aggregate rocprofv3 trace + PMC output produced by ckRunProfile.
+"""Aggregate rocprofv3 trace + PMC output produced by ckDynamicProfile.
 
 Counter-set agnostic: it scans every pmc_*/p_counter_collection.csv, so adding
 or removing lines in counters.txt does not require editing this script. Every

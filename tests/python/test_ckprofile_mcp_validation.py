@@ -7,7 +7,7 @@ import validation
 
 
 def test_validate_mode_accepts_known_mode():
-    assert validation.validate_mode("ckRunProfile") == "ckRunProfile"
+    assert validation.validate_mode("ckDynamicProfile") == "ckDynamicProfile"
 
 
 def test_validate_mode_rejects_unknown_mode():

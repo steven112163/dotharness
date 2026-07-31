@@ -235,7 +235,7 @@ def get_job_status(job_id: str) -> dict:
 
 @mcp.tool()
 def get_summary(job_id: str) -> dict:
-    """Read summary.json for a finished job. Only ckRunProfile emits one; other modes raise."""
+    """Read summary.json for a finished job. Only ckDynamicProfile emits one; other modes raise."""
     validation.validate_job_id(job_id)
     status = _store.get_status(job_id)
     mode_info = job_store.MODES[status["mode"]]

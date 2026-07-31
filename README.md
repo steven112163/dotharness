@@ -13,7 +13,7 @@ Everything lives here and is symlinked outward:
 | `agents/` | `~/.claude/agents/` | Subagent worker roles |
 | `hooks/` | `~/.claude/hooks/` | Lifecycle scripts (PreToolUse, SessionStart, …) |
 | `output-styles/` | `~/.claude/output-styles/` | Voice/format presets |
-| `bin/` | `~/bin/` (on PATH) | CLI commands (`ckBuild`, `ckRunProfile`, `llm`, …) |
+| `bin/` | `~/bin/` (on PATH) | CLI commands (`ckBuild`, `ckDynamicProfile`, `llm`, …) |
 | `lib/` | `~/lib/` | Internal libraries imported by `bin/` scripts |
 | `gitignore_global` | `~/.gitignore_global` | Git ignore patterns applied to every repo via `core.excludesFile` |
 
