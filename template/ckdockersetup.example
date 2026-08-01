@@ -6,6 +6,9 @@
 # Copy to ~/.config/ckdockersetup (or point DOCKER_SETUP_CMD_FILE elsewhere)
 # to enable. Missing file (the default): no derived image, no-op.
 #
+# Runs as plaintext argv (visible via `ps`/`docker inspect` on this host while
+# the setup container runs) — do not embed credentials on a shared host.
+#
 # Derived images are never auto-pruned (each IMAGE/DOCKER_SETUP_CMD pair adds
 # one, tens of GB apiece). `docker images | grep '^<sanitized-image>-'` then
 # `docker rmi` stale ones manually if disk space becomes an issue.

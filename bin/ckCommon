@@ -29,12 +29,14 @@ CCACHE_DIR=${CCACHE_DIR:-$HOME/.cache/ckBuild-ccache}
 DOCKER_SETUP_CMD_FILE=${DOCKER_SETUP_CMD_FILE:-$HOME/.config/ckdockersetup}
 # `-` not `:-`: only an unset var reads the file; explicit "" opts out even
 # if the file exists. Unreadable-but-present (perms, dir, dangling symlink)
-# is misconfigured, not "unconfigured" — cat's own exit status catches all
-# three. On failure, unset both _CKCOMMON_SOURCED (so a swallowed failure can
-# re-source after the fix) and DOCKER_SETUP_CMD (cat already assigned "" —
-# left set, a retry would wrongly treat that as a deliberate empty opt-out).
+# is misconfigured, not "unconfigured". `-e` alone follows symlinks and misses
+# a dangling one, so `-L` covers that case too — cat's own exit status then
+# reports the real failure for all three. On failure, unset both
+# _CKCOMMON_SOURCED (so a swallowed failure can re-source after the fix) and
+# DOCKER_SETUP_CMD (cat already assigned "" — left set, a retry would wrongly
+# treat that as a deliberate empty opt-out).
 if [ -z "${DOCKER_SETUP_CMD+x}" ]; then
-    if [ -e "$DOCKER_SETUP_CMD_FILE" ]; then
+    if [ -e "$DOCKER_SETUP_CMD_FILE" ] || [ -L "$DOCKER_SETUP_CMD_FILE" ]; then
         DOCKER_SETUP_CMD=$(cat "$DOCKER_SETUP_CMD_FILE" 2>/dev/null) || {
             echo "ERROR: $DOCKER_SETUP_CMD_FILE exists but could not be read." >&2
             unset _CKCOMMON_SOURCED DOCKER_SETUP_CMD
@@ -84,10 +86,20 @@ _gres_for_arch() {
     esac
 }
 
+# Lowercase and strip everything outside [a-z0-9_.-] (docker requires
+# lowercase repo names; a digest-pinned "repo@sha256:.." or an LDAP-style
+# $USER would otherwise keep an invalid '@'). Shared by _sanitized_image_tag
+# and _docker_setup_image_tag's $USER component.
+_sanitize_docker_name() {
+    # printf, not echo: tr -c also translates the trailing newline echo would
+    # add (nothing in its SET1), corrupting it into a literal '_'.
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_.-' '_'
+}
+
 # Turn an image ref into a filename-safe tarball basename. The single source of
 # truth shared by save (login) and load (node) so the paths always agree.
 _sanitized_image_tag() {
-    echo "${1:-$IMAGE}" | tr '/:' '__'
+    _sanitize_docker_name "${1:-$IMAGE}"
 }
 
 # On the controlling host: save the image to $IMAGE_DIR/<tag>.tar if absent.
@@ -119,21 +131,30 @@ _ensure_image_tar() {
     mv -f "$tmp" "$tar"
 }
 
+# Resolve $IMAGE to its content digest, pulling it first if not yet present
+# locally — so the first call on a cold host hashes the same digest as every
+# later call, instead of racing an unpulled-name vs. pulled-digest split (the
+# old cause of a double build). Falls back to the raw IMAGE string if
+# resolution still fails after the pull attempt (only catches IMAGE already
+# re-pulled between builds, not a stale local rolling tag).
+_resolve_image_id() {
+    local image_id
+    if image_id=$(docker image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null); then
+        echo "$image_id"
+        return 0
+    fi
+    echo "Pulling $IMAGE (resolving digest for the setup-image cache key) ..." >&2
+    docker pull -q "$IMAGE" >/dev/null 2>&1 ||
+        echo "WARNING: docker pull '$IMAGE' failed; setup-image cache key may be unstable." >&2
+    docker image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null || echo "$IMAGE"
+}
+
 # Content-addressed, $USER-scoped tag for the DOCKER_SETUP_CMD-derived image.
-# Hashes the resolved digest (pulling first if absent, so every call this
-# invocation hashes the same digest instead of racing an unpulled-name vs.
-# pulled-digest split — the old cause of a double build on cold hosts) plus
-# DOCKER_SETUP_CMD. Only catches IMAGE already re-pulled between builds, not
-# a stale local rolling tag. $USER lowercased (docker repo names require it);
 # 12 hex chars of sha256 is ample for a per-user cache.
 _docker_setup_image_tag() {
-    local hash image_id
-    if ! image_id=$(docker image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null); then
-        docker pull -q "$IMAGE" >/dev/null 2>&1 || true
-        image_id=$(docker image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null) || image_id="$IMAGE"
-    fi
-    hash=$(printf '%s|%s' "$image_id" "$DOCKER_SETUP_CMD" | sha256sum | cut -c1-12)
-    echo "$(_sanitized_image_tag "$IMAGE")-${USER,,}-$hash"
+    local hash
+    hash=$(printf '%s|%s' "$(_resolve_image_id)" "$DOCKER_SETUP_CMD" | sha256sum | cut -c1-12)
+    echo "$(_sanitized_image_tag "$IMAGE")-$(_sanitize_docker_name "$USER")-$hash"
 }
 
 # Echo the image to dispatch: $IMAGE unchanged if DOCKER_SETUP_CMD is empty,
@@ -174,14 +195,18 @@ _ensure_docker_setup_image() {
     # tag. -euo pipefail: a multi-statement DOCKER_SETUP_CMD only reports the
     # *last* command's exit status by default; this makes any failing command
     # abort the whole script instead of a partial setup getting cached as success.
-    if ! docker run -u 0 --name "$container" "$IMAGE" bash -euo pipefail -c "$DOCKER_SETUP_CMD" >&2; then
+    # --entrypoint bash: a custom-entrypoint IMAGE would otherwise receive
+    # "bash -euo pipefail -c CMD" as entrypoint args instead of executing it.
+    if ! docker run -u 0 --name "$container" --entrypoint bash "$IMAGE" -euo pipefail -c "$DOCKER_SETUP_CMD" >&2; then
         echo "ERROR: DOCKER_SETUP_CMD failed inside $IMAGE; derived image not built." >&2
-        docker rm -f "$container" >/dev/null 2>&1
+        docker rm -f "$container" >/dev/null 2>&1 ||
+            echo "WARNING: failed to remove setup container $container; remove it manually (docker rm -f $container)." >&2
         return 1
     fi
     if ! docker commit "$container" "$tag" >/dev/null; then
         echo "ERROR: docker commit failed for $tag; derived image not built." >&2
-        docker rm -f "$container" >/dev/null 2>&1
+        docker rm -f "$container" >/dev/null 2>&1 ||
+            echo "WARNING: failed to remove setup container $container; remove it manually (docker rm -f $container)." >&2
         return 1
     fi
     # The tag now exists, so a future call short-circuits on the cache-hit
@@ -256,10 +281,12 @@ _t=$(mktemp "$_gr.XXXXXX") && docker run --rm "$IMAGE" cat /etc/group >"$_t" && 
 # a WSL host's own user would otherwise be silently shadowed and whoami
 # would report "ubuntu" instead.
 if _pw_entry=$(getent passwd "$_u"); then
-    _t=$(mktemp "$_pw.XXXXXX") && awk -F: -v u="$_u" '$3!=u' "$_pw" >"$_t" && printf '%s\n' "$_pw_entry" >>"$_t" && mv -f "$_t" "$_pw"
+    _t=$(mktemp "$_pw.XXXXXX") && awk -F: -v u="$_u" '$3!=u' "$_pw" >"$_t" && printf '%s\n' "$_pw_entry" >>"$_t" && mv -f "$_t" "$_pw" ||
+        { rm -f "$_t"; echo "ckCommon: failed to update $_pw for uid $_u" >&2; }
 fi
 if _gr_entry=$(getent group "$_g"); then
-    _t=$(mktemp "$_gr.XXXXXX") && awk -F: -v g="$_g" '$3!=g' "$_gr" >"$_t" && printf '%s\n' "$_gr_entry" >>"$_t" && mv -f "$_t" "$_gr"
+    _t=$(mktemp "$_gr.XXXXXX") && awk -F: -v g="$_g" '$3!=g' "$_gr" >"$_t" && printf '%s\n' "$_gr_entry" >>"$_t" && mv -f "$_t" "$_gr" ||
+        { rm -f "$_t"; echo "ckCommon: failed to update $_gr for gid $_g" >&2; }
 fi
 _ACCT_FLAGS="-v $_pw:/etc/passwd:ro -v $_gr:/etc/group:ro"
 if [ "${_ACCT_GPU:-0}" -eq 1 ]; then
@@ -547,7 +574,10 @@ _resolve_arch_or_require() {
     direct) ARCH=$(eval "$_ARCH_PROBE_CMD" || true) ;;
     docker)
         local MODE=docker
-        ARCH=$(_dispatch_run_like 1 "$REPO" "$_ARCH_PROBE_CMD" 2>/dev/null || true)
+        # No 2>/dev/null: stderr isn't captured by $(...) anyway, and this is
+        # often the first call to trigger the (multi-minute) derived-image
+        # build, whose ERROR messages a caller needs to see on failure.
+        ARCH=$(_dispatch_run_like 1 "$REPO" "$_ARCH_PROBE_CMD" || true)
         ;;
     esac
     [ -z "$ARCH" ] && {

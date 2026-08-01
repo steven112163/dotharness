@@ -530,11 +530,55 @@ teardown() {
         IMAGE=test-image
         USER=Alice
         DOCKER_SETUP_CMD=cmd-a
-        docker() { return 1; }
+        docker() { echo 'sha256:fixed'; return 0; }
         _docker_setup_image_tag
     "
     [ "$status" -eq 0 ]
     [[ "$output" == "test-image-alice-"* ]]
+}
+
+@test "_docker_setup_image_tag strips invalid chars from an uppercase, digest-pinned IMAGE" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE='Repo/Name@sha256:deadbeef'
+        USER=alice
+        DOCKER_SETUP_CMD=cmd-a
+        docker() { echo 'sha256:fixed'; return 0; }
+        _docker_setup_image_tag
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == "repo_name_sha256_deadbeef-alice-"* ]]
+}
+
+@test "_docker_setup_image_tag strips invalid chars from an LDAP-style \$USER" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        USER='DOMAIN\\alice'
+        DOCKER_SETUP_CMD=cmd-a
+        docker() { echo 'sha256:fixed'; return 0; }
+        _docker_setup_image_tag
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == "test-image-domain_alice-"* ]]
+}
+
+@test "_resolve_image_id warns but still falls back to the raw IMAGE string when the pull fails" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        docker() {
+            case \"\$1\" in
+            image) return 1 ;;
+            pull) return 1 ;;
+            esac
+        }
+        _resolve_image_id
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Pulling test-image"* ]]
+    [[ "$output" == *"WARNING: docker pull 'test-image' failed"* ]]
+    [[ "$output" == *"test-image"* ]]
 }
 
 @test "_docker_setup_image_tag changes when the resolved image ID changes even though IMAGE/DOCKER_SETUP_CMD do not (rolling-tag safety)" {
@@ -692,6 +736,49 @@ teardown() {
     [[ "$output" == *"rm -f ck-setup-"* ]]
 }
 
+@test "_ensure_docker_setup_image warns instead of silently dropping a failed cleanup after DOCKER_SETUP_CMD itself fails" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD='echo setup'
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        docker() {
+            case \"\$1\" in
+            image) return 1 ;;
+            container) return 1 ;;
+            run) return 1 ;;
+            rm) return 1 ;;
+            esac
+        }
+        _ensure_docker_setup_image
+    "
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"DOCKER_SETUP_CMD failed inside test-image"* ]]
+    [[ "$output" == *"WARNING: failed to remove setup container"* ]]
+}
+
+@test "_ensure_docker_setup_image warns instead of silently dropping a failed cleanup after docker commit fails" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD='echo setup'
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        docker() {
+            case \"\$1\" in
+            image) return 1 ;;
+            container) return 1 ;;
+            run) return 0 ;;
+            commit) return 1 ;;
+            rm) return 1 ;;
+            esac
+        }
+        _ensure_docker_setup_image
+    "
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"docker commit failed for"* ]]
+    [[ "$output" == *"WARNING: failed to remove setup container"* ]]
+}
+
 @test "_ensure_docker_setup_image aborts and never commits when DOCKER_SETUP_CMD fails partway (bash -euo pipefail exercised for real)" {
     run bash -c "
         source '$CKCOMMON'
@@ -705,11 +792,12 @@ teardown() {
             case \"\$1\" in
             image) return 1 ;;
             run)
-                # Actually execute the trailing 'bash -euo pipefail -c CMD'
-                # (the last 5 args) instead of an unconditional stub return,
-                # so this exercises bash's real -e semantics: 'false' aborts
-                # the script before 'echo ok' ever runs.
-                \"\${@: -5}\"
+                # Actually execute the trailing '-euo pipefail -c CMD' (the
+                # last 4 args, after --entrypoint bash) via bash, instead of
+                # an unconditional stub return, so this exercises bash's real
+                # -e semantics: 'false' aborts the script before 'echo ok'
+                # ever runs.
+                bash \"\${@: -4}\"
                 ;;
             commit) echo 'ERROR: commit must not be called after a failed setup' >&2; return 1 ;;
             rm) return 0 ;;
@@ -721,9 +809,29 @@ teardown() {
         exit \$rc
     "
     [ "$status" -eq 1 ]
-    [[ "$output" == *"bash -euo pipefail -c false; echo ok"* ]]
+    [[ "$output" == *"--entrypoint bash test-image -euo pipefail -c false; echo ok"* ]]
     [[ "$output" == *"rm -f ck-setup-"* ]]
     [[ "$output" != *"commit ck-setup-"* ]]
+}
+
+@test "_ensure_docker_setup_image passes --entrypoint bash so a custom-entrypoint IMAGE still runs DOCKER_SETUP_CMD" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD='echo setup'
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        callfile='$TMPDIR_TEST/docker-calls'
+        : >\"\$callfile\"
+        docker() {
+            echo \"\$*\" >>\"\$callfile\"
+            [ \"\$1\" = image ] && return 1
+            return 0
+        }
+        _ensure_docker_setup_image >/dev/null
+        cat \"\$callfile\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--name ck-setup-"*" --entrypoint bash test-image -euo pipefail -c echo setup"* ]]
 }
 
 @test "_ensure_docker_setup_image removes a stale leftover container before building (self-heal)" {
@@ -904,6 +1012,32 @@ teardown() {
     [[ "$output" != *"ubuntu:x:$(id -g):"* ]]
 }
 
+@test "_ACCT_SETUP_SH warns instead of silently no-op'ing when the uid/gid merge fails partway" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        docker() {
+            case \"\${@: -1}\" in
+            /etc/passwd) printf 'root:x:0:0:root:/root:/bin/bash\nubuntu:x:%s:%s:Ubuntu:/home/ubuntu:/bin/bash\n' \"\$(id -u)\" \"\$(id -g)\" ;;
+            /etc/group) printf 'root:x:0:\nubuntu:x:%s:\n' \"\$(id -g)\" ;;
+            esac
+        }
+        awk() { return 1; }
+        _ACCT_GPU=0 _ACCT_FLAGS=''
+        eval \"\$_ACCT_SETUP_SH\"
+        cat \"\$ACCT_DIR/passwd-\$(id -u)\"
+        cat \"\$ACCT_DIR/group-\$(id -g)\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ckCommon: failed to update"*"passwd-$(id -u) for uid $(id -u)"* ]]
+    [[ "$output" == *"ckCommon: failed to update"*"group-$(id -g) for gid $(id -g)"* ]]
+    # The awk-based merge never landed: the image's own collision (\"ubuntu\"
+    # at our uid) is still there, unreplaced, since it failed rather than
+    # silently no-op'ing with a clean-looking but stale file.
+    [[ "$output" == *"ubuntu:x:$(id -u):$(id -g):"* ]]
+}
+
 @test "_ACCT_SETUP_SH appends the host's getent entry when the image has no user at that uid (regression, no collision)" {
     run bash -c "
         source '$CKCOMMON'
@@ -957,7 +1091,6 @@ teardown() {
         : >\"\$callfile\"
         docker() {
             echo \"\$*\" >>\"\$callfile\"
-            [ \"\$1\" = image ] && return 0
             return 0
         }
         _docker_run_local 0 /repo 'echo hi' >/dev/null
@@ -1085,6 +1218,19 @@ EOF
         _resolve_arch_or_require docker
     "
     [ "$status" -eq 1 ]
+    [[ "$output" == *"could not detect GPU arch"* ]]
+}
+
+@test "_resolve_arch_or_require on docker surfaces the probe's stderr instead of swallowing it (setup-image build errors)" {
+    run bash -c "
+        source '$CKCOMMON'
+        REPO=/repo
+        ARCH=''
+        _docker_run_local() { echo 'ERROR: DOCKER_SETUP_CMD failed inside test-image' >&2; return 1; }
+        _resolve_arch_or_require docker
+    "
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"ERROR: DOCKER_SETUP_CMD failed inside test-image"* ]]
     [[ "$output" == *"could not detect GPU arch"* ]]
 }
 
