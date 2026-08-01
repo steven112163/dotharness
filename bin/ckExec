@@ -1,15 +1,6 @@
 #!/usr/bin/env bash
-# Thin profiling-helpers layer for ck-profile scripts. SOURCED, not executed.
-#
-# Provides arch_from_container(), a thin wrapper around ckCommon's
-# _dispatch_run_like for GPU-arch detection. Generic job dispatch
-# (direct/docker/srun) is ckCommon's job: callers use _detect_backend +
-# _dispatch_run_like / _dispatch_build_like directly, not a mechanism
-# private to this file.
-#
-# Callers set before sourcing:
-#   REPO        absolute path to CK root (same on host and in container)
-#   IMAGE       docker image ref         (default: from ckCommon)
+# Thin profiling-helpers layer for ck-profile scripts (SOURCED, not executed).
+# Callers set REPO (CK root) and optionally IMAGE before sourcing.
 
 [ -n "${_CK_EXEC_SOURCED:-}" ] && return 0
 _CK_EXEC_SOURCED=1
@@ -31,27 +22,16 @@ _CKCOMMON=$(command -v ckCommon 2>/dev/null || echo "$HOME/bin/ckCommon")
 # shellcheck source=bin/ckCommon disable=SC1091
 source "$_CKCOMMON"
 
-# arch_from_container: detect GPU arch via a real GPU dispatch (run-like, since
-# this is used only in run-like contexts). MODE must already be set by the
-# caller (via _detect_backend); gpu=1 for real device passthrough.
+# Requires MODE already set by the caller (via _detect_backend); gpu=1 for real device passthrough.
 arch_from_container() {
     _dispatch_run_like 1 "$REPO" "$_ARCH_PROBE_CMD"
 }
 
-# Shared by the run-like profiling scripts (ckDynamicProfile/ckTraceProfile/
-# ckComputeProfile): dispatch shorthand for their repeated gpu=1/$REPO calls.
-# Reads REPO (dynamically scoped from the caller, as with arch_from_container).
+# Dispatch shorthand for ckDynamicProfile/ckTraceProfile/ckComputeProfile; reads REPO from caller's scope.
 dx() { _dispatch_run_like 1 "$REPO" "$1"; }
 
-# Kill a possibly-orphaned target binary after a crashed/stuck profiling pass
-# (rocprofv3 or rocprof-compute, both of which can run $BIN many times per
-# dispatch). MODE=direct runs with no container isolation, so an orphan can
-# survive past this script; docker/srun dispatch into a fresh --rm container
-# per pass, which already tears down orphans when the container's main
-# process exits. Matches on the literal "./$BIN" invocation (every caller
-# runs it that way from $REPO), not just the basename, to narrow the blast
-# radius on a bare host where pkill -f has no container/namespace boundary.
-# Reads MODE/BIN (dynamically scoped from the caller).
+# direct mode has no container isolation to reap a stuck $BIN, so kill it explicitly;
+# match literal "./$BIN" to limit pkill -f's blast radius on a bare host (no namespace).
 kill_orphans() {
     [ "$MODE" = direct ] || return 0
     pkill -9 -f "./$BIN" 2>/dev/null || true

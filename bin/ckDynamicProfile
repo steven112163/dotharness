@@ -2,19 +2,15 @@
 set -euo pipefail
 
 # Runtime-profile a CK binary with rocprofv3: kernel trace (runtime + static
-# resources) and PMC multipass (L2 hit ratio, HBM fetch/write, occupancy, VALU).
+# resources) plus PMC multipass (L2 hit ratio, HBM fetch/write, occupancy, VALU).
 #
 #   ckDynamicProfile [--arch gfx...] [--sweep <flag>=<v1,v2,...>] [--nruns N]
 #                    [--base-args <args>] <bin>
-#
-# <bin> is a path to the binary, either absolute or relative to REPO.
-# The default is build/bin/<last-path-component> if not a full path.
 
 SELF_DIR=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 
-# Profiles an already-built binary; doesn't compile, so it doesn't need
-# ckCommon's build-sized CPUS default (128). Set before sourcing ckExec (which
-# sources ckCommon) so this wins over that default.
+# Profiles (not compiles) an already-built binary, so skip ckCommon's build-sized
+# CPUS default (128); set before sourcing ckExec so this wins over that default.
 CPUS=${CPUS:-32}
 
 # shellcheck source=bin/ckExec disable=SC1091
@@ -136,11 +132,8 @@ else
     VARIANTS=("default")
 fi
 
-# Each run gets its own immutable runs/<id>/ dir (never rm -rf'd), so run history
-# survives; "latest" always points at the newest one. Skipped when the caller
-# overrides OUTDIR directly (a debug/custom-location escape hatch predating
-# versioning); that path is cleaned instead, so stale variant dirs from a prior
-# run don't leak in.
+# Each run gets its own immutable runs/<id>/ dir; "latest" points at the newest.
+# OUTDIR override skips versioning and wipes any prior contents there instead.
 RUNDIR=""
 if [ -z "$OUTDIR" ]; then
     RUN_ID=$(_new_run_dir "$MODE_DIR")
@@ -178,9 +171,8 @@ echo "Aggregating into summary.{html,md,csv,json} ..."
 SUMMARY_DIR=$(dirname "$OUTDIR")
 AGG_ARGS=(--raw "$OUTDIR" --out "$SUMMARY_DIR")
 [ -n "$ARCH" ] && AGG_ARGS+=(--arch "$ARCH")
-# Joins a sibling ckComputeProfile run by binary basename, for a measured
-# occupancy sample in summary.json; silently skipped if compute mode hasn't
-# been run for this repo yet (see profile_readme.md).
+# Joins a sibling ckComputeProfile run (by binary basename) for a measured occupancy
+# sample in summary.json; silently skipped if compute mode hasn't run yet.
 WORKLOAD=$(basename "$BIN")
 AGG_ARGS+=(--workload "$WORKLOAD")
 [ -d "$REPO/ck_profile_out/compute/latest" ] && AGG_ARGS+=(--compute-dir "$REPO/ck_profile_out/compute/latest")

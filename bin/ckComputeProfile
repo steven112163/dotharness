@@ -1,18 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Deep microarchitecture profiling with rocprof-compute: roofline + speed-of-light
-# + memory hierarchy panels. Installed via pip into a persistent,
-# shared-home-wide venv on first run (see VENV/flock below), so no image
-# pre-bake is required.
+# Deep microarch profiling via rocprof-compute (roofline, speed-of-light, memory
+# hierarchy). Installs into a persistent shared venv on first run (see VENV/flock below) — no image pre-bake.
 #
 #   ckComputeProfile [--arch gfx...] [--base-args <args>] [--workload <name>] <bin>
 
 SELF_DIR=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 
-# Profiles an already-built binary; doesn't compile, so it doesn't need
-# ckCommon's build-sized CPUS default (128). Set before sourcing ckExec (which
-# sources ckCommon) so this wins over that default.
+# Profiles (not compiles) an already-built binary, so skip ckCommon's build-sized
+# CPUS default (128); set before sourcing ckExec so this wins over that default.
 CPUS=${CPUS:-32}
 
 # shellcheck source=bin/ckExec disable=SC1091
@@ -106,9 +103,8 @@ MODE_DIR=$REPO/ck_profile_out/compute
 
 [ -n "$MODE" ] || MODE=$(_detect_backend run) || exit 1
 
-# srun dispatches from the login node (no GPU to probe), so the arch must be
-# given up front to map the GRES. direct/docker sit on a GPU host: fall back to
-# probing the container when --arch is not given.
+# srun has no GPU to probe (dispatches from login node), so arch must be given up
+# front to map GRES; direct/docker sit on a GPU host, so fall back to probing it.
 if [ "$MODE" = srun ]; then
     _require_arch_for_srun "$MODE" # already validates ARCH
 else
@@ -116,10 +112,8 @@ else
     [ -n "$ARCH" ] && { _validate_arch "$ARCH" || exit 1; }
 fi
 
-# Each run gets its own immutable runs/<id>/ dir (never rm -rf'd), so past
-# workload profiles/reports survive; "latest" always points at the newest
-# one. Skipped when the caller overrides OUTDIR directly (a debug/custom-
-# location escape hatch).
+# Each run gets its own immutable runs/<id>/ dir, so past profiles/reports survive;
+# "latest" points at the newest. Skipped when the caller overrides OUTDIR directly.
 RUN_ID=""
 if [ -z "$OUTDIR" ]; then
     RUN_ID=$(_new_run_dir "$MODE_DIR")
@@ -129,28 +123,18 @@ mkdir -p "$OUTDIR"
 cp "$LIB_DIR/profile_readme.md" "$REPO/ck_profile_out/README.md" 2>/dev/null || true
 bash "$LIB_DIR/git_exclude_outdir.sh" "$REPO" 2>/dev/null || true
 
-# $HOME is bind-mounted identically on every backend (ckCommon's
-# _docker_static_flags), so the venv persists across runs, repos, and run IDs
-# with no image pre-bake — but the shared path also means concurrent
-# invocations can race on it, so install runs under one flock covering
-# re-check + install (same pattern as ckCommon's _ACCT_SETUP_SH), always
-# wiping any partial venv first. VENV= overrides outside $HOME/$REPO aren't
-# bind-mounted on docker/srun, so they're rejected below.
+# $HOME is bind-mounted on every backend, so the venv persists across runs/repos
+# with no image pre-bake; concurrent runs race on it, so install acquires an flock first.
 ROCM_WHL_INDEX=${ROCM_WHL_INDEX:-https://repo.amd.com/rocm/whl-multi-arch/}
 VENV="${VENV:-$HOME/rocprof-compute-venv}"
-# realpath -s -m (not readlink -f): collapses "..", makes a relative override
-# absolute, but does not resolve symlinks. A symlinked $HOME must still compare
-# equal to the literal, unresolved path docker/srun bind-mount (ckCommon's
-# -v "$HOME:$HOME"); readlink -f would silently divert to the symlink's
-# target, a path the container never sees.
+# realpath -s -m, not readlink -f: collapses ".." without resolving symlinks, so a
+# symlinked $HOME still matches the literal bind-mount path (ckCommon's -v "$HOME:$HOME").
 VENV=$(realpath -s -m -- "$VENV") || {
     echo "ERROR: cannot resolve VENV path: $VENV" >&2
     exit 1
 }
-# Both named (not inline) so bats can exercise them directly. Basename guards
-# against a typo like VENV=$HOME wiping the caller's home directory; the root
-# check enforces the $HOME/$REPO constraint above before the rm -rf in the
-# dispatched heredoc below.
+# Named (not inline) so bats can exercise them directly. Basename guards against a
+# typo like VENV=$HOME wiping the home dir; root check enforces $HOME/$REPO before rm -rf.
 _venv_basename_ok() {
     case "$(basename -- "$1")" in
     rocprof-compute-venv*) return 0 ;;
@@ -181,10 +165,8 @@ LOCK_Q=$(printf '%q' "$LOCK")
 PYBIN_Q=$(printf '%q' "$VENV/bin/python")
 ROCM_WHL_INDEX_Q=$(printf '%q' "$ROCM_WHL_INDEX")
 
-# Install/repair template, dispatched via dx() to wherever the venv lives. A
-# quoted heredoc keeps every $VAR below literal here, so it expands once, in
-# the dispatched shell, once the prelude binds VENV/RPC/LOCK/PYBIN/
-# ROCM_WHL_INDEX — cf. ckCommon's _ACCT_SETUP_SH (same template-then-bind split).
+# Install/repair template dispatched via dx(). Quoted heredoc keeps $VARs literal here
+# so they expand once in the dispatched shell, after the prelude binds them (cf. ckCommon's _ACCT_SETUP_SH).
 read -r -d '' _ensure_rpc_tmpl <<'SH' || true
 exec {lock_fd}>"$LOCK" || { echo 'ERROR: cannot open venv lock file' >&2; exit 1; }
 flock -x "$lock_fd" || { echo 'ERROR: flock failed' >&2; exit 1; }
@@ -224,17 +206,9 @@ wl_dir="$RAW/$WORKLOAD"
 WORKLOAD_Q=$(printf '%q' "$WORKLOAD")
 wl_dir_Q=$(printf '%q' "$wl_dir")
 
-# Shared lock for the whole profile+analyze run: the install path above takes
-# this same lock exclusively before rm -rf'ing $VENV, so a concurrent
-# reinstall blocks here instead of racing an in-flight run. Verified for
-# direct/docker (same host); on srun, cross-node flock() propagation can't be
-# verified from source (REFERENCE.md fact #4) — ckRemote's with_server_lock
-# already serializes same-SERVER jobs in the documented ckRemote-only
-# workflow, so this is defense-in-depth there, not the primary guarantee.
-# Opened read-write (<>), not write-only (>): over NFS, flock()'s LOCK_SH is
-# emulated via POSIX locks and rejects a write-only fd with EBADF ("flock: N:
-# Bad file descriptor"), even though the LOCK_EX install lock above tolerates
-# write-only fine (a write lock needs no read access).
+# Shared with the install lock above so a reinstall can't race an in-flight run
+# (on srun the real guarantee is ckRemote's with_server_lock, not this flock).
+# Read-write (<>), not write-only: NFS rejects a write-only fd for flock's LOCK_SH.
 exec {venv_lock_fd}<>"$LOCK" || {
     echo "ERROR: cannot open venv lock file" >&2
     exit 1
@@ -243,9 +217,8 @@ flock -s "$venv_lock_fd" || {
     echo "ERROR: flock failed" >&2
     exit 1
 }
-# A concurrent reinstall could have wiped $VENV between the health check above
-# and this lock acquisition; re-check now so a broken venv fails clearly here
-# instead of surfacing as an opaque "profile exit: N" below.
+# A concurrent reinstall could wipe $VENV between the health check above and this
+# lock; re-check so a broken venv fails clearly here, not as opaque "profile exit: N".
 dx "test -x $RPC_Q && $RPC_Q --version >/dev/null 2>&1" || {
     echo "ERROR: rocprof-compute venv missing or broken after acquiring lock: $VENV" >&2
     exit 1

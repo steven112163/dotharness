@@ -9,9 +9,8 @@ set -euo pipefail
 
 SELF_DIR=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 
-# Profiles an already-built binary; doesn't compile, so it doesn't need
-# ckCommon's build-sized CPUS default (128). Set before sourcing ckExec (which
-# sources ckCommon) so this wins over that default.
+# Profiles (not compiles) an already-built binary, so skip ckCommon's build-sized
+# CPUS default (128); set before sourcing ckExec so this wins over that default.
 CPUS=${CPUS:-32}
 
 # shellcheck source=bin/ckExec disable=SC1091
@@ -128,11 +127,8 @@ MODE_DIR=$REPO/ck_profile_out/trace
 
 if [ -n "$SWEEP_VALS" ]; then IFS=',' read -ra VARIANTS <<<"$SWEEP_VALS"; else VARIANTS=("default"); fi
 
-# Each run gets its own immutable runs/<id>/ dir (never rm -rf'd), so trace
-# history survives; "latest" always points at the newest one. Skipped when the
-# caller overrides OUTDIR directly (a debug/custom-location escape hatch);
-# that path is cleaned instead, so stale variant dirs from a prior run don't
-# leak in.
+# Each run gets its own immutable runs/<id>/ dir; "latest" points at the newest.
+# OUTDIR override skips versioning and wipes any prior contents there instead.
 RUN_ID=""
 if [ -z "$OUTDIR" ]; then
     RUN_ID=$(_new_run_dir "$MODE_DIR")

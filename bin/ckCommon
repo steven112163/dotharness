@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Shared helpers for ckBuild and ckRun. SOURCED, not executed: defines functions
-# and cluster-wide defaults only, with no top-level side effects so callers keep
-# control of `set` options and exit behavior.
+# Shared helpers for ckBuild/ckRun. SOURCED, not executed — no top-level side
+# effects, so callers keep control of `set` options and exit behavior.
 
 # Idempotent: sourcing twice (e.g. via nested scripts) must not redefine or error.
 [ -n "${_CKCOMMON_SOURCED:-}" ] && return 0
@@ -22,19 +21,13 @@ IMAGE_DIR=${IMAGE_DIR:-$HOME/images}
 # ccache dir. The image defaults to /root/.cache/ccache, unwritable to the
 # --user uid; point it at writable shared home (also persists across srun nodes).
 CCACHE_DIR=${CCACHE_DIR:-$HOME/.cache/ckBuild-ccache}
-# One-time root-privileged setup command baked into a derived image via
-# docker commit (see _ensure_docker_setup_image). Read from a file, like
-# ckRemote's server config — see template/ckdockersetup.example. Missing
-# file (default) or explicit DOCKER_SETUP_CMD="": empty, no derived image.
+# Root-privileged setup baked into a derived image via docker commit (see
+# _ensure_docker_setup_image); file-based like ckRemote's config, see
+# template/ckdockersetup.example.
 DOCKER_SETUP_CMD_FILE=${DOCKER_SETUP_CMD_FILE:-$HOME/.config/ckdockersetup}
-# `-` not `:-`: only an unset var reads the file; explicit "" opts out even
-# if the file exists. Unreadable-but-present (perms, dir, dangling symlink)
-# is misconfigured, not "unconfigured". `-e` alone follows symlinks and misses
-# a dangling one, so `-L` covers that case too — cat's own exit status then
-# reports the real failure for all three. On failure, unset both
-# _CKCOMMON_SOURCED (so a swallowed failure can re-source after the fix) and
-# DOCKER_SETUP_CMD (cat already assigned "" — left set, a retry would wrongly
-# treat that as a deliberate empty opt-out).
+# `-` not `:-`: explicit "" opts out even if the file exists. `-e || -L`
+# catches a dangling symlink too, so cat's exit status reports the real
+# failure. On failure, unset both vars so a fixed-and-retried source re-reads.
 if [ -z "${DOCKER_SETUP_CMD+x}" ]; then
     if [ -e "$DOCKER_SETUP_CMD_FILE" ] || [ -L "$DOCKER_SETUP_CMD_FILE" ]; then
         DOCKER_SETUP_CMD=$(cat "$DOCKER_SETUP_CMD_FILE" 2>/dev/null) || {
@@ -53,12 +46,9 @@ ACCT_DIR=${ACCT_DIR:-$HOME/.cache/ckCommon}
 # ckRun dispatches into it via `srun --jobid --overlap` (instant, no queue wait).
 HOLD_NAME=${HOLD_NAME:-ckhold-$USER}
 
-# Echo the auto-detected backend (direct|docker|srun) for the current host, or
-# return 1 with a message if none. srun first (via scontrol ping, not command -v
-# srun — the binary may exist on non-Slurm hosts) so a login node dispatches
-# rather than building locally; /.dockerenv before docker so an in-container run is not
-# re-wrapped. $1: noun for the error message ("build" or "run"). Called in $(...),
-# so it must return (not exit) on failure; the caller turns that into an exit.
+# Echoes direct|docker|srun, or returns 1 (not exit — called via $(...)) with
+# a message. scontrol ping (not `command -v`) avoids false positives on
+# non-Slurm hosts; /.dockerenv is checked before docker to skip re-wrapping.
 _detect_backend() {
     if scontrol ping >/dev/null 2>&1; then
         echo srun
@@ -86,10 +76,8 @@ _gres_for_arch() {
     esac
 }
 
-# Lowercase and strip everything outside [a-z0-9_.-] (docker requires
-# lowercase repo names; a digest-pinned "repo@sha256:.." or an LDAP-style
-# $USER would otherwise keep an invalid '@'). Shared by _sanitized_image_tag
-# and _docker_setup_image_tag's $USER component.
+# Lowercase + strip everything outside [a-z0-9_.-] (docker needs lowercase
+# names; a digest-pinned "repo@sha256:.." or LDAP $USER would keep an invalid '@').
 _sanitize_docker_name() {
     # printf, not echo: tr -c also translates the trailing newline echo would
     # add (nothing in its SET1), corrupting it into a literal '_'.
@@ -131,12 +119,9 @@ _ensure_image_tar() {
     mv -f "$tmp" "$tar"
 }
 
-# Resolve $IMAGE to its content digest, pulling it first if not yet present
-# locally — so the first call on a cold host hashes the same digest as every
-# later call, instead of racing an unpulled-name vs. pulled-digest split (the
-# old cause of a double build). Falls back to the raw IMAGE string if
-# resolution still fails after the pull attempt (only catches IMAGE already
-# re-pulled between builds, not a stale local rolling tag).
+# Resolve $IMAGE's digest, pulling first if absent, so every call hashes the
+# same digest instead of racing an implicit pull (previously caused a double
+# build). Falls back to the raw IMAGE string if resolution still fails.
 _resolve_image_id() {
     local image_id
     if image_id=$(docker image inspect --format '{{.Id}}' "$IMAGE" 2>/dev/null); then
@@ -157,21 +142,17 @@ _docker_setup_image_tag() {
     echo "$(_sanitized_image_tag "$IMAGE")-$(_sanitize_docker_name "$USER")-$hash"
 }
 
-# Shared cleanup for the setup container used by all three failure/success
-# paths in _ensure_docker_setup_image, so the warning text can't drift across
-# copies.
+# Shared cleanup for the setup container (all 3 failure/success paths in
+# _ensure_docker_setup_image) so the warning text can't drift across copies.
 _warn_rm_setup_container() {
     docker rm -f "$1" >/dev/null 2>&1 ||
         echo "WARNING: failed to remove setup container $1; remove it manually (docker rm -f $1)." >&2
 }
 
 # Echo the image to dispatch: $IMAGE unchanged if DOCKER_SETUP_CMD is empty,
-# else the docker-commit derived tag (built once per (IMAGE, DOCKER_SETUP_CMD)
-# pair, reused thereafter). flock serializes concurrent builds of a missing
-# tag; the fd is scoped to this function's $(...) subshell.
-# NOTE: the fast cache-hit path still resolves $IMAGE's digest (see
-# _resolve_image_id) to compute $tag, so it re-pulls if $IMAGE is later
-# removed locally even though the derived $tag is already cached.
+# else the flock-serialized, cached docker-commit derived tag. NOTE: the
+# cache-hit path still re-resolves $IMAGE's digest, so it re-pulls if $IMAGE
+# is later removed locally even though $tag is already cached.
 _ensure_docker_setup_image() {
     [ -z "$DOCKER_SETUP_CMD" ] && {
         echo "$IMAGE"
@@ -187,12 +168,9 @@ _ensure_docker_setup_image() {
         return 0
     fi
     echo "Building derived image $tag (running DOCKER_SETUP_CMD once) ..." >&2
-    # Tag-scoped name (not bare $$, reusable across a killed PID): remove any
-    # stale leftover so a prior killed attempt can't collide with "name
-    # already in use". Only remove a container that actually exists; a real
-    # removal failure aborts here with a specific message instead of
-    # surfacing later as a misleading "DOCKER_SETUP_CMD failed" from docker
-    # run's name collision.
+    # Tag-scoped name (not bare $$, reusable after a kill): remove a stale
+    # leftover first so it can't collide; a real removal failure aborts here
+    # with a specific message instead of a misleading "DOCKER_SETUP_CMD failed".
     container="ck-setup-$tag"
     if docker container inspect "$container" >/dev/null 2>&1; then
         docker rm -f "$container" >/dev/null 2>&1 || {
@@ -200,26 +178,20 @@ _ensure_docker_setup_image() {
             return 1
         }
     fi
-    # >&2: docker run streams the container's own stdout back here, and this
-    # function's result is captured via $(...) — any of DOCKER_SETUP_CMD's own
-    # stdout (e.g. pip/rocm-sdk output) would otherwise land in the captured
-    # tag. -euo pipefail: a multi-statement DOCKER_SETUP_CMD only reports the
-    # *last* command's exit status by default; this makes any failing command
-    # abort the whole script instead of a partial setup getting cached as success.
-    # --entrypoint bash: a custom-entrypoint IMAGE would otherwise receive
-    # "bash -euo pipefail -c CMD" as entrypoint args instead of executing it.
+    # >&2: this function's result is captured via $(...); DOCKER_SETUP_CMD's
+    # own stdout must not land in the captured tag. -euo pipefail: without it
+    # only the *last* command's exit status counts, letting a partial setup
+    # get cached as success. --entrypoint bash: a custom-entrypoint IMAGE would
+    # otherwise get this as entrypoint args instead of executing it.
     if ! docker run -u 0 --name "$container" --entrypoint bash "$IMAGE" -euo pipefail -c "$DOCKER_SETUP_CMD" >&2; then
         echo "ERROR: DOCKER_SETUP_CMD failed inside $IMAGE; derived image not built." >&2
         _warn_rm_setup_container "$container"
         return 1
     fi
-    # docker commit inherits the container's *runtime* config verbatim, which
-    # would otherwise permanently bake this container's --entrypoint bash
-    # override into $tag and break every later real dispatch (dispatch runs
-    # plain "bash -c ..." with no --entrypoint, expecting $IMAGE's own
-    # entrypoint/cmd). Restore $IMAGE's original values instead. By this point
-    # docker run above has already resolved/pulled $IMAGE, so this inspect
-    # cannot fail.
+    # docker commit inherits the container's runtime config verbatim, which
+    # would otherwise bake this --entrypoint bash override into $tag and break
+    # every later dispatch. Restore $IMAGE's original values; by now docker run
+    # has already resolved $IMAGE, so this inspect cannot fail.
     local orig_entrypoint orig_cmd
     orig_entrypoint=$(docker image inspect --format '{{json .Config.Entrypoint}}' "$IMAGE")
     orig_cmd=$(docker image inspect --format '{{json .Config.Cmd}}' "$IMAGE")
@@ -231,59 +203,49 @@ _ensure_docker_setup_image() {
         _warn_rm_setup_container "$container"
         return 1
     fi
-    # The tag now exists, so a future call short-circuits on the cache-hit
-    # check above and never retries this cleanup: a failure here permanently
-    # leaks the (large) stopped container, so warn rather than silently drop it.
+    # The tag now exists, so a future call short-circuits above and never
+    # retries this cleanup: warn (don't silently drop) a failure here.
     _warn_rm_setup_container "$container"
     echo "$tag"
 }
 
-# Build the STATIC docker run flags into the global array DOCKER_FLAGS. These are
-# identical on every node (shared home, shared identity), so the srun path can
-# serialize them with printf %q and replay them node-side. Per-host flags (the
-# account-file binds and GPU group-adds) are added separately by _ACCT_SETUP_SH,
-# which must run where docker runs. $1: 1 to expose the GPU, 0 for CPU-only.
-# $2: the in-container working directory.
+# Build the STATIC docker run flags (global DOCKER_FLAGS): identical on every
+# node, so srun can serialize with printf %q and replay node-side. Per-host
+# flags (account binds, GPU group-adds) come from _ACCT_SETUP_SH. $1: 1 to
+# expose GPU, 0 CPU-only. $2: in-container workdir.
 _docker_static_flags() {
     local gpu="$1" workdir="$2"
-    # Create the ccache dir on the host so the bind-mount target exists and is
-    # owned by the user (docker would otherwise create it root-owned).
+    # Host-side dir must exist and be user-owned before the bind-mount (docker
+    # would otherwise create it root-owned).
     mkdir -p "$CCACHE_DIR"
     # --user keeps repo artifacts owned by the caller, not root.
     DOCKER_FLAGS=(
         --rm
         --user "$(id -u):$(id -g)"
-        # $HOME (not just $REPO): dockerRun's old persistent dev container
-        # mounted all of $HOME, and dispatched programs reference absolute
-        # $HOME-relative paths (e.g. $LIB_DIR under ~/lib/ck-profile) that
-        # must resolve identically inside the container.
+        # Dispatched programs reference absolute $HOME-relative paths (e.g.
+        # $LIB_DIR under ~/lib/ck-profile) that must resolve inside the container.
         -v "$HOME:$HOME"
-        # Same repo path inside and out: CK bakes absolute paths and the repo
+        # Same repo path inside and out: CK bakes absolute paths, and the repo
         # lives at an identical path on every node (shared home).
         -v "$REPO:$REPO" -w "$workdir"
         -e "HOME=$HOME" -e IN_CONTAINER=1
-        # ccache dir lives outside $REPO: bind-mount it and point ccache at it,
+        # ccache lives outside $REPO: bind-mount + point ccache at it,
         # overriding the image's unwritable /root/.cache/ccache default. Kept
-        # explicit (redundant when CCACHE_DIR is under $HOME) so a
-        # caller-overridden CCACHE_DIR outside $HOME still works.
+        # explicit so a caller-overridden CCACHE_DIR outside $HOME still works.
         -v "$CCACHE_DIR:$CCACHE_DIR" -e "CCACHE_DIR=$CCACHE_DIR"
         --security-opt seccomp=unconfined
     )
     if [ "$gpu" -eq 1 ]; then
-        # Device/cap set verified working via dockerRun: bind-mount the device
-        # dirs (the proven ROCm pattern). The previous duplicate --device flags
-        # were redundant under these binds and are dropped.
+        # Bind-mount device dirs (proven ROCm pattern via dockerRun); duplicate
+        # --device flags were redundant under these binds and dropped.
         DOCKER_FLAGS+=(--privileged --cap-add=SYS_PTRACE -v /dev/dri:/dev/dri -v /dev/kfd:/dev/kfd)
     fi
 }
 
-# Single source of truth for per-host container setup, run wherever docker runs
-# (inline for local mode, node-side for srun) so the two paths cannot diverge.
-# It builds merged passwd/group files for the caller — the image's accounts plus
-# this user's getent entry — so LDAP/SSSD uids resolve to a name inside the
-# container (the flat /etc/passwd lacks them). render/video group-adds are
-# resolved here too, with node-local gids, only when the GPU is exposed. Inputs:
-# $IMAGE, $ACCT_DIR, $_ACCT_GPU. Output: the flag string $_ACCT_FLAGS.
+# Per-host container setup, run wherever docker runs (inline or node-side) so
+# the two paths can't diverge: builds merged passwd/group files (image +
+# this user's getent entry, for LDAP/SSSD uids) and render/video group-adds
+# when GPU is exposed. Inputs: $IMAGE/$ACCT_DIR/$_ACCT_GPU; output: $_ACCT_FLAGS.
 read -r -d '' _ACCT_SETUP_SH <<'SH' || true
 _u=$(id -u); _g=$(id -g)
 mkdir -p "$ACCT_DIR"
@@ -296,11 +258,9 @@ flock -x "$_lock_fd" || { echo "ckCommon: flock failed" >&2; exit 1; }
 # leaves a partial account file that a later run would trust.
 _t=$(mktemp "$_pw.XXXXXX") && docker run --rm "$IMAGE" cat /etc/passwd >"$_t" && mv -f "$_t" "$_pw"
 _t=$(mktemp "$_gr.XXXXXX") && docker run --rm "$IMAGE" cat /etc/group >"$_t" && mv -f "$_t" "$_gr"
-# Install this host's real getent entry at our uid/gid, replacing (not
-# skipping) any unrelated user the image ships there — rocm/pytorch bakes in
-# "ubuntu" at uid 1000, the same uid Debian/WSL give the first real user, so
-# a WSL host's own user would otherwise be silently shadowed and whoami
-# would report "ubuntu" instead.
+# Replace (not skip) any unrelated image-baked user at our uid/gid — e.g.
+# rocm/pytorch's "ubuntu" at uid 1000 collides with WSL/Debian's first real
+# user, silently shadowing whoami otherwise.
 if _pw_entry=$(getent passwd "$_u"); then
     _t=$(mktemp "$_pw.XXXXXX") && awk -F: -v u="$_u" '$3!=u' "$_pw" >"$_t" && printf '%s\n' "$_pw_entry" >>"$_t" && mv -f "$_t" "$_pw" ||
         { rm -f "$_t"; echo "ckCommon: failed to update $_pw for uid $_u" >&2; }
@@ -328,25 +288,22 @@ if [ "${_ACCT_GPU:-0}" -eq 1 ]; then
         fi
     done
 fi
-# Files are keyed by uid only and rebuilt from $IMAGE every run; released here
-# rather than held across docker run, trading a narrow same-uid TOCTOU window
-# for GPU-job parallelism (numeric --user/--group-add are unaffected).
+# Released here (not held across docker run) to keep GPU jobs parallel,
+# trading a narrow same-uid TOCTOU window for that (numeric ids unaffected).
 flock -u "$_lock_fd"
 exec {_lock_fd}>&-
 SH
 
-# Emit a node-side snippet that loads the image if absent, sets up the account
-# files, then runs REMOTE_PROG inside a --rm container. $1: gpu bit, $2: workdir,
-# $3: the inner program. Host vars expand here; the inner program is passed
-# through literally to the node.
+# Emit a node-side snippet: load the image if absent, set up accounts, run
+# REMOTE_PROG in a --rm container. $1: gpu bit, $2: workdir, $3: inner program
+# (host vars expand here; the inner program passes through literally).
 _run_in_container() {
     local gpu="$1" workdir="$2" remote_prog="$3" tar static
     tar="$IMAGE_DIR/$(_sanitized_image_tag "$IMAGE").tar"
     _docker_static_flags "$gpu" "$workdir"
     static=$(printf '%q ' "${DOCKER_FLAGS[@]}")
-    # The inner program runs as the container's argv, single-quoted; escape any
-    # single quotes within it so the node-side bash -c receives it intact. The
-    # '\'' idiom closes the quote, emits an escaped literal quote, then reopens.
+    # Escape embedded single quotes so node-side bash -c receives the
+    # single-quoted argv intact ('\'' idiom: close, literal quote, reopen).
     local escaped=${remote_prog//\'/\'\\\'\'}
     cat <<EOF
 docker image inspect "$IMAGE" >/dev/null 2>&1 || docker load -i "$tar" >&2
@@ -356,25 +313,21 @@ docker run $static \$_ACCT_FLAGS "$IMAGE" bash -c '$escaped'
 EOF
 }
 
-# Run a program in a --rm container on THIS host (no srun). $1: gpu bit, $2:
-# workdir, $3: the inner program. For the shared-server case: the image is
-# auto-pulled by docker run if absent (no tarball). Returns the program's rc.
+# Run a program in a --rm container on THIS host (no srun); image is
+# auto-pulled by docker run if absent. $1: gpu bit, $2: workdir, $3: inner
+# program. Returns the program's rc.
 _docker_run_local() {
     local gpu="$1" workdir="$2" remote_prog="$3" _ACCT_GPU="$1" _ACCT_FLAGS=""
-    # Resolve first, then shadow IMAGE (`local IMAGE; IMAGE=$(...)` would
-    # unset it before the subshell forks): _ACCT_SETUP_SH below reads $IMAGE
-    # too, so account files come from the derived image as well.
+    # Resolve then shadow IMAGE (`local IMAGE; IMAGE=$(...)` unsets it before
+    # the subshell forks); _ACCT_SETUP_SH below also reads $IMAGE.
     local resolved_image
     resolved_image=$(_ensure_docker_setup_image) || return 1
     local IMAGE="$resolved_image"
     _docker_static_flags "$gpu" "$workdir"
     eval "$_ACCT_SETUP_SH"
-    # --cpus is local only: under srun the cgroupv2 cgroup is threaded and docker
-    # --cpus fails to start the container; the srun JOBS clamp handles -j there.
-    # CPUS defaults to a cluster-sized 128; docker rejects --cpus above the
-    # daemon's own NCPU (e.g. "range of CPUs is from 0.01 to 16.00" on a
-    # 16-core dev machine), so cap it at this host's core count, mirroring the
-    # JOBS clamp ckBuild's srun heredoc already does for the same reason.
+    # --cpus is local-only (srun's threaded cgroupv2 rejects it; the srun
+    # JOBS clamp handles that there). CPUS defaults to a cluster-sized 128, so
+    # cap it at nproc — dockerd rejects --cpus above its own NCPU.
     local cpus=$CPUS
     [ "$cpus" -gt "$(nproc)" ] && cpus=$(nproc)
     # _ACCT_FLAGS holds no-space paths under $ACCT_DIR; the word-split is intended.
@@ -388,10 +341,8 @@ _hold_jobid() {
     squeue -h -u "$USER" -n "$HOLD_NAME" -t RUNNING -o '%i' 2>/dev/null | head -1
 }
 
-# Dispatch into the running GPU holder via `srun --jobid --overlap` (instant, no
-# queue wait, fixed node). Returns the program's rc, or 1 if no live holder.
-# Reads HOLD_NAME/CPUS/SRUN_EXTRA. The holder owns the GRES, so the overlap step
-# requests none.
+# Dispatch into the running GPU holder via srun --overlap (instant, no queue
+# wait). Returns 1 if no live holder; the holder owns the GRES.
 _srun_overlap_dispatch() {
     local remote_prog="$1" jid
     jid=$(_hold_jobid)
@@ -401,12 +352,10 @@ _srun_overlap_dispatch() {
     srun --jobid="$jid" --overlap --cpus-per-task="$CPUS" $SRUN_EXTRA bash -c "$remote_prog"
 }
 
-# Dispatch a program via srun with node-exclude retry. Reads GPU/GRES/CONSTRAINT/
-# CPUS/SRUN_TIME/SRUN_EXTRA/MAX_NODE_RETRIES/REPO_MISSING_RC. SRUN_TIME empty
-# omits --time (partition default applies); _dispatch_build_like clears it since
-# one-shot builds don't need the holder-bound run-like time limit. Returns the
-# program's rc. On REPO_MISSING_RC it excludes the offending node and retries
-# (some MARKHAM nodes have a local /home without the shared repo).
+# Dispatch via srun with node-exclude retry. Empty SRUN_TIME omits --time
+# (build-like callers clear it so one-shot builds skip the holder-bound time
+# limit). On REPO_MISSING_RC, excludes the node and retries (some MARKHAM
+# nodes lack the shared repo) up to MAX_NODE_RETRIES.
 _srun_dispatch() {
     local remote_prog="$1"
     local GRES_FLAG=""
@@ -434,18 +383,13 @@ _srun_dispatch() {
         local EX_FLAG=""
         [ -n "$EXCLUDE" ] && EX_FLAG="--exclude=$EXCLUDE"
         echo "Dispatching via srun (${GRES_FLAG:-no-gpu} ${CON_FLAG:-no-constraint} ${EX_FLAG:+$EX_FLAG }--cpus-per-task=$CPUS ${TIME_FLAG:-no-time-limit}) ..." >&2
-        # Only stderr is teed/logged (the retry grep needs it); stdout stays a
-        # clean passthrough for $(...) callers. `wait` lets the tee subshell
-        # flush before we grep $local_log. Bare `wait` blocks on every
-        # background job in this shell, not just the tee substitution ($! is
-        # not set by process substitution); safe today since no caller
-        # backgrounds anything before dispatch, but a future caller that
-        # does would stall here.
-        # ckRun calls _dispatch_run_like as a bare final statement under
-        # set -euo pipefail; an unguarded srun failure here would trip set -e
-        # before `rc=$?` runs, killing the retry loop. The if/else wraps the
-        # command in a conditional (set -e's documented exemption) so rc is
-        # always captured regardless of the caller's shielding.
+        # stderr alone is teed (retry grep needs it); stdout stays a clean
+        # passthrough. Bare `wait` flushes the tee subshell (process
+        # substitution doesn't set $!) — safe only while no caller
+        # backgrounds other jobs first.
+        # if/else (not `rc=$?` after a bare call) captures rc before set -e
+        # can trip on an unguarded srun failure, since a conditional is
+        # set -e's documented exemption.
         # shellcheck disable=SC2086
         if srun $GRES_FLAG $CON_FLAG $EX_FLAG --cpus-per-task="$CPUS" $TIME_FLAG $SRUN_EXTRA bash -c "$remote_prog" 2> >(tee "$local_log" >&2); then
             rc=0
@@ -464,10 +408,10 @@ _srun_dispatch() {
     return "$rc"
 }
 
-# Dispatch a build-like (no-overlap) program by MODE: direct runs inline, docker
-# runs in a local --rm container, srun ensures the image tarball then dispatches
-# via _srun_dispatch. $1: gpu bit, $2: workdir, $3: the inner program. Reads MODE.
-# Returns the program's rc, or exits 1 on an unknown MODE (matching ckBuild).
+# Dispatch a build-like (no-overlap) program by MODE: direct inline, docker in
+# a local --rm container, srun ensures the tarball then dispatches via
+# _srun_dispatch. $1: gpu bit, $2: workdir, $3: inner program. Exits 1 on
+# unknown MODE (matching ckBuild).
 _dispatch_build_like() {
     local gpu="$1" workdir="$2" remote_prog="$3"
     case "$MODE" in
@@ -479,15 +423,12 @@ _dispatch_build_like() {
         _docker_run_local "$gpu" "$workdir" "$remote_prog"
         ;;
     srun)
-        # Build-like jobs never schedule on a GPU node (CK cross-compiles, so
-        # neither the container nor the node needs one). local (not a bare
-        # global assignment) so this never leaks into the caller's remaining
-        # script, symmetric with _dispatch_run_like below.
+        # CK cross-compiles, so build-like jobs never need a GPU node. local
+        # (not a bare assignment) keeps this from leaking into the caller's script.
         local GPU=$gpu
-        # Build-like jobs are one-shot (no holder/overlap reuse), so let the
-        # partition's own default time limit apply instead of the shared
-        # SRUN_TIME default meant for holder-bound run-like dispatch. local,
-        # so this doesn't leak past this call (same reasoning as GPU above).
+        # One-shot build-like jobs skip the holder-bound SRUN_TIME default so
+        # the partition's own time limit applies; local for the same leak
+        # reason as GPU above.
         local SRUN_TIME=""
         # Shadow IMAGE (see _docker_run_local for the resolve-then-shadow
         # order) so _ensure_image_tar/_run_in_container use the derived tag.
@@ -504,11 +445,10 @@ _dispatch_build_like() {
     esac
 }
 
-# Dispatch a run-like program by MODE: direct runs inline, docker runs in a
-# local --rm container, srun prefers overlapping into a running GPU holder
-# (instant, no queue wait) and falls back to a fresh _srun_dispatch when none is
-# held. $1: gpu bit, $2: workdir, $3: the inner program. Reads MODE. Returns the
-# program's rc, or exits 1 on an unknown MODE (matching ckRun).
+# Dispatch a run-like program by MODE: direct/docker as usual; srun prefers
+# overlapping into a running GPU holder (instant, no queue wait), falling back
+# to a fresh _srun_dispatch when none is held. Exits 1 on unknown MODE
+# (matching ckRun).
 _dispatch_run_like() {
     local gpu="$1" workdir="$2" remote_prog="$3"
     case "$MODE" in
@@ -520,11 +460,8 @@ _dispatch_run_like() {
         _docker_run_local "$gpu" "$workdir" "$remote_prog"
         ;;
     srun)
-        # Unlike build-like, gpu and GPU are the same concept here (real
-        # device passthrough implies scheduling on a GPU node), so the
-        # call-site's gpu argument always wins over any ambient GPU already
-        # set in the shell (e.g. left over from an unrelated ckBuild/ckRun
-        # call), rather than deferring to it.
+        # gpu/GPU are the same concept here (real passthrough implies GPU
+        # scheduling), so the call's gpu arg always wins over any ambient GPU.
         local GPU=$gpu
         # Shadow IMAGE (see _docker_run_local for the resolve-then-shadow
         # order) so _ensure_image_tar/_run_in_container use the derived tag.
@@ -547,14 +484,13 @@ _dispatch_run_like() {
     esac
 }
 
-# The rocminfo one-liner used to auto-detect a GPU's gfx arch. Shared by
-# _resolve_arch_or_require's direct/docker probe below and ckExec's
+# rocminfo one-liner to auto-detect gfx arch; shared with ckExec's
 # arch_from_container so the two never drift.
 _ARCH_PROBE_CMD="rocminfo 2>/dev/null | grep -m1 -oE 'gfx[0-9a-z]+'"
 
-# Validate --arch before it reaches any remote heredoc interpolation. Returns
-# (not exits) so a non-fatal caller (e.g. ckCfgProfile) can fall through. $1:
-# arch. Length capped at 16 (real gfx names are ~6 chars) to bound the regex.
+# Validate --arch before remote heredoc interpolation. Returns (not exits) so
+# a non-fatal caller (e.g. ckCfgProfile) can fall through. Capped at 16 chars
+# (real gfx names are ~6) to bound the regex.
 _validate_arch() {
     [[ "$1" =~ ^gfx[0-9a-z]{1,16}$ ]] || {
         echo "ERROR: invalid arch '$1' (expected e.g. gfx942)." >&2
@@ -562,12 +498,9 @@ _validate_arch() {
     }
 }
 
-# Validate a ;-separated gfx arch list — ckBuild's multi-arch case only; ckRun
-# and profiling tools keep using _validate_arch (one arch, one physical GPU).
-# Returns (not exits). $1: arch or ;-joined list. Capped at 8 archs (more than
-# any real CK fat binary spans today) / 16 chars each (real gfx names are ~6
-# chars) to bound the regex. Does not dedup a repeated arch (e.g.
-# gfx942;gfx942); CMake just rebuilds it twice, no correctness impact.
+# Validate a ;-separated gfx arch list (ckBuild's multi-arch case only).
+# Returns (not exits); capped at 8 archs / 16 chars each to bound the regex.
+# Doesn't dedup a repeated arch — CMake just rebuilds it, no impact.
 _validate_arch_list() {
     [[ "$1" =~ ^gfx[0-9a-z]{1,16}(;gfx[0-9a-z]{1,16}){0,7}$ ]] || {
         echo "ERROR: invalid arch list '$1' (expected e.g. gfx942 or gfx942;gfx950, max 8 archs)." >&2
@@ -575,14 +508,10 @@ _validate_arch_list() {
     }
 }
 
-# Resolve ARCH when empty: srun has no GPU to probe, so it is a hard error;
-# direct sits on a GPU host, so probe rocminfo inline; docker probes rocminfo
-# inside a container (the host running dockerd may have no GPU/rocminfo of its
-# own). $1: MODE. Reads/writes the caller's ARCH variable (bash dynamic
-# scoping, as with _gres_for_arch et al.) and reads REPO for the docker probe.
-# Prints ckBuild's original error wording and returns 1 on failure to resolve;
-# the caller decides whether that is fatal (ckBuild/ckStaticProfile exit on it,
-# ckCfgProfile treats arch as best-effort labeling and does not).
+# Resolve ARCH when empty: srun has no GPU to probe (hard error); direct
+# probes rocminfo inline; docker probes inside a container. Reads/writes ARCH
+# via bash dynamic scoping. Caller decides if failure is fatal (ckBuild/
+# ckStaticProfile exit; ckCfgProfile treats it as best-effort).
 _resolve_arch_or_require() {
     local backend="$1"
     if [ -n "$ARCH" ]; then
@@ -601,9 +530,8 @@ _resolve_arch_or_require() {
     direct) ARCH=$(eval "$_ARCH_PROBE_CMD" || true) ;;
     docker)
         local MODE=docker
-        # No 2>/dev/null: stderr isn't captured by $(...) anyway, and this is
-        # often the first call to trigger the (multi-minute) derived-image
-        # build, whose ERROR messages a caller needs to see on failure.
+        # No 2>/dev/null: stderr isn't captured by $(...) anyway, and this
+        # often triggers the first (multi-minute) derived-image build; show its errors.
         ARCH=$(_dispatch_run_like 1 "$REPO" "$_ARCH_PROBE_CMD" || true)
         ;;
     esac
@@ -629,9 +557,8 @@ _require_arch_for_srun() {
     [ -z "$GRES" ] && GRES=$(_gres_for_arch "$ARCH")
 }
 
-# Create $1/runs/<id> atomically (never rm -rf'd) and echo the new <id>.
-# `mkdir` (not `[ -e ]` then mkdir) makes the collision check atomic, closing
-# a TOCTOU window between two runs starting in the same second.
+# Create $1/runs/<id> atomically (never rm -rf'd), echo the new <id>.
+# mkdir itself is the collision check — atomic, no TOCTOU window.
 _new_run_dir() {
     local mode_dir=$1
     mkdir -p "$mode_dir/runs" || return 1
@@ -641,9 +568,8 @@ _new_run_dir() {
     run_dir="$mode_dir/runs/$run_id"
     local n=0
     while ! mkdir "$run_dir" 2>/dev/null; do
-        # Only retry on an actual same-second collision (dir already exists);
-        # any other mkdir failure (permissions, quota, read-only fs) must not
-        # spin forever, so it's returned to the caller instead.
+        # Retry only on an actual same-second collision (dir exists); any
+        # other mkdir failure (perms, quota, ro fs) returns instead of spinning.
         [ -d "$run_dir" ] || return 1
         n=$((n + 1))
         [ "$n" -gt 100 ] && return 1
@@ -667,10 +593,8 @@ _find_ck_root() {
     return 1
 }
 
-# Resolve the caller's REPO variable to the CK project root, walking up from
-# REPO then PWD if REPO itself is not already the root. Exits 1 with ckBuild's
-# original error message if neither yields a directory with both
-# CMakeLists.txt and script/cmake-ck-dev.sh.
+# Resolve REPO to the CK project root, walking up from REPO then PWD. Exits 1
+# with ckBuild's original message if neither yields a valid root.
 _require_ck_root() {
     if [ ! -e "$REPO/script/cmake-ck-dev.sh" ]; then
         local alt

@@ -30,10 +30,8 @@ _lib = os.path.normpath(os.path.join(_here, "..", "lib", "ck-profile"))
 sys.path.insert(0, _lib)
 from ck_profile_utils import short  # noqa: E402
 
-# SSD forward pipeline as launched in ssd_fwd.hpp (step order preserved).
-# Each stage: (id, label, reads, writes). Names p_* are external tensors;
-# everything else is a workspace buffer. Scratch buffers pa/pb are reused, so
-# last-writer-wins over program order gives the correct producer for each read.
+# Stages as (id, label, reads, writes), in ssd_fwd.hpp order. p_* = external tensors;
+# pa/pb scratch buffers are reused, so last-writer-wins gives each read its producer.
 SSD_PIPELINE = [
     ("cumsum", "ssd_cumsum", ["p_da"], ["cum"]),
     ("packC1", "pack_Cmat (IntraBMM1)", ["p_cm"], ["pa"]),

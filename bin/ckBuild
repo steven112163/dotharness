@@ -1,35 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build a Composable Kernel (CK) tree inside the CK docker image, auto-detecting
-# how to reach a build node.
+# Build a CK tree inside the CK docker image, auto-detecting how to reach a build node.
+# configure (re)generates build/ via cmake-ck-dev.sh (--scratch wipes first); build
+# only runs ninja against an existing tree, never configures.
 #
-# Two subcommands, kept deliberately separate:
-#   - configure : (re)generate the build/ tree by running cmake-ck-dev.sh.
-#     --scratch wipes build/ first; otherwise the existing tree is reused (cmake
-#     just refreshes the cache). Always runs cmake when invoked.
-#   - build     : run ninja against an already-configured build/ tree. Never
-#     configures; errors out if build/build.ninja is missing, pointing at
-#     `ckBuild configure`.
+# Runs inside a --rm container off the CK image so the toolchain (gcc/amdclang++/ccache)
+# is self-consistent and independent of the host; CK cross-compiles, so no GPU needed.
 #
-# Both run inside a --rm container off the CK image, so the toolchain comes
-# from the image (self-consistent gcc/amdclang++/ccache) rather than the host.
-# That removes host-toolchain skew. CK cross-compiles, so neither needs a GPU.
+# Backend auto-detected (override MODE=direct|docker|srun): srun = one allocation on a
+# CPU node via docker run --rm; docker = --rm container on a shared server; direct =
+# run inline (dev container or bare ROCm box). A login node without srun looks like
+# direct too -- force MODE=srun there.
 #
-# Backend is auto-detected (override with MODE=direct|docker|srun):
-#   - srun   : a Slurm login node (srun present). Dispatches as ONE srun
-#              allocation on a CPU node, running it inside the image via
-#              docker run --rm (image distributed as a save/load tarball).
-#   - docker : a shared server with docker but no srun. Runs in a --rm
-#              container on this host (image auto-pulled if absent).
-#   - direct : already inside the dev container (/.dockerenv), or a bare box with
-#              local /opt/rocm. Runs inline (the surrounding env IS the toolchain).
-#
-# A login-node container without srun cannot be told apart from a shared-server
-# container; both auto-detect to direct. Force MODE=srun there to require srun.
-#
-# The repo path is assumed identical on the build node (shared filesystem on the
-# cluster, bind mount in the container). Override anything via env vars.
+# Repo path assumed identical on the build node (shared filesystem / bind mount).
 
 # shellcheck source=bin/ckCommon disable=SC1091
 source "$(dirname "$(readlink -f "$0")")/ckCommon"
@@ -104,9 +88,8 @@ EOF
     exit 1
 }
 
-# TARGETS/EXTRA_CMAKE are re-split by word on the build node, so a whitespace-
-# bearing element would silently mangle rather than pass through. Reject it with
-# a clear error instead of producing a corrupt command line. $@: the array(s) to check.
+# TARGETS/EXTRA_CMAKE are re-split by word on the build node; a whitespace-bearing
+# element would silently mangle. $@: the array(s) to check.
 _reject_whitespace_args() {
     local _a
     for _a in "$@"; do
@@ -152,9 +135,8 @@ cmd_configure() {
 
     _reject_whitespace_args ${EXTRA_CMAKE[@]+"${EXTRA_CMAKE[@]}"}
 
-    # Resolve REPO to the CK project root even if cwd drifted into a subdir: walk
-    # up looking for script/cmake-ck-dev.sh. Fail fast rather than configure in
-    # the wrong place.
+    # Resolve REPO to the CK project root (walk up for script/cmake-ck-dev.sh);
+    # fail fast rather than configure in the wrong place.
     _require_ck_root
 
     # Pick the backend (see _detect_backend in ckCommon for the precedence rule).
@@ -162,12 +144,9 @@ cmd_configure() {
     echo "Backend: $MODE"
     echo "Image: $IMAGE"
 
-    # srun builds on CPU nodes (no GPU to probe) require an explicit arch; direct
-    # and docker run on a GPU host, so rocminfo can probe it there. A ;-joined
-    # ARCH is a multi-arch fat-binary request (never empty, so auto-detect never
-    # applies): validate it directly instead of going through the single-arch
-    # resolver. \; required here (unlike in the ERE below): unescaped, bash's
-    # lexer parses it as a command separator even inside [[ ]] (verified).
+    # srun builds on CPU nodes need an explicit arch (no GPU to probe); direct/docker
+    # can probe via rocminfo. A ;-joined ARCH is a multi-arch fat-binary request,
+    # validated directly instead of via the single-arch resolver.
     if [[ "$ARCH" == *\;* ]]; then
         _validate_arch_list "$ARCH" || exit 1
     else
@@ -183,10 +162,8 @@ cmd_configure() {
     fi
     mkdir -p "$build_abs"
 
-    # Program run on the build node (inside the container under srun, inline
-    # under direct). Host vars ($REPO, $build_abs, $ARCH, $MINIMAL, the arrays)
-    # expand now, when the heredoc is built; \$VARS stay literal and are
-    # evaluated on the build node.
+    # Runs on the build node. Unescaped vars expand now (heredoc build time);
+    # \$VARS stay literal, evaluated on the build node.
     local remote_prog
     remote_prog=$(
         cat <<EOF
@@ -248,12 +225,9 @@ cmd_build() {
     echo "Backend: $MODE"
     echo "Image: $IMAGE"
 
-    # NFS caveat, mirroring the one below for build outputs: under srun, a
-    # `configure` dispatched moments ago on a different compute node may not
-    # have its build.ninja write visible here yet (attribute caching). This
-    # stat can then spuriously report "not configured" right after a
-    # successful configure; retry `build` if that happens. Not hit under
-    # direct/docker (no separate remote node), which is all that's tested today.
+    # NFS caveat: under srun, a `configure` on a different compute node may not have
+    # build.ninja visible here yet (attribute caching), so this can spuriously report
+    # "not configured" right after success -- retry `build` if that happens.
     local build_abs="$REPO/$BUILD_DIR"
     if [ ! -f "$build_abs/build.ninja" ]; then
         echo "ERROR: $build_abs is not configured (no build.ninja)." >&2
@@ -261,10 +235,8 @@ cmd_build() {
         exit 1
     fi
 
-    # Program run on the build node (inside the container under srun, inline
-    # under direct). Host vars ($build_abs, $MODE, $CPUS, the arrays) expand
-    # now, when the heredoc is built; \$VARS stay literal and are evaluated on
-    # the build node.
+    # Runs on the build node. Unescaped vars expand now (heredoc build time);
+    # \$VARS stay literal, evaluated on the build node.
     local remote_prog
     remote_prog=$(
         cat <<EOF
@@ -275,11 +247,9 @@ if [ ! -e "$REPO/script/cmake-ck-dev.sh" ]; then
     exit $REPO_MISSING_RC
 fi
 cd "$build_abs"
-# srun owns the allocation: use the reserved core budget, clamped to what the
-# container actually sees (it is --cpus-capped, so nproc reflects the reservation,
-# but clamp anyway in case the cap is absent). direct shares the box, so use half
-# the cores capped at 128 to stay responsive and keep CK's memory-hungry template
-# compiles from OOMing on very large hosts.
+# srun: use the reserved core budget, clamped to nproc in case the cap is absent.
+# direct: shares the box, so half the cores capped at 128 (stay responsive, avoid
+# OOM from CK's memory-hungry template compiles on large hosts).
 if [ "$MODE" = srun ]; then
     JOBS=\${SLURM_CPUS_PER_TASK:-$CPUS}; _n=\$(nproc); [ \$JOBS -gt \$_n ] && JOBS=\$_n
 else
@@ -291,9 +261,8 @@ ninja -j\$JOBS ${TARGETS[*]:-} 2>&1 | tee build.log
 EOF
     )
 
-    # NFS caveat: artifacts written by the container on a compute node take a few
-    # seconds to appear on the login node (attribute caching). Trust the dispatch
-    # exit code; do not stat/read build/ outputs immediately to "verify" success.
+    # NFS caveat: build/ artifacts take a few seconds to appear on the login node,
+    # so trust the dispatch exit code rather than stat'ing outputs to "verify".
     if _dispatch_build_like 0 "$build_abs" "$remote_prog"; then
         echo "Build successful (log: $build_abs/build.log)"
     else

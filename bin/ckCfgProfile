@@ -1,17 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ISA control-flow graphs for a CK binary. Extracts the amdgcn code object and
-# disassembles it with llvm-objdump, emitting one Graphviz .dot per kernel.
-# No GPU run required.
+# ISA control-flow graphs for a CK binary: disassembles the amdgcn code object
+# with llvm-objdump into one Graphviz .dot per kernel (no GPU run).
 #
 #   ckCfgProfile [--arch gfx...] <bin>
 
 SELF_DIR=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 
-# Disassembles an already-built binary; not a compile, so it doesn't need
-# ckCommon's build-sized CPUS default (128). Set before sourcing ckExec (which
-# sources ckCommon) so this wins over that default.
+# Disassembles (not compiles) an already-built binary, so skip ckCommon's build-sized
+# CPUS default (128); set before sourcing ckExec so this wins over that default.
 CPUS=${CPUS:-32}
 
 # shellcheck source=bin/ckExec disable=SC1091
@@ -77,15 +75,12 @@ fi
 
 MODE_DIR=$REPO/ck_profile_out/cfg
 [ -n "$MODE" ] || MODE=$(_detect_backend build) || exit 1
-# cfg: disassembly only, no GPU run needed; arch is only used for labeling, so
-# a failed probe is not fatal here. Silence the probe's own error message
-# (e.g. "srun builds run on CPU nodes...") since it is misleading when the
-# failure is explicitly non-fatal.
+# cfg only disassembles (no GPU run), so a failed arch probe isn't fatal; arch is
+# just a label. Silence the probe's misleading error (e.g. "srun builds run on CPU nodes...").
 _resolve_arch_or_require "$MODE" 2>/dev/null || true
 
-# Each run gets its own immutable runs/<id>/ dir (never rm -rf'd); "latest"
-# always points at the newest one. Skipped when the caller overrides OUTDIR
-# directly (a debug/custom-location escape hatch).
+# Each run gets its own immutable runs/<id>/ dir; "latest" points at the newest.
+# Skipped when the caller overrides OUTDIR directly (debug/custom-location escape hatch).
 RUN_ID=""
 if [ -z "$OUTDIR" ]; then
     RUN_ID=$(_new_run_dir "$MODE_DIR")

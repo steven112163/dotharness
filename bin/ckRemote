@@ -1,32 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Drive a remote CK build/run from a local dev checkout. You edit and commit
-# locally (stable, no lost progress); ckRemote rsyncs the SOURCE to the chosen
-# server and runs ckBuild/ckRun/ckHold there over SSH. Nothing here needs a GPU
-# or docker locally.
+# Drive a remote CK build/run from a local dev checkout: edit/commit locally,
+# ckRemote rsyncs SOURCE to the chosen server and runs ckBuild/ckRun/ckHold over
+# SSH. No local GPU/docker needed.
 #
-# Working dir is mirrored: a command runs on the remote in the same subdirectory
-# you are in locally (relative to the repo root). Develop in a monorepo subproject
-# like projects/composablekernel and `ckRemote ckBuild ...` builds there, so
-# ckBuild/ckRun resolve the correct CK project root. The whole repo is still
-# synced (so nested .gitignore and shared paths are intact); only the run dir
-# follows your cwd.
+# Working dir is mirrored: a command runs remotely in the same repo-relative
+# subdir as locally, so ckBuild/ckRun resolve the right project root in a
+# monorepo. Whole repo still syncs (nested .gitignore, shared paths intact).
 #
-# Prerequisite: the ck* binaries (ckBuild/ckRun/ckHold) must be installed on the
-# remote (this repo's setup.sh links them into ~/bin); ckRemote puts ~/bin on PATH
-# for the remote command but does not install them.
+# Prerequisite: ckBuild/ckRun/ckHold must be installed on the remote (setup.sh
+# links them into ~/bin); ckRemote puts ~/bin on PATH but does not install them.
 #
-# Servers are tried in PRIORITY ORDER (the order of CK_SERVERS, highest first).
-# A server is used only if it is reachable, can execute (docker for a `normal`
-# host, srun for a `slurm` host), and offers the requested GPU arch. Otherwise
-# the next server is tried. Pass the arch via --arch, or let it be detected from
-# the command (a gfx* token, or the value after --arch/-a).
+# Servers tried in CK_SERVERS priority order; first one reachable, executable
+# (docker for `normal`, srun for `slurm`), and offering the requested arch wins.
+# Arch comes from --arch or is detected from the command (gfx* token or --arch/-a value).
 #
-# Build and run for one task must land on the SAME server: each server has its
-# own filesystem, so artifacts ckBuild writes on server A are not visible on
-# server B. Keep the arch fixed across a build/run pair and the same server is
-# chosen as long as it stays reachable. Force one server with -t <name>.
+# Build and run for one task must land on the SAME server (separate filesystems).
+# Keep arch fixed across a pair so the same server is picked; force with -t <name>.
 #
 #   ckRemote ckBuild gfx942 [target...]    pick a server with gfx942, sync, build
 #   ckRemote ckHold --arch gfx942          hold a GPU on the chosen server
@@ -38,60 +29,43 @@ set -euo pipefail
 #   ckRemote targets                       list configured servers
 #   ckRemote --arch gfx942 select          show which server would be picked
 #
-# Files git ignores are never synced: rsync honors the repo's .gitignore (nested
-# rules included), so build/ and other artifacts stay on the remote where ckBuild
-# wrote them. .git is excluded too. rsync keeps mtimes, so incremental builds are
-# preserved.
+# rsync honors .gitignore (nested rules, .git excluded too) and keeps mtimes,
+# so build artifacts stay remote and incremental builds are preserved.
 #
-# Config: env, or a sourced file at $CK_REMOTE_CONF / ~/.config/ckremote. See
-# template/ckremote.example for a copyable starting point. Define an ordered
-# server list plus one entry per server in five associative arrays:
+# Config: env, or a sourced file at $CK_REMOTE_CONF / ~/.config/ckremote (see
+# template/ckremote.example). Ordered server list plus per-server entries:
 #
 #   CK_SERVERS=(shared slurm)            # priority order, highest first
 #   declare -A CK_SSH CK_REPO CK_TYPE CK_GPUS CK_KEY
 #   CK_SSH[shared]="user@sharedbox";  CK_REPO[shared]="/scratch/you/composable_kernel"
 #   CK_TYPE[shared]="normal";         CK_GPUS[shared]="gfx942"
-#   CK_KEY[shared]="$HOME/.ssh/shared_key"  # optional; omit/empty to use ssh's default
-#                                            # (unquoted expansion: no literal "~", use $HOME)
+#   CK_KEY[shared]="$HOME/.ssh/shared_key"  # optional; unquoted expansion, use $HOME not ~
 #   CK_SSH[slurm]="user@login";       CK_REPO[slurm]="/home/you/ck/composable_kernel"
 #   CK_TYPE[slurm]="slurm";           CK_GPUS[slurm]="all"   # "all" = any arch
 #
-# Other knobs: CK_LOCAL_REPO (default: git toplevel of cwd),
-# CK_RSYNC_EXCLUDES (extra excludes beyond .gitignore, space-separated; default
-#   below covers git-untracked tooling/output dirs),
-# CK_SSH_OPTS (extra ssh options, e.g. a ProxyJump).
+# Other knobs: CK_LOCAL_REPO (default: git toplevel of cwd), CK_RSYNC_EXCLUDES
+# (extra excludes beyond .gitignore), CK_SSH_OPTS (extra ssh options).
 
 CONF=${CK_REMOTE_CONF:-$HOME/.config/ckremote}
 # shellcheck disable=SC1090
 [ -f "$CONF" ] && source "$CONF"
 
-# Ensure the config arrays exist even if the file omitted them, so references are
-# safe under `set -u`. `declare -A` on an already-defined array preserves it.
+# Ensure arrays exist even if the config file omitted them (safe under `set -u`).
 declare -A CK_SSH CK_REPO CK_TYPE CK_GPUS CK_KEY
 [ -n "${CK_SERVERS+x}" ] || CK_SERVERS=()
 
 CK_LOCAL_REPO=${CK_LOCAL_REPO:-$(git rev-parse --show-toplevel 2>/dev/null || true)}
-# Extra excludes beyond the repo's .gitignore (which rsync honors directly): local
-# tooling/output dirs git does not track, so they neither copy nor get --delete'd
-# on the remote. ck_profile_out is git-excluded via .git/info/exclude, not
-# .gitignore, so it must be listed here to protect remote profiling output.
-# graphify-out is likewise only ignored via the global excludesFile (gitignore_global),
-# which rsync's :- .gitignore filter never reads, so it needs the same explicit listing.
-# .claude and .codex hold local agent scratch and session state; exclude so they
-# don't overwrite the remote's own agent context.
+# Extra excludes beyond .gitignore: dirs git doesn't track via .gitignore itself
+# (ck_profile_out is only in .git/info/exclude; graphify-out only in the global
+# excludesFile) plus .claude/.codex, so local agent scratch never clobbers remote's.
 CK_RSYNC_EXCLUDES=${CK_RSYNC_EXCLUDES:-ck_profile_out .venv .pytest_cache .ruff_cache .cache .claude .codex graphify-out tmp}
 CK_SSH_OPTS=${CK_SSH_OPTS:-}
-# Per-server lock dir: serializes this machine's own ckRemote dispatches against a
-# given server (CLI vs. CLI, CLI vs. a future MCP server) so two profiling/run jobs
-# never interleave rocprofv3 traces or GPU work on the same host. Local-machine scope
-# only: a different machine hitting the same shared server is not covered (accepted
-# v1 limitation; see plan notes).
+# Per-server lock dir: serializes this machine's ckRemote dispatches per server so
+# jobs don't interleave GPU work. Local-machine scope only; other machines not covered.
 CK_REMOTE_LOCK_DIR=${CK_REMOTE_LOCK_DIR:-$HOME/.cache/ckremote/locks}
 
-# Mirror the local working directory on the remote: a command run from a subdir of
-# the repo (e.g. projects/composablekernel in a monorepo) executes in that same
-# subdir remotely, so ckBuild/ckRun resolve the right project root. CK_REL is $PWD
-# relative to CK_LOCAL_REPO ("" at the repo root, or when cwd is outside the repo).
+# Mirror local cwd on remote so ckBuild/ckRun resolve the right project root in a
+# monorepo. CK_REL is $PWD relative to CK_LOCAL_REPO ("" at repo root or outside it).
 CK_REL=""
 if [ -n "$CK_LOCAL_REPO" ] && _root=$(cd "$CK_LOCAL_REPO" 2>/dev/null && pwd -P); then
     _here=$(pwd -P)
@@ -192,11 +166,9 @@ _probe() {
         "command -v $bin >/dev/null 2>&1"
 }
 
-# True if the arch $1 is present on the normal (docker) server $2, via rocminfo.
-# Fetches raw rocminfo output, then greps locally so grep's exit code cannot
-# pollute the SSH rc used to distinguish rocminfo-absent from GPU-less.
-# Returns 0 if rocminfo absent or SSH failed (cannot verify, don't penalize);
-# 1 if rocminfo ran but no matching gfx token found (verifiably absent).
+# True if arch $1 is present on normal (docker) server $2, via rocminfo. Greps
+# locally so grep's exit code doesn't pollute the SSH rc. Returns 0 if rocminfo
+# absent or SSH failed (can't verify, don't penalize); 1 if verifiably absent.
 _probe_gpu_arch() {
     local arch="$1" sshtgt="$2" key_opt="$3"
     local out rc=0
@@ -215,22 +187,16 @@ _probe_gpu_arch() {
     grep -qiF -- "$arch" <<<"$out"
 }
 
-# Ensure a GPU holder is RUNNING on the remote slurm server. If not RUNNING (absent
-# or PENDING), delegates to ckHold start which skips sbatch for an existing PENDING
-# job and blocks until RUNNING — so the following ckRun can overlap immediately.
-# $1: arch for GRES mapping. CK_REMOTE/CK_SSH_OPTS/SERVER must be set.
-# Note: cannot use remote_exec because it cd's to _remote_workdir (includes CK_REL);
-# ckHold is a user-level command that resolves its own path and needs only ~/bin.
+# Ensure a GPU holder is RUNNING on the remote slurm server; delegates to ckHold
+# start (skips sbatch if PENDING, blocks until RUNNING) so ckRun can overlap.
+# Not via remote_exec: ckHold resolves its own path, needs only ~/bin, not CK_REL cwd.
 _ensure_hold() {
     local arch="$1"
     if [ -z "$arch" ]; then
         echo "Warning: no arch specified; skipping GPU holder check on $SERVER." >&2
         return 0
     fi
-    # Query RUNNING only for the fast-path return. A PENDING holder is not caught
-    # here; ckHold start's holder_any() (no -t filter) handles it without re-submitting.
-    # Single quotes send the literal string to the remote shell, where $USER expands.
-    # ConnectTimeout bounds TCP; timeout 5 guards against a hung slurmctld.
+    # Fast-path RUNNING check only; ckHold start's holder_any() catches PENDING.
     local running
     # shellcheck disable=SC2086
     running=$(ssh $CK_SSH_OPTS $CK_KEY_OPT -o ConnectTimeout=10 "$CK_REMOTE" \
@@ -315,13 +281,9 @@ require_local() {
     [ -d "$CK_LOCAL_REPO" ] || die "CK_LOCAL_REPO ($CK_LOCAL_REPO) is not a directory."
 }
 
-# Pull profiling artifacts from the remote repo back to the local checkout.
-# Default path: ck_profile_out/. Additional paths may be passed as arguments,
-# relative to the CK project root (ckBuild/ckRun's $REPO) — the same mirrored
-# workdir remote_exec runs commands in, i.e. CK_REMOTE_REPO/CK_REL. This
-# matters in a monorepo: ck*Profile scripts write ck_profile_out under $REPO,
-# which is the CK project subdir, not necessarily the git toplevel. Useful
-# after ckDynamicProfile/ckStaticProfile.
+# Pull profiling artifacts (default ck_profile_out/, or given paths) from the
+# remote repo back locally. Paths are relative to the mirrored workdir (CK
+# project root, not necessarily git toplevel in a monorepo).
 pull_artifacts() {
     require_local
     local paths=("$@")
@@ -334,10 +296,8 @@ pull_artifacts() {
         remote_path="$(_remote_workdir)/$p"
         local local_path="$local_workdir/$p"
         echo "Pulling $p <- $SERVER:$remote_path ..."
-        # A directory is synced into a same-named local dir (trailing slashes on
-        # both sides copy contents, not the dir itself); a file is copied as-is.
-        # Forcing directory semantics unconditionally broke single-file pulls:
-        # rsync's remote sender tries to chdir into the "directory" and fails.
+        # Directory vs file must be distinguished: forcing dir semantics on a
+        # single file makes rsync's remote sender try to chdir and fail.
         # shellcheck disable=SC2086,SC2029
         if ssh $CK_SSH_OPTS $CK_KEY_OPT "$CK_REMOTE" "[ -d $(printf '%q' "$remote_path") ]"; then
             mkdir -p "$local_path"
@@ -361,13 +321,9 @@ sync_source() {
     # shellcheck disable=SC2086,SC2029
     ssh $CK_SSH_OPTS $CK_KEY_OPT "$CK_REMOTE" "mkdir -p $(printf '%q' "$CK_REMOTE_REPO")"
     echo "Syncing $CK_LOCAL_REPO/ -> $CK_REMOTE:$CK_REMOTE_REPO/ ..."
-    # Honor the repo's .gitignore (per-directory, nested rules included) so anything
-    # git ignores — build/, _build/, __pycache__, CMakeUserPresets.json, ... — is
-    # never copied. .git is excluded explicitly (it is not listed in .gitignore),
-    # and CK_RSYNC_EXCLUDES adds git-untracked dirs that must not clobber the remote
-    # (e.g. ck_profile_out, which lives in .git/info/exclude, not .gitignore).
-    # --delete keeps the remote a mirror of local source; excluded paths are neither
-    # copied nor deleted, so remote build artifacts and profiling output survive.
+    # Honors .gitignore (nested rules) so git-ignored files never copy; .git and
+    # CK_RSYNC_EXCLUDES are excluded explicitly. --delete mirrors local source but
+    # spares excluded paths, so remote build artifacts and profiling output survive.
     # shellcheck disable=SC2086
     rsync -avz --delete --info=progress2,stats2 \
         --stats -e "ssh $CK_SSH_OPTS $CK_KEY_OPT" \

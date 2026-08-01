@@ -1,12 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Static (compile-time) kernel resource analysis: build a CK target with
-# -Rpass-analysis=kernel-resource-usage and parse the remarks for VGPR/AGPR/
-# SGPR/occupancy/spill/scratch/LDS. No GPU execution.
-#
-# Uses a separate build dir (ck_profile_out/static/build/) so the main build/
-# tree is never touched.
+# Static (compile-time) resource analysis: builds with -Rpass-analysis=kernel-resource-usage,
+# parsing VGPR/AGPR/SGPR/occupancy/spill/scratch/LDS remarks in a separate build dir (no GPU exec; main build/ untouched).
 #
 #   ckStaticProfile [--arch gfx...] <target>
 
@@ -71,11 +67,8 @@ _require_ck_root
 [ -n "$MODE" ] || MODE=$(_detect_backend build) || exit 1
 _resolve_arch_or_require "$MODE" || exit 1
 
-# Keep the heavy CMake/Ninja tree out of the reports dir: editor tooling
-# activates on a build tree and would cause Live Preview to reload repeatedly.
-# BUILD is reused across runs (not versioned) since it's an incremental build
-# tree, not a report artifact; only the report + log move into runs/<id>/, so
-# "latest" always points at the newest report without duplicating the build.
+# BUILD dir stays out of runs/<id>/ and is reused (not versioned): editor tooling
+# reloads repeatedly on build-tree churn, and it's an incremental tree, not a report artifact.
 MODE_DIR=$REPO/ck_profile_out/static
 BUILD=$MODE_DIR/build
 RUN_ID=$(_new_run_dir "$MODE_DIR")
