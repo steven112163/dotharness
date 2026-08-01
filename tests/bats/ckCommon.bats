@@ -1167,6 +1167,45 @@ teardown() {
     [[ "$output" == *"bash -c"* ]]
 }
 
+@test "_docker_run_local caps --cpus at the host's own core count when CPUS exceeds it" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD=''
+        CPUS=99999
+        REPO=/repo
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        CCACHE_DIR='$TMPDIR_TEST/ccache'
+        callfile='$TMPDIR_TEST/docker-calls'
+        : >\"\$callfile\"
+        docker() { echo \"\$*\" >>\"\$callfile\"; return 0; }
+        _docker_run_local 0 /repo 'echo hi' >/dev/null
+        cat \"\$callfile\"
+    "
+    [ "$status" -eq 0 ]
+    host_nproc=$(nproc)
+    [[ "$output" == *"--cpus $host_nproc "* ]]
+}
+
+@test "_docker_run_local passes CPUS through unchanged when within the host's core count" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD=''
+        CPUS=1
+        REPO=/repo
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        CCACHE_DIR='$TMPDIR_TEST/ccache'
+        callfile='$TMPDIR_TEST/docker-calls'
+        : >\"\$callfile\"
+        docker() { echo \"\$*\" >>\"\$callfile\"; return 0; }
+        _docker_run_local 0 /repo 'echo hi' >/dev/null
+        cat \"\$callfile\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--cpus 1 "* ]]
+}
+
 @test "_dispatch_build_like on srun resolves the derived setup image before ensuring the tarball" {
     run bash -c "
         source '$CKCOMMON'
