@@ -39,11 +39,8 @@ import html_report as H  # noqa: E402
 from ck_profile_utils import classify, msd, short  # noqa: E402
 from compute_report import top_launch_stats_row  # noqa: E402
 
-# Every counter that can appear in a p_counter_collection.csv (i.e. every pmc line in
-# counters.txt) must be classified here: "sum" for cumulative counters, "mean" for
-# duration-weighted percentages/rates, or "ignore" for ad hoc exploratory counters not
-# wired into any reported metric. A counter with no entry fails loudly in
-# collect_counters rather than being silently summed.
+# Every counter in counters.txt must be classified: "sum" (cumulative), "mean"
+# (duration-weighted), or "ignore" (exploratory, unused). Missing entry fails loudly.
 COUNTER_CLASS = {
     "TCC_HIT": "sum",
     "TCC_MISS": "sum",

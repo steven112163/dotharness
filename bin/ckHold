@@ -1,24 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Hold one persistent GPU allocation so repeated ckRun calls land instantly via
-# `srun --jobid --overlap` instead of queuing a fresh allocation each time.
-#
-# GPU nodes are scarce: the first grab waits in the queue once, then ckRun reuses
-# the held node for the rest of the walltime. When the hold expires, grab again.
-#
-#   ckHold [start] [--arch gfx...]   start a holder if none is running (default)
-#   ckHold status                    show the holder's job id, node, time left
-#   ckHold stop                      cancel the holder
-#
-# The holder is a batch job named "$HOLD_NAME" running `sleep infinity`, sized
-# by ckCommon's shared SRUN_TIME default (2h) like ckBuild/ckRun. Set SRUN_TIME
-# to request a different walltime. Override anything via env.
+# Holds one persistent GPU allocation so repeated ckRun calls land instantly via
+# `srun --jobid --overlap` instead of queuing fresh each time; grab again once it expires.
 
-# The holder serves ckRun/ck*Profile, which are GPU-bound, not CPU-heavy builds;
-# match their 32-CPU default so overlap dispatches into this holder fit. Must be
-# set before sourcing ckCommon, whose own default (128, sized for builds) would
-# otherwise win.
+# Match ckRun/ck*Profile's 32-CPU default (GPU-bound, not CPU-heavy builds) so
+# overlap dispatches fit; must be set before sourcing ckCommon (its default is 128).
 CPUS=${CPUS:-32}
 
 # shellcheck source=bin/ckCommon disable=SC1091
@@ -69,9 +56,8 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-# _hold_jobid (from ckCommon) echoes the RUNNING holder's job id, or empty. A
-# pending holder does not count: it cannot be overlapped onto until allocated.
-# Echo any holder's job id regardless of state (running or pending).
+# Unlike ckCommon's _hold_jobid (RUNNING only, since overlap needs allocation), this
+# echoes any holder job id regardless of state — used by status/stop.
 holder_any() {
     squeue -h -u "$USER" -n "$HOLD_NAME" -o '%i' 2>/dev/null | head -1
 }

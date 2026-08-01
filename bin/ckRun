@@ -1,29 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run an arbitrary command on a GPU inside the CK docker image, in a --rm
-# container. Companion to ckBuild: ckBuild produces binaries, ckRun executes them
-# (or anything else) on a GPU with the device exposed.
+# Run an arbitrary command on a GPU inside the CK docker image (--rm container).
+# Companion to ckBuild: ckBuild produces binaries, ckRun executes them (or anything
+# else) with the GPU device exposed.
 #
-# Backend auto-detected (override with MODE=direct|docker|srun), same as ckBuild:
-#   - srun   : login node -> srun a GPU node, run in the image via docker run --rm.
-#   - docker : shared GPU server with docker -> --rm container here (GPU exposed).
-#   - direct : inside the dev container, or bare local ROCm -> run inline.
+# Backend auto-detected (override MODE=direct|docker|srun), same as ckBuild: srun
+# dispatches a GPU node via docker run --rm; docker runs a --rm container here
+# (GPU exposed); direct runs inline (dev container or bare ROCm box).
 #
-# The container mounts the repo at its real path and runs as the calling user, so
-# the command sees the build tree and any output it writes is owned by you.
+# Container mounts the repo at its real path and runs as the calling user, so
+# output is owned by you.
 #
-#   ckRun [--arch gfx...] [--cd <dir>] <cmd...>
-#
-# Everything after the options is the command, run verbatim inside the container.
 # Examples:
 #   ckRun --arch gfx942 build/bin/ckProfiler gemm ...
 #   ckRun --arch gfx942 rocminfo
-#   ckRun --arch gfx942 bash -c 'ls build/bin | head'
 
-# ckRun executes an already-built binary; it doesn't compile, so it doesn't need
-# ckCommon's build-sized CPUS default (128). Set before sourcing ckCommon so this
-# wins over that default.
+# Lower than ckCommon's build-sized default (128); running a binary needs fewer
+# cores than compiling. Set before sourcing ckCommon so this wins.
 CPUS=${CPUS:-32}
 
 # shellcheck source=bin/ckCommon disable=SC1091
@@ -106,9 +100,8 @@ echo "Image: $IMAGE"
 
 WORKDIR=${WORKDIR:-$REPO}
 
-# Serialize the user command so spaces, globs, and quoting survive node-side
-# re-parsing. printf %q over the argv yields a string that re-expands to the
-# exact same words under bash -c.
+# printf %q re-expands to the exact same words under bash -c, surviving node-side
+# re-parsing (spaces, globs, quoting).
 CMD_STR=$(printf '%q ' "${CMD[@]}")
 
 REMOTE_PROG=$(
@@ -124,8 +117,6 @@ $CMD_STR
 EOF
 )
 
-# GPU exposed by default (running binaries needs the device), CPU-only when
-# GPU=0. srun prefers a running GPU holder (ckHold): overlap into it for an
-# instant run, no queue wait. Falls back to a fresh srun allocation when none
-# is held.
+# GPU exposed by default, CPU-only when GPU=0. srun prefers a running GPU holder
+# (ckHold) for an instant run; falls back to a fresh allocation when none is held.
 _dispatch_run_like "$GPU" "$WORKDIR" "$REMOTE_PROG"
