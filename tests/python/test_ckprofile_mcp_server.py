@@ -473,3 +473,21 @@ def test_get_summary_wrong_mode_raises(server, ck_repo, monkeypatch):
     result = asyncio.run(_run_and_get_summary(server, ck_repo, "ckStaticProfile", None))
     with pytest.raises(ValueError, match="does not emit a summary"):
         server.get_summary(result["job_id"])
+
+
+def test_get_summary_stale_mode_raises_actionable_error(server, ck_repo, monkeypatch):
+    """A job persisted under a pre-rename mode name (ckRunProfile) must raise
+    ValueError, not a bare KeyError."""
+    monkeypatch.delenv("STUB_CKREMOTE_RUN_RC", raising=False)
+    monkeypatch.delenv("STUB_CKREMOTE_PULL_RC", raising=False)
+
+    result = asyncio.run(
+        _run_and_get_summary(server, ck_repo, "ckDynamicProfile", None)
+    )
+    status_path = server._store._status_path(result["job_id"])
+    status = json.loads(status_path.read_text())
+    status["mode"] = "ckRunProfile"
+    status_path.write_text(json.dumps(status))
+
+    with pytest.raises(ValueError, match="unknown mode 'ckRunProfile'"):
+        server.get_summary(result["job_id"])

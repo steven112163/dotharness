@@ -238,7 +238,12 @@ def get_summary(job_id: str) -> dict:
     """Read summary.json for a finished job. Only ckDynamicProfile emits one; other modes raise."""
     validation.validate_job_id(job_id)
     status = _store.get_status(job_id)
-    mode_info = job_store.MODES[status["mode"]]
+    # .get, not [.]: a job persisted under a mode name from before a rename
+    # (e.g. ckRunProfile -> ckDynamicProfile) could otherwise raise a bare
+    # KeyError instead of this clear, actionable error.
+    mode_info = job_store.MODES.get(status["mode"])
+    if mode_info is None:
+        raise ValueError(f"unknown mode '{status['mode']}' for job '{job_id}'")
     if not mode_info["emits_summary"]:
         raise ValueError(f"mode '{status['mode']}' does not emit a summary.json")
     if status["state"] != "done":
