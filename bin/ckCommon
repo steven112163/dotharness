@@ -371,9 +371,15 @@ _docker_run_local() {
     eval "$_ACCT_SETUP_SH"
     # --cpus is local only: under srun the cgroupv2 cgroup is threaded and docker
     # --cpus fails to start the container; the srun JOBS clamp handles -j there.
+    # CPUS defaults to a cluster-sized 128; docker rejects --cpus above the
+    # daemon's own NCPU (e.g. "range of CPUs is from 0.01 to 16.00" on a
+    # 16-core dev machine), so cap it at this host's core count, mirroring the
+    # JOBS clamp ckBuild's srun heredoc already does for the same reason.
+    local cpus=$CPUS
+    [ "$cpus" -gt "$(nproc)" ] && cpus=$(nproc)
     # _ACCT_FLAGS holds no-space paths under $ACCT_DIR; the word-split is intended.
     # shellcheck disable=SC2086
-    docker run "${DOCKER_FLAGS[@]}" --cpus "$CPUS" $_ACCT_FLAGS "$IMAGE" bash -c "$remote_prog"
+    docker run "${DOCKER_FLAGS[@]}" --cpus "$cpus" $_ACCT_FLAGS "$IMAGE" bash -c "$remote_prog"
 }
 
 # Echo the job id of the running GPU holder (ckHold), or nothing. Only a RUNNING
