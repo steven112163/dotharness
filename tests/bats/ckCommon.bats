@@ -655,8 +655,64 @@ teardown() {
     [[ "$output" == *"tag=[test-image-"*"]"* ]]
     [[ "$output" == *"image inspect"* ]]
     [[ "$output" == *"run -u 0 --name ck-setup-"* ]]
-    [[ "$output" == *"commit ck-setup-"* ]]
+    [[ "$output" == *"commit --change"*"ck-setup-"* ]]
     [[ "$output" == *"rm -f ck-setup-"* ]]
+}
+
+@test "_ensure_docker_setup_image commits with --change flags restoring IMAGE's original ENTRYPOINT/CMD" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD='echo setup'
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        callfile='$TMPDIR_TEST/docker-calls'
+        : >\"\$callfile\"
+        docker() {
+            echo \"\$*\" >>\"\$callfile\"
+            case \"\$*\" in
+            *Entrypoint*) echo ORIGENTRY; return 0 ;;
+            *Config.Cmd*) echo ORIGCMD; return 0 ;;
+            esac
+            case \"\$1\" in
+            image) return 1 ;;
+            run) return 0 ;;
+            commit) return 0 ;;
+            rm) return 0 ;;
+            esac
+        }
+        _ensure_docker_setup_image >/dev/null
+        cat \"\$callfile\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"commit --change ENTRYPOINT ORIGENTRY --change CMD ORIGCMD ck-setup-"* ]]
+}
+
+@test "_ensure_docker_setup_image normalizes IMAGE's unset (docker-reported 'null') ENTRYPOINT/CMD to an empty array" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD='echo setup'
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        callfile='$TMPDIR_TEST/docker-calls'
+        : >\"\$callfile\"
+        docker() {
+            echo \"\$*\" >>\"\$callfile\"
+            case \"\$*\" in
+            *Entrypoint*) echo null; return 0 ;;
+            *Config.Cmd*) echo null; return 0 ;;
+            esac
+            case \"\$1\" in
+            image) return 1 ;;
+            run) return 0 ;;
+            commit) return 0 ;;
+            rm) return 0 ;;
+            esac
+        }
+        _ensure_docker_setup_image >/dev/null
+        cat \"\$callfile\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"commit --change ENTRYPOINT [] --change CMD [] ck-setup-"* ]]
 }
 
 @test "_ensure_docker_setup_image reuses an existing derived image without rebuilding" {
@@ -732,7 +788,7 @@ teardown() {
     "
     [ "$status" -eq 1 ]
     [[ "$output" == *"tag=[]"* ]]
-    [[ "$output" == *"commit ck-setup-"* ]]
+    [[ "$output" == *"commit --change"*"ck-setup-"* ]]
     [[ "$output" == *"rm -f ck-setup-"* ]]
 }
 
@@ -811,7 +867,7 @@ teardown() {
     [ "$status" -eq 1 ]
     [[ "$output" == *"--entrypoint bash test-image -euo pipefail -c false; echo ok"* ]]
     [[ "$output" == *"rm -f ck-setup-"* ]]
-    [[ "$output" != *"commit ck-setup-"* ]]
+    [[ "$output" != *"commit"* ]]
 }
 
 @test "_ensure_docker_setup_image passes --entrypoint bash so a custom-entrypoint IMAGE still runs DOCKER_SETUP_CMD" {
@@ -945,7 +1001,14 @@ teardown() {
         docker() {
             case \"\$1\" in
             image) return 1 ;;
-            run) echo \"container=\$5\"; return 0 ;;
+            run)
+                shift
+                while [ \$# -gt 0 ]; do
+                    [ \"\$1\" = --name ] && echo \"container=\$2\"
+                    shift
+                done
+                return 0
+                ;;
             commit) return 0 ;;
             rm) return 0 ;;
             esac
