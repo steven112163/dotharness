@@ -157,10 +157,21 @@ _docker_setup_image_tag() {
     echo "$(_sanitized_image_tag "$IMAGE")-$(_sanitize_docker_name "$USER")-$hash"
 }
 
+# Shared cleanup for the setup container used by all three failure/success
+# paths in _ensure_docker_setup_image, so the warning text can't drift across
+# copies.
+_warn_rm_setup_container() {
+    docker rm -f "$1" >/dev/null 2>&1 ||
+        echo "WARNING: failed to remove setup container $1; remove it manually (docker rm -f $1)." >&2
+}
+
 # Echo the image to dispatch: $IMAGE unchanged if DOCKER_SETUP_CMD is empty,
 # else the docker-commit derived tag (built once per (IMAGE, DOCKER_SETUP_CMD)
 # pair, reused thereafter). flock serializes concurrent builds of a missing
 # tag; the fd is scoped to this function's $(...) subshell.
+# NOTE: the fast cache-hit path still resolves $IMAGE's digest (see
+# _resolve_image_id) to compute $tag, so it re-pulls if $IMAGE is later
+# removed locally even though the derived $tag is already cached.
 _ensure_docker_setup_image() {
     [ -z "$DOCKER_SETUP_CMD" ] && {
         echo "$IMAGE"
@@ -199,21 +210,31 @@ _ensure_docker_setup_image() {
     # "bash -euo pipefail -c CMD" as entrypoint args instead of executing it.
     if ! docker run -u 0 --name "$container" --entrypoint bash "$IMAGE" -euo pipefail -c "$DOCKER_SETUP_CMD" >&2; then
         echo "ERROR: DOCKER_SETUP_CMD failed inside $IMAGE; derived image not built." >&2
-        docker rm -f "$container" >/dev/null 2>&1 ||
-            echo "WARNING: failed to remove setup container $container; remove it manually (docker rm -f $container)." >&2
+        _warn_rm_setup_container "$container"
         return 1
     fi
-    if ! docker commit "$container" "$tag" >/dev/null; then
+    # docker commit inherits the container's *runtime* config verbatim, which
+    # would otherwise permanently bake this container's --entrypoint bash
+    # override into $tag and break every later real dispatch (dispatch runs
+    # plain "bash -c ..." with no --entrypoint, expecting $IMAGE's own
+    # entrypoint/cmd). Restore $IMAGE's original values instead. By this point
+    # docker run above has already resolved/pulled $IMAGE, so this inspect
+    # cannot fail.
+    local orig_entrypoint orig_cmd
+    orig_entrypoint=$(docker image inspect --format '{{json .Config.Entrypoint}}' "$IMAGE")
+    orig_cmd=$(docker image inspect --format '{{json .Config.Cmd}}' "$IMAGE")
+    [ "$orig_entrypoint" = "null" ] && orig_entrypoint="[]"
+    [ "$orig_cmd" = "null" ] && orig_cmd="[]"
+    if ! docker commit --change "ENTRYPOINT $orig_entrypoint" --change "CMD $orig_cmd" \
+        "$container" "$tag" >/dev/null; then
         echo "ERROR: docker commit failed for $tag; derived image not built." >&2
-        docker rm -f "$container" >/dev/null 2>&1 ||
-            echo "WARNING: failed to remove setup container $container; remove it manually (docker rm -f $container)." >&2
+        _warn_rm_setup_container "$container"
         return 1
     fi
     # The tag now exists, so a future call short-circuits on the cache-hit
     # check above and never retries this cleanup: a failure here permanently
     # leaks the (large) stopped container, so warn rather than silently drop it.
-    docker rm -f "$container" >/dev/null 2>&1 ||
-        echo "WARNING: failed to remove setup container $container; remove it manually (docker rm -f $container)." >&2
+    _warn_rm_setup_container "$container"
     echo "$tag"
 }
 
