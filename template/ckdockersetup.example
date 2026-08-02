@@ -25,9 +25,17 @@
 # `bash -euo pipefail -c "$DOCKER_SETUP_CMD"` wrapper — kept anyway as
 # belt-and-suspenders in case this file is ever run outside that wrapper.
 set -euo pipefail
+
 source /opt/venv/bin/activate
 PYVER=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
 ROCM_VER=$(cat /opt/venv/lib/python$PYVER/site-packages/_rocm_sdk_core/.info/version)
+
 python3 -m pip install --index-url https://repo.amd.com/rocm/whl-multi-arch/ "rocm[devel,profiler]==$ROCM_VER"
 rocm-sdk init
 ln -sfn /opt/venv/lib/python$PYVER/site-packages/_rocm_sdk_devel /opt/rocm
+
+echo /opt/rocm/lib > /etc/ld.so.conf.d/rocm-sdk.conf
+ldconfig
+
+echo 'export PATH=/opt/rocm/bin:$PATH' >> /etc/bash.bashrc
+echo 'export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH' >> /etc/bash.bashrc
