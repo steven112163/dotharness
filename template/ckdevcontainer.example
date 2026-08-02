@@ -1,0 +1,16 @@
+# DEV_CONTAINER_NAME for bin/ckCommon: names a persistent container (created
+# once via `bin/dockerRun <image> <name>`) that the docker backend
+# (_docker_run_local) reuses via `docker exec` instead of spinning up a fresh
+# --rm container per command, when that container is currently running.
+#
+# Copy to ~/.config/ckdevcontainer (or point DEV_CONTAINER_NAME_FILE
+# elsewhere) to enable. Missing file (the default): no reuse, every command
+# runs in a fresh --rm container as before.
+#
+# Reuse ignores DOCKER_SETUP_CMD entirely — keeping this container's setup in
+# sync with DOCKER_SETUP_CMD is on you, not something this flow reconciles.
+# Only a RUNNING container is reused; a stopped one falls back to the normal
+# --rm flow (dockerRun's --restart=always should keep it running regardless).
+#
+# File content is just the container name, nothing else:
+my_dev_container

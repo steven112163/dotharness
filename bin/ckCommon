@@ -42,6 +42,22 @@ fi
 # Where generated passwd/group files, and _ensure_docker_setup_image's
 # per-tag build locks, live (regenerated per run, per uid/tag).
 ACCT_DIR=${ACCT_DIR:-$HOME/.cache/ckCommon}
+# Name of a persistent container (see bin/dockerRun) that _docker_run_local
+# reuses via `docker exec` instead of a fresh --rm container, when running.
+# Same file-based opt-in as DOCKER_SETUP_CMD above; see the parsing comment
+# there for the `-e || -L` / unset-on-failure rationale, mirrored here.
+DEV_CONTAINER_NAME_FILE=${DEV_CONTAINER_NAME_FILE:-$HOME/.config/ckdevcontainer}
+if [ -z "${DEV_CONTAINER_NAME+x}" ]; then
+    if [ -e "$DEV_CONTAINER_NAME_FILE" ] || [ -L "$DEV_CONTAINER_NAME_FILE" ]; then
+        DEV_CONTAINER_NAME=$(cat "$DEV_CONTAINER_NAME_FILE" 2>/dev/null) || {
+            echo "ERROR: $DEV_CONTAINER_NAME_FILE exists but could not be read." >&2
+            unset _CKCOMMON_SOURCED DEV_CONTAINER_NAME
+            return 1
+        }
+    else
+        DEV_CONTAINER_NAME=""
+    fi
+fi
 # Slurm job name of the persistent GPU holder (ckHold). When one is running,
 # ckRun dispatches into it via `srun --jobid --overlap` (instant, no queue wait).
 HOLD_NAME=${HOLD_NAME:-ckhold-$USER}
@@ -316,11 +332,30 @@ docker run $static \$_ACCT_FLAGS "$IMAGE" bash -c '$escaped'
 EOF
 }
 
+# True if $DEV_CONTAINER_NAME names a currently RUNNING container (`docker
+# ps` without -a already excludes stopped ones — docker exec needs running).
+_dev_container_running() {
+    docker ps --format '{{.Names}}' | grep -qx "$DEV_CONTAINER_NAME"
+}
+
 # Run a program in a --rm container on THIS host (no srun); image is
 # auto-pulled by docker run if absent. $1: gpu bit, $2: workdir, $3: inner
 # program. Returns the program's rc.
 _docker_run_local() {
-    local gpu="$1" workdir="$2" remote_prog="$3" _ACCT_GPU="$1" _ACCT_FLAGS=""
+    local gpu="$1" workdir="$2" remote_prog="$3"
+    # Reuse the persistent dev container (bin/dockerRun) if it's running,
+    # skipping image-ensurance/DOCKER_SETUP_CMD entirely — keeping this
+    # container in sync with DOCKER_SETUP_CMD is on the user. `docker exec -w`
+    # sets the per-call workdir independent of the container's own -w baked in
+    # at creation; no --user override needed, exec inherits the container's
+    # default user (dockerRun already set it to this same uid:gid).
+    if [ -n "$DEV_CONTAINER_NAME" ] && _dev_container_running; then
+        echo "Reusing running dev container '$DEV_CONTAINER_NAME' (docker exec) ..." >&2
+        docker exec -w "$workdir" "$DEV_CONTAINER_NAME" bash -c "$remote_prog"
+        return
+    fi
+    echo "Running in a fresh --rm container (image ensurance) ..." >&2
+    local _ACCT_GPU="$gpu" _ACCT_FLAGS=""
     # Resolve then shadow IMAGE (`local IMAGE; IMAGE=$(...)` unsets it before
     # the subshell forks); _ACCT_SETUP_SH below also reads $IMAGE.
     local resolved_image

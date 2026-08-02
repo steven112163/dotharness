@@ -18,6 +18,8 @@ setup() {
     # docker build. Tests that exercise DOCKER_SETUP_CMD_FILE resolution set
     # it explicitly per-test, overriding this default.
     export DOCKER_SETUP_CMD_FILE="$TMPDIR_TEST/no-ckdockersetup-by-default"
+    # Same isolation for DEV_CONTAINER_NAME_FILE (see above).
+    export DEV_CONTAINER_NAME_FILE="$TMPDIR_TEST/no-ckdevcontainer-by-default"
 }
 
 teardown() {
@@ -1209,6 +1211,171 @@ teardown() {
     "
     [ "$status" -eq 0 ]
     [[ "$output" == *"--cpus 1 "* ]]
+}
+
+@test "_docker_run_local execs into the dev container when it is running" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DEV_CONTAINER_NAME=styuan_dev
+        REPO=/repo
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        CCACHE_DIR='$TMPDIR_TEST/ccache'
+        callfile='$TMPDIR_TEST/docker-calls'
+        : >\"\$callfile\"
+        docker() {
+            echo \"\$*\" >>\"\$callfile\"
+            [ \"\$1\" = ps ] && echo styuan_dev
+            return 0
+        }
+        _docker_run_local 0 /work/dir 'echo hi' >/dev/null
+        cat \"\$callfile\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"exec -w /work/dir styuan_dev bash -c echo hi"* ]]
+    [[ "$output" != *"image inspect"* ]]
+    [[ "$output" != *"run "* ]]
+}
+
+@test "_docker_run_local falls through to the ephemeral flow when the dev container is not running" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DEV_CONTAINER_NAME=styuan_dev
+        DOCKER_SETUP_CMD=''
+        REPO=/repo
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        CCACHE_DIR='$TMPDIR_TEST/ccache'
+        callfile='$TMPDIR_TEST/docker-calls'
+        : >\"\$callfile\"
+        docker() {
+            echo \"\$*\" >>\"\$callfile\"
+            [ \"\$1\" = ps ] && return 0
+            return 0
+        }
+        _docker_run_local 0 /work/dir 'echo hi' >/dev/null
+        cat \"\$callfile\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"exec -w"* ]]
+    [[ "$output" == *"test-image bash -c"* ]]
+}
+
+@test "_docker_run_local falls through to the ephemeral flow when DEV_CONTAINER_NAME is unset (default, regression)" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DOCKER_SETUP_CMD=''
+        REPO=/repo
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        CCACHE_DIR='$TMPDIR_TEST/ccache'
+        callfile='$TMPDIR_TEST/docker-calls'
+        : >\"\$callfile\"
+        docker() { echo \"\$*\" >>\"\$callfile\"; return 0; }
+        _docker_run_local 0 /work/dir 'echo hi' >/dev/null
+        cat \"\$callfile\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"ps "* ]]
+    [[ "$output" != *"exec -w"* ]]
+    [[ "$output" == *"test-image bash -c"* ]]
+}
+
+@test "_docker_run_local reuses the dev container even when DOCKER_SETUP_CMD is set" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DEV_CONTAINER_NAME=styuan_dev
+        DOCKER_SETUP_CMD='echo setup'
+        REPO=/repo
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        CCACHE_DIR='$TMPDIR_TEST/ccache'
+        callfile='$TMPDIR_TEST/docker-calls'
+        : >\"\$callfile\"
+        docker() {
+            echo \"\$*\" >>\"\$callfile\"
+            [ \"\$1\" = ps ] && echo styuan_dev
+            return 0
+        }
+        _docker_run_local 0 /work/dir 'echo hi' >/dev/null
+        cat \"\$callfile\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"exec -w /work/dir styuan_dev bash -c echo hi"* ]]
+    [[ "$output" != *"image inspect"* ]]
+    [[ "$output" != *"commit"* ]]
+}
+
+@test "_docker_run_local passes the call's workdir to docker exec -w, not the container's baked-in \$HOME" {
+    run bash -c "
+        source '$CKCOMMON'
+        IMAGE=test-image
+        DEV_CONTAINER_NAME=styuan_dev
+        HOME=/home/someone
+        REPO=/repo
+        ACCT_DIR='$TMPDIR_TEST/acct'
+        CCACHE_DIR='$TMPDIR_TEST/ccache'
+        callfile='$TMPDIR_TEST/docker-calls'
+        : >\"\$callfile\"
+        docker() {
+            echo \"\$*\" >>\"\$callfile\"
+            [ \"\$1\" = ps ] && echo styuan_dev
+            return 0
+        }
+        _docker_run_local 0 /repo/build 'echo hi' >/dev/null
+        cat \"\$callfile\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"exec -w /repo/build styuan_dev"* ]]
+    [[ "$output" != *"-w /home/someone"* ]]
+}
+
+# --- DEV_CONTAINER_NAME_FILE: same file-based opt-in as DOCKER_SETUP_CMD_FILE ---
+
+@test "DEV_CONTAINER_NAME defaults to empty when DEV_CONTAINER_NAME_FILE is absent" {
+    run bash -c "
+        DEV_CONTAINER_NAME_FILE='$TMPDIR_TEST/missing'
+        source '$CKCOMMON'
+        echo \"name=[\$DEV_CONTAINER_NAME]\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"name=[]"* ]]
+}
+
+@test "DEV_CONTAINER_NAME reads the container name from DEV_CONTAINER_NAME_FILE" {
+    echo styuan_dev >"$TMPDIR_TEST/ckdevcontainer"
+    run bash -c "
+        DEV_CONTAINER_NAME_FILE='$TMPDIR_TEST/ckdevcontainer'
+        source '$CKCOMMON'
+        echo \"name=[\$DEV_CONTAINER_NAME]\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"name=[styuan_dev]"* ]]
+}
+
+@test "an explicit DEV_CONTAINER_NAME overrides DEV_CONTAINER_NAME_FILE content" {
+    echo from-file >"$TMPDIR_TEST/ckdevcontainer"
+    run bash -c "
+        DEV_CONTAINER_NAME_FILE='$TMPDIR_TEST/ckdevcontainer'
+        DEV_CONTAINER_NAME=from-env
+        source '$CKCOMMON'
+        echo \"name=[\$DEV_CONTAINER_NAME]\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"name=[from-env]"* ]]
+}
+
+@test "an existing but unreadable DEV_CONTAINER_NAME_FILE fails loudly instead of silently defaulting to empty" {
+    [ "$(id -u)" -eq 0 ] && skip "root ignores file permissions"
+    echo styuan_dev >"$TMPDIR_TEST/ckdevcontainer"
+    chmod 000 "$TMPDIR_TEST/ckdevcontainer"
+    run bash -c "
+        DEV_CONTAINER_NAME_FILE='$TMPDIR_TEST/ckdevcontainer'
+        source '$CKCOMMON'
+    "
+    chmod 644 "$TMPDIR_TEST/ckdevcontainer"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"exists but could not be read"* ]]
 }
 
 @test "_dispatch_build_like on srun resolves the derived setup image before ensuring the tarball" {
