@@ -178,27 +178,30 @@ _ensure_docker_setup_image() {
             return 1
         }
     fi
-    # >&2: this function's result is captured via $(...); DOCKER_SETUP_CMD's
-    # own stdout must not land in the captured tag. -euo pipefail: without it
-    # only the *last* command's exit status counts, letting a partial setup
-    # get cached as success. --entrypoint bash: a custom-entrypoint IMAGE would
-    # otherwise get this as entrypoint args instead of executing it.
-    if ! docker run -u 0 --name "$container" --entrypoint bash "$IMAGE" -euo pipefail -c "$DOCKER_SETUP_CMD" >&2; then
+    # docker commit --change can't reset ENTRYPOINT to none once --entrypoint
+    # overrode it at run time (verified against a real image); only override/
+    # restore it when $IMAGE has a custom entrypoint, else run bash directly.
+    local orig_entrypoint orig_cmd
+    orig_entrypoint=$(docker image inspect --format '{{json .Config.Entrypoint}}' "$IMAGE")
+    orig_cmd=$(docker image inspect --format '{{json .Config.Cmd}}' "$IMAGE")
+    [ "$orig_cmd" = "null" ] && orig_cmd="[]"
+    local entrypoint_flags=() setup_argv=(bash -euo pipefail -c "$DOCKER_SETUP_CMD")
+    if [ "$orig_entrypoint" != "null" ]; then
+        entrypoint_flags=(--entrypoint bash)
+        setup_argv=(-euo pipefail -c "$DOCKER_SETUP_CMD")
+    fi
+    # >&2: result is captured via $(...); DOCKER_SETUP_CMD's own stdout must
+    # not land in the captured tag. -euo pipefail: without it only the *last*
+    # command's exit status counts, letting a partial setup cache as success.
+    if ! docker run -u 0 --name "$container" "${entrypoint_flags[@]}" "$IMAGE" "${setup_argv[@]}" >&2; then
         echo "ERROR: DOCKER_SETUP_CMD failed inside $IMAGE; derived image not built." >&2
         _warn_rm_setup_container "$container"
         return 1
     fi
-    # docker commit inherits the container's runtime config verbatim, which
-    # would otherwise bake this --entrypoint bash override into $tag and break
-    # every later dispatch. Restore $IMAGE's original values; by now docker run
-    # has already resolved $IMAGE, so this inspect cannot fail.
-    local orig_entrypoint orig_cmd
-    orig_entrypoint=$(docker image inspect --format '{{json .Config.Entrypoint}}' "$IMAGE")
-    orig_cmd=$(docker image inspect --format '{{json .Config.Cmd}}' "$IMAGE")
-    [ "$orig_entrypoint" = "null" ] && orig_entrypoint="[]"
-    [ "$orig_cmd" = "null" ] && orig_cmd="[]"
-    if ! docker commit --change "ENTRYPOINT $orig_entrypoint" --change "CMD $orig_cmd" \
-        "$container" "$tag" >/dev/null; then
+    local change_flags=()
+    [ "$orig_entrypoint" != "null" ] && change_flags+=(--change "ENTRYPOINT $orig_entrypoint")
+    change_flags+=(--change "CMD $orig_cmd")
+    if ! docker commit "${change_flags[@]}" "$container" "$tag" >/dev/null; then
         echo "ERROR: docker commit failed for $tag; derived image not built." >&2
         _warn_rm_setup_container "$container"
         return 1

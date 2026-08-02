@@ -687,7 +687,9 @@ teardown() {
     [[ "$output" == *"commit --change ENTRYPOINT ORIGENTRY --change CMD ORIGCMD ck-setup-"* ]]
 }
 
-@test "_ensure_docker_setup_image normalizes IMAGE's unset (docker-reported 'null') ENTRYPOINT/CMD to an empty array" {
+@test "_ensure_docker_setup_image skips --entrypoint bash and the ENTRYPOINT --change when IMAGE has no entrypoint" {
+    # docker commit --change can't reset ENTRYPOINT once --entrypoint overrode
+    # it at run time (verified against a real image); null-entrypoint IMAGE must skip that path.
     run bash -c "
         source '$CKCOMMON'
         IMAGE=test-image
@@ -712,7 +714,10 @@ teardown() {
         cat \"\$callfile\"
     "
     [ "$status" -eq 0 ]
-    [[ "$output" == *"commit --change ENTRYPOINT [] --change CMD [] ck-setup-"* ]]
+    [[ "$output" == *"run -u 0 --name ck-setup-"*" test-image bash -euo pipefail -c echo setup"* ]]
+    [[ "$output" != *"--entrypoint"* ]]
+    [[ "$output" == *"commit --change CMD [] ck-setup-"* ]]
+    [[ "$output" != *"ENTRYPOINT"* ]]
 }
 
 @test "_ensure_docker_setup_image reuses an existing derived image without rebuilding" {
