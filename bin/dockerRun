@@ -44,14 +44,13 @@ docker run -d -it \
     --security-opt seccomp=unconfined --privileged \
     --network=host \
     --cap-add=SYS_PTRACE \
-    --restart=always \
     --name "$name" \
     --user "$(id -u):$(id -g)" \
     $_ACCT_FLAGS \
     -v "$HOME:$HOME" \
     -v "$CCACHE_DIR:$CCACHE_DIR" \
-    -v /dev/dri:/dev/dri \
-    -v /dev/kfd:/dev/kfd \
+    --device=/dev/dri \
+    --device=/dev/kfd \
     -w "$HOME" \
     -e HOME="$HOME" \
     -e USER="$(id -un)" \
