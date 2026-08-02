@@ -10,7 +10,7 @@
 # Reuse ignores DOCKER_SETUP_CMD entirely — keeping this container's setup in
 # sync with DOCKER_SETUP_CMD is on you, not something this flow reconciles.
 # Only a RUNNING container is reused; a stopped one falls back to the normal
-# --rm flow (dockerRun's --restart=always should keep it running regardless).
+# --rm flow.
 #
 # File content is just the container name, nothing else:
 my_dev_container
