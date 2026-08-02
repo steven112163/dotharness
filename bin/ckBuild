@@ -186,7 +186,6 @@ echo "Configuring ($ARCH) in $build_abs ..."
 ../script/cmake-ck-dev.sh $MINIMAL .. "$ARCH" -G Ninja \$CACHE_FLAGS ${EXTRA_CMAKE[*]:-}
 EOF
     )
-
     if _dispatch_build_like 0 "$build_abs" "$remote_prog"; then
         echo "Configure successful ($build_abs)"
     else
