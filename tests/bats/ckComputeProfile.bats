@@ -10,11 +10,11 @@ setup() {
 }
 
 ok() {
-    bash -c "$(awk '/^_venv_basename_ok\(\)/,/^}/' "$SCRIPT"); _venv_basename_ok '$1'"
+    bash -c "$(awk '/^ *_venv_basename_ok\(\)/,/^ *}/' "$SCRIPT"); _venv_basename_ok '$1'"
 }
 
 under() {
-    bash -c "$(awk '/^_venv_under_root_ok\(\)/,/^}/' "$SCRIPT"); _venv_under_root_ok '$1' '$2' '$3'"
+    bash -c "$(awk '/^ *_venv_under_root_ok\(\)/,/^ *}/' "$SCRIPT"); _venv_under_root_ok '$1' '$2' '$3'"
 }
 
 @test "accepts the default venv path" {
@@ -77,6 +77,6 @@ under() {
     # with "Bad file descriptor" (NFS emulates flock via POSIX locks, which
     # require read access for a shared lock). `<>` avoids that; `>` does not.
     # shellcheck disable=SC2016 # the $LOCK below is a literal regex match, not an expansion
-    run grep -qE '^exec \{venv_lock_fd\}<>"\$LOCK"' "$SCRIPT"
+    run grep -qE '^ *exec \{venv_lock_fd\}<>"\$LOCK"' "$SCRIPT"
     [ "$status" -eq 0 ]
 }
