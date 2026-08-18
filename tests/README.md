@@ -41,15 +41,8 @@ CSV panel parsing, bar-fill color thresholds, and the `ckAggregate` `COUNTER_CLA
 guard / `summary.json` emission (loaded via `importlib` since `ckAggregate` has no
 `.py` extension).
 
-`test_ckprofile_mcp_job_store.py`, `test_ckprofile_mcp_server.py`,
-`test_ckprofile_mcp_validation.py`, and `test_ckprofile_mcp_detach.py` cover the
-ck-profile MCP server in `lib/ck-profile-mcp/`: job state/reconciliation/retention,
-the `run_profile`/`get_job_status`/`get_summary` tool surface (`ckRemote` stubbed via
-a fake `PATH` entry), input validation, and the `start_new_session=True` detachment
-`run_profile` relies on.
-
-`conftest.py` puts `bin/`, `lib/ck-profile/`, and `lib/ck-profile-mcp/` on `sys.path`
-so all of the above import by name.
+`conftest.py` puts `bin/` and `lib/ck-profile/` on `sys.path` so all of the above
+import by name.
 
 Run with `pytest` (config in `pyproject.toml` points at `tests/python`). CI runs
 it in the `pytest` job.

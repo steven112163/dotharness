@@ -134,9 +134,9 @@ echo "  Pre-commit:"
 venv_dir="$REPO_DIR/.venv"
 if [ ! -x "$venv_dir/bin/pre-commit" ]; then
     if command -v python3 &>/dev/null; then
-        echo "    creating .venv and installing pre-commit, anthropic, mcp"
+        echo "    creating .venv and installing pre-commit, anthropic"
         python3 -m venv "$venv_dir"
-        "$venv_dir/bin/pip" install --quiet --upgrade pip pre-commit anthropic "mcp>=1.27,<2"
+        "$venv_dir/bin/pip" install --quiet --upgrade pip pre-commit anthropic
     else
         echo "    skipped (python3 not found)"
     fi
@@ -144,10 +144,6 @@ else
     if ! "$venv_dir/bin/python3" -c "import anthropic" 2>/dev/null; then
         echo "    installing anthropic into existing .venv"
         "$venv_dir/bin/pip" install --quiet anthropic
-    fi
-    if ! "$venv_dir/bin/python3" -c "import mcp" 2>/dev/null; then
-        echo "    installing mcp into existing .venv"
-        "$venv_dir/bin/pip" install --quiet "mcp>=1.27,<2"
     fi
 fi
 if [ -x "$venv_dir/bin/pre-commit" ]; then
@@ -371,26 +367,6 @@ if command -v claude &>/dev/null; then
         fi
     done
 
-    # --- ck-profile MCP server (user-level, available in every repo) ---
-    echo "  ck-profile MCP server:"
-    if [ -x "$venv_dir/bin/python3" ]; then
-        # `claude mcp get` prints Command and Args on separate lines, so both must
-        # be checked individually rather than as one combined string.
-        ckprofile_mcp_info=$(claude mcp get ck-profile 2>/dev/null || true)
-        if grep -qF "$venv_dir/bin/python3" <<<"$ckprofile_mcp_info" &&
-            grep -qF "$REPO_DIR/lib/ck-profile-mcp/server.py" <<<"$ckprofile_mcp_info"; then
-            echo "    ok  ck-profile"
-        else
-            echo "    registering ck-profile"
-            # Remove first in case a mismatched entry already exists (e.g. repo
-            # moved or .venv recreated elsewhere) — `mcp add` fails if the name is
-            # already registered, which would abort the script under set -e.
-            claude mcp remove ck-profile -s user 2>/dev/null || true
-            claude mcp add -s user ck-profile -- "$venv_dir/bin/python3" "$REPO_DIR/lib/ck-profile-mcp/server.py"
-        fi
-    else
-        echo "    skipped (.venv not found)"
-    fi
 else
     echo "  skipped (claude CLI not found)"
 fi
