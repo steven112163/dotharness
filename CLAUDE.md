@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Purpose
 
-dotharness is a **host-level configuration hub**: `setup.sh` symlinks everything into `~/.claude/`, `~/bin/`, and `~/lib/` so all skills, rules, hooks, agents, and CK tooling are available in **every repo on this machine** — not just this one. Changes here take effect immediately across all projects without reinstalling. Codex is a first-class second target: `setup.sh` mirrors skills, rules, hooks, statusline, and plugins into `~/.agents/` and `~/.codex/` whenever the `codex` CLI is present.
+dotharness is a **host-level configuration hub**: `setup.sh` symlinks everything into `~/.claude/`, `~/bin/`, and `~/lib/` so all skills, rules, hooks, agents, and CK tooling are available in **every repo on this machine** — not just this one. Changes here take effect immediately across all projects without reinstalling. Both agent CLIs are gated symmetrically: Claude-specific setup (rules/skills/agents/hooks into `~/.claude/`, settings.json, plugins, ck-profile MCP) runs only when the `claude` CLI is present; Codex-specific setup (skills/hooks/statusline/plugins into `~/.agents/` and `~/.codex/`) runs only when the `codex` CLI is present. Agent-agnostic steps (binaries, libraries, global gitignore, pre-commit venv, playwright-cli, graphify base install) run unconditionally.
 
 ## Setup
 
@@ -15,7 +15,7 @@ git submodule update --init
 ./setup.sh
 ```
 
-`setup.sh` symlinks `skills/`, `agents/`, `hooks/`, `rules/`, `output-styles/`, third-party skills, and `statusline.sh` into `~/.claude/`; symlinks `bin/` scripts into `~/bin/`; symlinks `lib/` subdirs into `~/lib/`; symlinks `gitignore_global` to `~/.gitignore_global` and registers it as `git config --global core.excludesFile`; registers lifecycle hooks in `~/.claude/settings.json`; installs Claude plugins; installs `playwright-cli` (npm) and `graphify` (pipx) globally; provisions a repo-local `.venv` with `pre-commit`, `anthropic`, and `mcp`; and registers the `ck-profile` MCP server at user scope (`claude mcp add -s user ck-profile`). If the `codex` CLI is present, it also mirrors skills/hooks/statusline into `~/.agents/` and `~/.codex/`, concatenates `rules/*.md` into `~/.agents/AGENTS.md`, and runs `graphify install --platform codex`. Re-running is idempotent. Requires `jq`.
+`setup.sh` always symlinks `bin/` scripts into `~/bin/`; symlinks `lib/` subdirs into `~/lib/`; symlinks `gitignore_global` to `~/.gitignore_global` and registers it as `git config --global core.excludesFile`; provisions a repo-local `.venv` with `pre-commit`, `anthropic`, and `mcp`; and installs `playwright-cli` (npm) and `graphify` (pipx) globally. If the `claude` CLI is present, it also symlinks `skills/`, `agents/`, `hooks/`, `rules/`, `output-styles/`, third-party skills, and `statusline.sh` into `~/.claude/`; registers lifecycle hooks in `~/.claude/settings.json`; installs Claude plugins; and registers the `ck-profile` MCP server at user scope (`claude mcp add -s user ck-profile`). If the `codex` CLI is present, it also mirrors skills/hooks/statusline into `~/.agents/` and `~/.codex/`, concatenates `rules/*.md` into `~/.agents/AGENTS.md`, and runs `graphify install --platform codex`. Re-running is idempotent. Requires `jq`.
 
 `README.md` files inside linked directories are intentionally skipped — they document the repo without being parsed as active rules or skills.
 

@@ -82,115 +82,9 @@ link_skills_to() {
     prune "$dst_dir" "$indent"
 }
 
-echo "Claude:"
-
-# --- Rules: per-file so the folder README is not linked as a rule ---
-echo "  Rules:"
-if [ -L "$CLAUDE_DIR/rules" ]; then
-    echo "    converting $CLAUDE_DIR/rules from symlink to directory"
-    rm "$CLAUDE_DIR/rules"
-fi
-mkdir -p "$CLAUDE_DIR/rules"
-link_items "$REPO_DIR/rules" "$CLAUDE_DIR/rules" "    "
-prune "$CLAUDE_DIR/rules" "    "
-
-# --- Skills: merge own + third-party into commands/ ---
-echo "  Skills:"
-if [ -L "$CLAUDE_DIR/skills" ]; then
-    echo "    converting $CLAUDE_DIR/skills from symlink to directory"
-    rm "$CLAUDE_DIR/skills"
-fi
-link_skills_to "$CLAUDE_DIR/skills" "    "
-# Drop a caveman link from an earlier run, now that the plugin owns it.
-if [ -L "$CLAUDE_DIR/skills/caveman" ]; then
-    case "$(readlink "$CLAUDE_DIR/skills/caveman")" in
-    "$REPO_DIR"/third-party/*)
-        echo "    rm  $CLAUDE_DIR/skills/caveman (superseded by caveman plugin)"
-        rm "$CLAUDE_DIR/skills/caveman"
-        ;;
-    esac
-fi
-
-# --- Agents (native subagents, reusable as delegated subagents or team teammates) ---
-echo "  Agents:"
-mkdir -p "$CLAUDE_DIR/agents"
-link_items "$REPO_DIR/agents" "$CLAUDE_DIR/agents" "    "
-prune "$CLAUDE_DIR/agents" "    "
-
-# --- Hooks ---
-echo "  Hooks:"
-mkdir -p "$CLAUDE_DIR/hooks"
-link_items "$REPO_DIR/hooks" "$CLAUDE_DIR/hooks" "    "
-prune "$CLAUDE_DIR/hooks" "    "
-
-# Register hooks in global settings.json
-readonly SETTINGS="$CLAUDE_DIR/settings.json"
-register_hook() {
-    local event="$1" command="$2" name="$3" timeout="${4:-10}"
-    local matcher="${5:-}" async_rewake="${6:-0}"
-    if jq -e ".hooks.${event}[]? | .hooks[]? | select(.command == \"$command\")" "$SETTINGS" >/dev/null 2>&1; then
-        echo "    ok  $name"
-    else
-        echo "    add $name"
-        local aw=false
-        [ "$async_rewake" = "1" ] && aw=true
-        if [ -n "$matcher" ]; then
-            jq --arg evt "$event" --arg cmd "$command" --argjson to "$timeout" --arg mat "$matcher" --argjson aw "$aw" \
-                '.hooks = (.hooks // {}) | .hooks[$evt] = ((.hooks[$evt] // []) + [{"matcher": $mat, "hooks": [({"type": "command", "command": $cmd, "timeout": $to} + (if $aw then {"asyncRewake": true} else {} end))]}])' \
-                "$SETTINGS" >"${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
-        else
-            jq --arg evt "$event" --arg cmd "$command" --argjson to "$timeout" --argjson aw "$aw" \
-                '.hooks = (.hooks // {}) | .hooks[$evt] = ((.hooks[$evt] // []) + [{"hooks": [({"type": "command", "command": $cmd, "timeout": $to} + (if $aw then {"asyncRewake": true} else {} end))]}])' \
-                "$SETTINGS" >"${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
-        fi
-    fi
-}
-
-# Ensure settings.json exists so hooks/outputStyle can be set on a fresh machine.
-if command -v jq &>/dev/null && [ ! -f "$SETTINGS" ]; then
-    echo '{}' >"$SETTINGS"
-    echo "    created $SETTINGS"
-fi
-
-if [ -f "$SETTINGS" ] && command -v jq &>/dev/null; then
-    register_hook "UserPromptSubmit" "bash ~/.claude/hooks/anti-sycophancy.sh" "anti-sycophancy hook" 5
-    register_hook "PreToolUse" "bash ~/.claude/hooks/block-dangerous.sh" "block-dangerous hook" 5 "Bash|Write|Edit"
-    register_hook "PostToolUse" "bash ~/.claude/hooks/auto-format.sh" "auto-format hook" 10 "Write|Edit"
-    register_hook "PostToolUse" "bash ~/.claude/hooks/security-scan.sh" "security-scan hook" 5 "Write|Edit" 1
-    register_hook "Stop" "bash ~/.claude/hooks/notify-stop.sh" "notify-stop hook" 5
-    register_hook "PreCompact" "bash ~/.claude/hooks/context-save.sh" "context-save hook" 10
-    register_hook "Notification" "bash ~/.claude/hooks/notify-prompt.sh" "notify-prompt hook" 5
-    register_hook "PreToolUse" "bash ~/.claude/hooks/auto-approve.sh" "auto-approve hook" 5 "Bash"
-    register_hook "PreToolUse" "bash ~/.claude/hooks/commit-lint.sh" "commit-lint hook" 5 "Bash"
-    register_hook "SessionStart" "bash ~/.claude/hooks/session-start.sh" "session-start hook" 10
-    register_hook "SessionEnd" "bash ~/.claude/hooks/session-end.sh" "session-end hook" 10
-
-    # Allow codex commands without a per-call prompt (used by multi-review skill).
-    if jq -e '.permissions.allow | index("Bash(codex exec *)")' "$SETTINGS" >/dev/null 2>&1; then
-        echo "    ok  permissions.allow codex"
-    else
-        jq '.permissions.allow += ["Bash(codex exec *)"]' "$SETTINGS" >"${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
-        echo "    set permissions.allow codex"
-    fi
-
-    # Activate the dotharness output style unless the user already set one.
-    if jq -e '.outputStyle' "$SETTINGS" >/dev/null 2>&1; then
-        echo "    ok  outputStyle"
-    else
-        jq '.outputStyle = "dotharness"' "$SETTINGS" >"${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
-        echo "    set outputStyle=dotharness"
-    fi
-elif [ ! -f "$SETTINGS" ]; then
-    echo "    skipped (no settings.json found)"
-elif ! command -v jq &>/dev/null; then
-    echo "    skipped (jq not found, cannot update settings.json)"
-fi
-
-# --- Output styles ---
-echo "  Output styles:"
-mkdir -p "$CLAUDE_DIR/output-styles"
-link_items "$REPO_DIR/output-styles" "$CLAUDE_DIR/output-styles" "    "
-prune "$CLAUDE_DIR/output-styles" "    "
+# --- Shared: agent-agnostic setup that runs regardless of which agent CLIs
+# (claude, codex) are installed ---
+echo "Shared:"
 
 # --- Binaries (linked into ~/bin, which is on PATH) ---
 echo "  Binaries:"
@@ -205,19 +99,6 @@ readonly _SETUP_LIB_DIR="${HOME}/lib"
 mkdir -p "$_SETUP_LIB_DIR"
 link_items "$REPO_DIR/lib" "$_SETUP_LIB_DIR" "    "
 prune "$_SETUP_LIB_DIR" "    "
-
-# --- Statusline ---
-echo "  Statusline:"
-link "$REPO_DIR/statusline.sh" "$CLAUDE_DIR/statusline.sh" "    "
-if [ -f "$SETTINGS" ] && command -v jq &>/dev/null; then
-    if jq -e '.statusLine.command == "bash ~/.claude/statusline.sh"' "$SETTINGS" >/dev/null 2>&1; then
-        echo "    ok  statusLine"
-    else
-        jq '.statusLine = {"type": "command", "command": "bash ~/.claude/statusline.sh"}' \
-            "$SETTINGS" >"${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
-        echo "    set statusLine"
-    fi
-fi
 
 # --- Global gitignore (excludesFile applies to every repo on the machine) ---
 echo "  Global gitignore:"
@@ -320,19 +201,142 @@ else
     echo "    skipped (pipx not found)"
 fi
 
-# --- Plugins (requires claude CLI) ---
-echo "  Plugins:"
-# Register a marketplace by name from a GitHub <owner/repo>, idempotently.
-add_marketplace() {
-    local name="$1" repo="$2"
-    if grep -q "\"$name\"" "$CLAUDE_DIR/plugins/known_marketplaces.json" 2>/dev/null; then
-        echo "    ok  marketplace $name"
-    else
-        echo "    adding marketplace $name ($repo)"
-        claude plugin marketplace add "$repo"
-    fi
-}
+# --- Claude CLI (optional: wire up Claude-specific assets when claude is present) ---
+echo "Claude:"
 if command -v claude &>/dev/null; then
+    # --- Rules: per-file so the folder README is not linked as a rule ---
+    echo "  Rules:"
+    if [ -L "$CLAUDE_DIR/rules" ]; then
+        echo "    converting $CLAUDE_DIR/rules from symlink to directory"
+        rm "$CLAUDE_DIR/rules"
+    fi
+    mkdir -p "$CLAUDE_DIR/rules"
+    link_items "$REPO_DIR/rules" "$CLAUDE_DIR/rules" "    "
+    prune "$CLAUDE_DIR/rules" "    "
+
+    # --- Skills: merge own + third-party into commands/ ---
+    echo "  Skills:"
+    if [ -L "$CLAUDE_DIR/skills" ]; then
+        echo "    converting $CLAUDE_DIR/skills from symlink to directory"
+        rm "$CLAUDE_DIR/skills"
+    fi
+    link_skills_to "$CLAUDE_DIR/skills" "    "
+    # Drop a caveman link from an earlier run, now that the plugin owns it.
+    if [ -L "$CLAUDE_DIR/skills/caveman" ]; then
+        case "$(readlink "$CLAUDE_DIR/skills/caveman")" in
+        "$REPO_DIR"/third-party/*)
+            echo "    rm  $CLAUDE_DIR/skills/caveman (superseded by caveman plugin)"
+            rm "$CLAUDE_DIR/skills/caveman"
+            ;;
+        esac
+    fi
+
+    # --- Agents (native subagents, reusable as delegated subagents or team teammates) ---
+    echo "  Agents:"
+    mkdir -p "$CLAUDE_DIR/agents"
+    link_items "$REPO_DIR/agents" "$CLAUDE_DIR/agents" "    "
+    prune "$CLAUDE_DIR/agents" "    "
+
+    # --- Hooks ---
+    echo "  Hooks:"
+    mkdir -p "$CLAUDE_DIR/hooks"
+    link_items "$REPO_DIR/hooks" "$CLAUDE_DIR/hooks" "    "
+    prune "$CLAUDE_DIR/hooks" "    "
+
+    # Register hooks in global settings.json
+    readonly SETTINGS="$CLAUDE_DIR/settings.json"
+    register_hook() {
+        local event="$1" command="$2" name="$3" timeout="${4:-10}"
+        local matcher="${5:-}" async_rewake="${6:-0}"
+        if jq -e ".hooks.${event}[]? | .hooks[]? | select(.command == \"$command\")" "$SETTINGS" >/dev/null 2>&1; then
+            echo "    ok  $name"
+        else
+            echo "    add $name"
+            local aw=false
+            [ "$async_rewake" = "1" ] && aw=true
+            if [ -n "$matcher" ]; then
+                jq --arg evt "$event" --arg cmd "$command" --argjson to "$timeout" --arg mat "$matcher" --argjson aw "$aw" \
+                    '.hooks = (.hooks // {}) | .hooks[$evt] = ((.hooks[$evt] // []) + [{"matcher": $mat, "hooks": [({"type": "command", "command": $cmd, "timeout": $to} + (if $aw then {"asyncRewake": true} else {} end))]}])' \
+                    "$SETTINGS" >"${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
+            else
+                jq --arg evt "$event" --arg cmd "$command" --argjson to "$timeout" --argjson aw "$aw" \
+                    '.hooks = (.hooks // {}) | .hooks[$evt] = ((.hooks[$evt] // []) + [{"hooks": [({"type": "command", "command": $cmd, "timeout": $to} + (if $aw then {"asyncRewake": true} else {} end))]}])' \
+                    "$SETTINGS" >"${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
+            fi
+        fi
+    }
+
+    # Ensure settings.json exists so hooks/outputStyle can be set on a fresh machine.
+    if command -v jq &>/dev/null && [ ! -f "$SETTINGS" ]; then
+        echo '{}' >"$SETTINGS"
+        echo "    created $SETTINGS"
+    fi
+
+    if [ -f "$SETTINGS" ] && command -v jq &>/dev/null; then
+        register_hook "UserPromptSubmit" "bash ~/.claude/hooks/anti-sycophancy.sh" "anti-sycophancy hook" 5
+        register_hook "PreToolUse" "bash ~/.claude/hooks/block-dangerous.sh" "block-dangerous hook" 5 "Bash|Write|Edit"
+        register_hook "PostToolUse" "bash ~/.claude/hooks/auto-format.sh" "auto-format hook" 10 "Write|Edit"
+        register_hook "PostToolUse" "bash ~/.claude/hooks/security-scan.sh" "security-scan hook" 5 "Write|Edit" 1
+        register_hook "Stop" "bash ~/.claude/hooks/notify-stop.sh" "notify-stop hook" 5
+        register_hook "PreCompact" "bash ~/.claude/hooks/context-save.sh" "context-save hook" 10
+        register_hook "Notification" "bash ~/.claude/hooks/notify-prompt.sh" "notify-prompt hook" 5
+        register_hook "PreToolUse" "bash ~/.claude/hooks/auto-approve.sh" "auto-approve hook" 5 "Bash"
+        register_hook "PreToolUse" "bash ~/.claude/hooks/commit-lint.sh" "commit-lint hook" 5 "Bash"
+        register_hook "SessionStart" "bash ~/.claude/hooks/session-start.sh" "session-start hook" 10
+        register_hook "SessionEnd" "bash ~/.claude/hooks/session-end.sh" "session-end hook" 10
+
+        # Allow codex commands without a per-call prompt (used by multi-review skill).
+        if jq -e '.permissions.allow | index("Bash(codex exec *)")' "$SETTINGS" >/dev/null 2>&1; then
+            echo "    ok  permissions.allow codex"
+        else
+            jq '.permissions.allow += ["Bash(codex exec *)"]' "$SETTINGS" >"${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
+            echo "    set permissions.allow codex"
+        fi
+
+        # Activate the dotharness output style unless the user already set one.
+        if jq -e '.outputStyle' "$SETTINGS" >/dev/null 2>&1; then
+            echo "    ok  outputStyle"
+        else
+            jq '.outputStyle = "dotharness"' "$SETTINGS" >"${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
+            echo "    set outputStyle=dotharness"
+        fi
+    elif [ ! -f "$SETTINGS" ]; then
+        echo "    skipped (no settings.json found)"
+    elif ! command -v jq &>/dev/null; then
+        echo "    skipped (jq not found, cannot update settings.json)"
+    fi
+
+    # --- Output styles ---
+    echo "  Output styles:"
+    mkdir -p "$CLAUDE_DIR/output-styles"
+    link_items "$REPO_DIR/output-styles" "$CLAUDE_DIR/output-styles" "    "
+    prune "$CLAUDE_DIR/output-styles" "    "
+
+    # --- Statusline ---
+    echo "  Statusline:"
+    link "$REPO_DIR/statusline.sh" "$CLAUDE_DIR/statusline.sh" "    "
+    if [ -f "$SETTINGS" ] && command -v jq &>/dev/null; then
+        if jq -e '.statusLine.command == "bash ~/.claude/statusline.sh"' "$SETTINGS" >/dev/null 2>&1; then
+            echo "    ok  statusLine"
+        else
+            jq '.statusLine = {"type": "command", "command": "bash ~/.claude/statusline.sh"}' \
+                "$SETTINGS" >"${SETTINGS}.tmp" && mv "${SETTINGS}.tmp" "$SETTINGS"
+            echo "    set statusLine"
+        fi
+    fi
+
+    # --- Plugins ---
+    echo "  Plugins:"
+    # Register a marketplace by name from a GitHub <owner/repo>, idempotently.
+    add_marketplace() {
+        local name="$1" repo="$2"
+        if grep -q "\"$name\"" "$CLAUDE_DIR/plugins/known_marketplaces.json" 2>/dev/null; then
+            echo "    ok  marketplace $name"
+        else
+            echo "    adding marketplace $name ($repo)"
+            claude plugin marketplace add "$repo"
+        fi
+    }
     # claude-plugins-official is registered by default; add the rest.
     add_marketplace anthropic-agent-skills anthropics/skills
     # caveman and ponytail are always-on token-reduction plugins: caveman compresses
@@ -355,29 +359,29 @@ if command -v claude &>/dev/null; then
             claude plugin install "$plugin"
         fi
     done
-else
-    echo "    skipped (claude CLI not found)"
-fi
 
-# --- ck-profile MCP server (user-level, available in every repo) ---
-echo "  ck-profile MCP server:"
-if command -v claude &>/dev/null && [ -x "$venv_dir/bin/python3" ]; then
-    # `claude mcp get` prints Command and Args on separate lines, so both must
-    # be checked individually rather than as one combined string.
-    ckprofile_mcp_info=$(claude mcp get ck-profile 2>/dev/null || true)
-    if grep -qF "$venv_dir/bin/python3" <<<"$ckprofile_mcp_info" &&
-        grep -qF "$REPO_DIR/lib/ck-profile-mcp/server.py" <<<"$ckprofile_mcp_info"; then
-        echo "    ok  ck-profile"
+    # --- ck-profile MCP server (user-level, available in every repo) ---
+    echo "  ck-profile MCP server:"
+    if [ -x "$venv_dir/bin/python3" ]; then
+        # `claude mcp get` prints Command and Args on separate lines, so both must
+        # be checked individually rather than as one combined string.
+        ckprofile_mcp_info=$(claude mcp get ck-profile 2>/dev/null || true)
+        if grep -qF "$venv_dir/bin/python3" <<<"$ckprofile_mcp_info" &&
+            grep -qF "$REPO_DIR/lib/ck-profile-mcp/server.py" <<<"$ckprofile_mcp_info"; then
+            echo "    ok  ck-profile"
+        else
+            echo "    registering ck-profile"
+            # Remove first in case a mismatched entry already exists (e.g. repo
+            # moved or .venv recreated elsewhere) — `mcp add` fails if the name is
+            # already registered, which would abort the script under set -e.
+            claude mcp remove ck-profile -s user 2>/dev/null || true
+            claude mcp add -s user ck-profile -- "$venv_dir/bin/python3" "$REPO_DIR/lib/ck-profile-mcp/server.py"
+        fi
     else
-        echo "    registering ck-profile"
-        # Remove first in case a mismatched entry already exists (e.g. repo
-        # moved or .venv recreated elsewhere) — `mcp add` fails if the name is
-        # already registered, which would abort the script under set -e.
-        claude mcp remove ck-profile -s user 2>/dev/null || true
-        claude mcp add -s user ck-profile -- "$venv_dir/bin/python3" "$REPO_DIR/lib/ck-profile-mcp/server.py"
+        echo "    skipped (.venv not found)"
     fi
 else
-    echo "    skipped (claude CLI or .venv not found)"
+    echo "  skipped (claude CLI not found)"
 fi
 
 # --- Codex CLI (optional: wire up shared assets when codex is present) ---
