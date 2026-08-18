@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Static checks on setup.sh's Codex skills wiring. setup.sh mutates real
-# system state (plugins, MCP registration, hooks), so it is not safe to
-# execute in a test; these assert the script's structure via grep instead.
+# system state (plugins, hooks), so it is not safe to execute in a test;
+# these assert the script's structure via grep instead.
 
 setup() {
     SETUP_SH="${BATS_TEST_DIRNAME}/../../setup.sh"
@@ -31,30 +31,4 @@ setup() {
     [ -n "$skills_block" ]
     run grep -qF "\"\$CLAUDE_DIR/skills\"/*" <<<"$skills_block"
     [ "$status" -ne 0 ]
-}
-
-@test "ck-profile MCP check correctly requires both command and args to match" {
-    # Pull the two-line condition verbatim out of setup.sh and run it against
-    # synthetic `claude mcp get` output in a sandbox, rather than just asserting
-    # the literal grep expressions exist in the source — this catches a
-    # regression that weakens the && to || just as well as one that deletes a
-    # line outright.
-    condition=$(grep -A1 -F "if grep -qF \"\$venv_dir/bin/python3\"" "$SETUP_SH")
-    [ -n "$condition" ]
-    condition="${condition%; then}"
-
-    run_condition() {
-        bash -c "venv_dir=\$1; REPO_DIR=\$2; ckprofile_mcp_info=\$3
-            $condition
-            then echo MATCH; else echo NOMATCH; fi" _ "$1" "$2" "$3"
-    }
-
-    run run_condition /fake/venv /fake/repo $'Command: /fake/venv/bin/python3\nArgs: /fake/repo/lib/ck-profile-mcp/server.py'
-    [ "$output" = MATCH ]
-
-    run run_condition /fake/venv /fake/repo $'Command: /other/venv/bin/python3\nArgs: /fake/repo/lib/ck-profile-mcp/server.py'
-    [ "$output" = NOMATCH ]
-
-    run run_condition /fake/venv /fake/repo $'Command: /fake/venv/bin/python3\nArgs: /other/repo/lib/ck-profile-mcp/server.py'
-    [ "$output" = NOMATCH ]
 }
