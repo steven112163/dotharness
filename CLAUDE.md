@@ -136,7 +136,7 @@ Symlinked into `~/lib/` by `setup.sh`. Not on PATH — imported programmatically
 
 ### Tests (`tests/`)
 
-`tests/bats/` — shell tests for hooks and scripts (enforced by CI): `block-dangerous.bats`, `ckCommon.bats`, `commit-lint.bats`, `multi-review.bats`, `skills-frontmatter.bats`, `setup-codex-skills.bats`, `setup-playwright-graphify.bats`. `tests/python/` — pytest for ck-profile Python helpers (`test_gpu_specs.py`, `test_parse_resource_usage.py`, `test_ck_profile_utils.py`, `test_compute_report.py`, `test_html_report.py`, `test_ckaggregate.py`) and the ck-profile MCP server (`test_ckprofile_mcp_*.py`); `conftest.py` puts `bin/`, `lib/ck-profile/`, and `lib/ck-profile-mcp/` on `sys.path`. Every `SKILL.md` frontmatter `name` must match its directory name — enforced by `skills-frontmatter.bats`.
+`tests/bats/` — shell tests for hooks and scripts (enforced by CI): `block-dangerous.bats`, `ckCommon.bats`, `ckRemote.bats`, `commit-lint.bats`, `multi-review.bats`, `skills-frontmatter.bats`, `setup-codex-skills.bats`, `setup-playwright-graphify.bats`. `tests/python/` — pytest for ck-profile Python helpers (`test_gpu_specs.py`, `test_parse_resource_usage.py`, `test_ck_profile_utils.py`, `test_compute_report.py`, `test_html_report.py`, `test_ckaggregate.py`) and the ck-profile MCP server (`test_ckprofile_mcp_*.py`); `conftest.py` puts `bin/`, `lib/ck-profile/`, and `lib/ck-profile-mcp/` on `sys.path`. Every `SKILL.md` frontmatter `name` must match its directory name — enforced by `skills-frontmatter.bats`.
 
 ### Key conventions
 
