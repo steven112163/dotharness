@@ -35,6 +35,8 @@ lib/                   → internal libraries, symlinked to ~/lib/
 tests/                 → bats + pytest suites                              (tests/README.md)
 third-party/
   mattpocock-skills/   → git submodule (engineering + productivity skills)
+  geak/                → git submodule, sparse-checked out to perf_knowledge/ (AMD-AGI/GEAK's
+                         operator x backend SOTA reference cards)
 template/              → templates for plan/implementation-notes/test-notes docs, and copyable
                          config (ckremote.example, ckdockersetup.example)
 statusline.sh          → compact status line, symlinked to ~/.claude/
@@ -52,6 +54,8 @@ Non-trivial work in this repo follows a plan-first workflow: copy `template/plan
 
 ```bash
 git submodule update --init
+git -C third-party/geak sparse-checkout init --cone
+git -C third-party/geak sparse-checkout set perf_knowledge
 ./setup.sh
 ```
 

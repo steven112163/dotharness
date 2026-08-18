@@ -1,3 +1,6 @@
 [submodule "third-party/mattpocock-skills"]
 	path = third-party/mattpocock-skills
 	url = https://github.com/mattpocock/skills.git
+[submodule "third-party/geak"]
+	path = third-party/geak
+	url = https://github.com/AMD-AGI/GEAK.git

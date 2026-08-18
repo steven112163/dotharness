@@ -12,6 +12,8 @@ dotharness is a **host-level configuration hub**: `setup.sh` symlinks everything
 
 ```bash
 git submodule update --init
+git -C third-party/geak sparse-checkout init --cone
+git -C third-party/geak sparse-checkout set perf_knowledge
 ./setup.sh
 ```
 
@@ -79,6 +81,8 @@ Each skill is a directory with a `SKILL.md` (YAML frontmatter: `name`, `descript
 - `survey` — academic literature survey, discover/curated modes.
 
 Third-party skills from `third-party/mattpocock-skills/` are linked alongside own skills. Plugins (`superpowers`, `example-skills`, `caveman`, `ponytail`, `claude-api`) are installed via the Claude CLI by `setup.sh`.
+
+`third-party/geak/` is a git submodule of [AMD-AGI/GEAK](https://github.com/AMD-AGI/GEAK), sparse-checked out to `perf_knowledge/` only (its curated operator x backend SOTA reference — not GEAK's autonomous kernel-optimizer, which is out of scope here). Not linked anywhere; read in place and picked up by `graphify update .` like any other tracked content.
 
 [`playwright-cli`](https://github.com/microsoft/playwright-cli) (browser automation) and [`graphify`](https://github.com/Graphify-Labs/graphify) (codebase knowledge-graph generation) are externally-managed skills: `setup.sh` installs them globally (npm, pipx) and runs their own installers rather than sourcing them from `skills/`.
 
