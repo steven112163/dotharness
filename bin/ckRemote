@@ -90,7 +90,9 @@ Usage: ckRemote [-t <server>] [--arch <gfx>] [--no-sync]
   --no-sync            skip the source rsync (e.g. run an already-built binary)
   push                 rsync source to the chosen server, nothing else
   pull [path...]       rsync ck_profile_out/ (and any extra paths, relative to
-                       the mirrored CK project workdir) from remote to local
+                       the mirrored CK project workdir) from remote to local.
+                       Each path may be <src>:<dest> to land it locally under a
+                       different name, e.g. pull ck_profile_out:ck_profile_out_server1
   shell                interactive shell in the remote checkout
   targets              list configured servers and their gpus
   select               print which server would be chosen, then exit
@@ -281,9 +283,26 @@ require_local() {
     [ -d "$CK_LOCAL_REPO" ] || die "CK_LOCAL_REPO ($CK_LOCAL_REPO) is not a directory."
 }
 
+# Splits a pull path spec "<src>[:<dest>]" on the FIRST ':' only (dest=src when
+# no ':' present, so plain paths keep today's behavior exactly). Echoes src then
+# dest, one per line.
+_pull_split_dest() {
+    local spec="$1"
+    if [[ "$spec" == *:* ]]; then
+        echo "${spec%%:*}"
+        echo "${spec#*:}"
+    else
+        echo "$spec"
+        echo "$spec"
+    fi
+}
+
 # Pull profiling artifacts (default ck_profile_out/, or given paths) from the
 # remote repo back locally. Paths are relative to the mirrored workdir (CK
-# project root, not necessarily git toplevel in a monorepo).
+# project root, not necessarily git toplevel in a monorepo). Each path may be
+# "<src>:<dest>" to land it under a different local name/dir than its remote
+# path — e.g. `ckRemote pull ck_profile_out:ck_profile_out_server1` when
+# pulling the same relative path from more than one server.
 pull_artifacts() {
     require_local
     local paths=("$@")
@@ -292,10 +311,15 @@ pull_artifacts() {
     [ -n "$CK_REL" ] && local_workdir="$CK_LOCAL_REPO/$CK_REL"
     local p
     for p in "${paths[@]}"; do
+        local src dest
+        {
+            read -r src
+            read -r dest
+        } < <(_pull_split_dest "$p")
         local remote_path
-        remote_path="$(_remote_workdir)/$p"
-        local local_path="$local_workdir/$p"
-        echo "Pulling $p <- $SERVER:$remote_path ..."
+        remote_path="$(_remote_workdir)/$src"
+        local local_path="$local_workdir/$dest"
+        echo "Pulling $src <- $SERVER:$remote_path -> $local_path ..."
         # Directory vs file must be distinguished: forcing dir semantics on a
         # single file makes rsync's remote sender try to chdir and fail.
         # shellcheck disable=SC2086,SC2029
