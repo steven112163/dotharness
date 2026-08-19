@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Unit tests for _pull_split_dest in bin/ckRemote: the "<src>[:<dest>]" split
+# Unit tests for _split_pull_spec in bin/ckRemote: the "<src>[:<dest>]" split
 # that lets `ckRemote pull` land a path under a different local name (e.g.
 # pulling ck_profile_out from more than one server without one overwriting the
 # other locally). Pure string logic, so the function is extracted from the
@@ -12,7 +12,7 @@ setup() {
 }
 
 split() {
-    bash -c "$(awk '/^_pull_split_dest\(\)/,/^}/' "$SCRIPT"); _pull_split_dest '$1'"
+    bash -c "$(awk '/^_split_pull_spec\(\)/,/^}/' "$SCRIPT"); _split_pull_spec \"\$1\"" _ "$1"
 }
 
 @test "plain path with no colon: dest equals src" {
@@ -34,4 +34,30 @@ split() {
     [ "$status" -eq 0 ]
     [ "${lines[0]}" = "a/b" ]
     [ "${lines[1]}" = "c:d" ]
+}
+
+@test "path with a single quote is not shell-interpolated" {
+    run split "a'b"
+    [ "$status" -eq 0 ]
+    [ "${lines[0]}" = "a'b" ]
+    [ "${lines[1]}" = "a'b" ]
+}
+
+@test "option-like path does not get swallowed by echo" {
+    run split "-n"
+    [ "$status" -eq 0 ]
+    [ "${lines[0]}" = "-n" ]
+    [ "${lines[1]}" = "-n" ]
+}
+
+@test "trailing colon: dest is empty" {
+    run split "foo:"
+    [ "$status" -eq 0 ]
+    [ "$output" = "foo" ]
+}
+
+@test "leading colon: src is empty" {
+    run split ":bar"
+    [ "$status" -eq 0 ]
+    [ "$output" = $'\nbar' ]
 }
