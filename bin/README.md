@@ -21,7 +21,7 @@ All profiling binaries follow the same CLI style as `ckBuild build`/`ckRun`: `RE
 - **ckTraceProfile** — rocprofv3 `--sys-trace` → perfetto `.pftrace` + offline HTML timeline. Same sweep/nruns flags as `ckDynamicProfile`. `--no-pc-sampling` to skip PC sampling.
 - **ckCfgProfile** — ISA CFG as Graphviz DOT via `llvm-objdump`. No GPU run.
 - **ckComputeProfile** — deep microarchitecture analysis with rocprof-compute. Accepts `--workload <name>`. Installs (and repairs if broken) `rocprof-compute` itself via pip into a persistent venv at `$HOME/rocprof-compute-venv` — no image pre-bake needed.
-- **ckAggregate** — aggregate raw rocprofv3 output from `ckDynamicProfile` into a summary report (markdown + HTML + CSV + JSON). Run automatically by `ckDynamicProfile`; re-run manually (e.g. after `ckRemote pull`, or with different `--arch`/`--peak-gbs`) to re-aggregate existing raw output. `summary.json` carries a `schema_version` field for downstream consumers (e.g. the planned MCP server's `get_summary` tool).
+- **ckAggregate** — aggregate raw rocprofv3 output from `ckDynamicProfile` into a summary report (markdown + HTML + CSV + JSON). Run automatically by `ckDynamicProfile`; re-run manually (e.g. after `ckRemote pull`, or with different `--arch`/`--peak-gbs`) to re-aggregate existing raw output. `summary.json` carries a `schema_version` field for downstream consumers.
 - **ckDepgraph** — emit kernel dependency graphs as Graphviz DOT (logical data-dependency DAG and runtime dispatch graph from a kernel trace CSV).
 
 ## Other
