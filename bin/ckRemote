@@ -285,16 +285,12 @@ require_local() {
 
 # Splits a pull path spec "<src>[:<dest>]" on the FIRST ':' only (dest=src when
 # no ':' present, so plain paths keep today's behavior exactly). Echoes src then
-# dest, one per line.
-_pull_split_dest() {
+# dest, one per line via printf (echo would swallow a "-n"/"-e"-shaped path as
+# a flag under set -e).
+_split_pull_spec() {
     local spec="$1"
-    if [[ "$spec" == *:* ]]; then
-        echo "${spec%%:*}"
-        echo "${spec#*:}"
-    else
-        echo "$spec"
-        echo "$spec"
-    fi
+    printf '%s\n' "${spec%%:*}"
+    printf '%s\n' "${spec#*:}"
 }
 
 # Pull profiling artifacts (default ck_profile_out/, or given paths) from the
@@ -315,7 +311,8 @@ pull_artifacts() {
         {
             read -r src
             read -r dest
-        } < <(_pull_split_dest "$p")
+        } < <(_split_pull_spec "$p")
+        [[ -n "$src" && -n "$dest" ]] || die "empty src/dest in pull path '$p' (expected <path> or <src>:<dest>)"
         local remote_path
         remote_path="$(_remote_workdir)/$src"
         local local_path="$local_workdir/$dest"
