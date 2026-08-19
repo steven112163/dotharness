@@ -20,8 +20,7 @@ Two suites live here: bats for the shell hooks and skill scripts (under
   capture, chunk split, relative `REVIEW_DIR`).
 - `setup-codex-skills.bats` — static checks on `setup.sh`'s Codex skill wiring:
   `link_skills_to` is defined once and used by both the Claude and Codex sections,
-  the Codex skills block no longer iterates `$CLAUDE_DIR/skills`, and the ck-profile
-  MCP idempotency check requires both the command and args to match.
+  and the Codex skills block no longer iterates `$CLAUDE_DIR/skills`.
 - `setup-playwright-graphify.bats` — behavioral checks on `setup.sh`'s
   `playwright-cli`/`graphify`/global-gitignore wiring: extracts each block and
   runs it under stubbed npm/pipx/playwright-cli/graphify/git binaries,
