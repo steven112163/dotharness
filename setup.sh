@@ -89,10 +89,13 @@ echo "Shared:"
 # --- GEAK submodule (sparse-checked out to perf_knowledge/; state doesn't
 # travel via .gitmodules, must be re-applied on every clone) ---
 echo "  GEAK submodule:"
-git -C "$REPO_DIR" submodule update --init third-party/geak
-git -C "$REPO_DIR/third-party/geak" sparse-checkout init --cone
-git -C "$REPO_DIR/third-party/geak" sparse-checkout set perf_knowledge
-echo "    third-party/geak sparse-checked out to perf_knowledge/"
+if git -C "$REPO_DIR" submodule update --init third-party/geak &&
+    git -C "$REPO_DIR/third-party/geak" sparse-checkout init --cone &&
+    git -C "$REPO_DIR/third-party/geak" sparse-checkout set perf_knowledge; then
+    echo "    ok  third-party/geak sparse-checked out to perf_knowledge/"
+else
+    echo "    warn: third-party/geak submodule update/sparse-checkout failed"
+fi
 
 # --- Binaries (linked into ~/bin, which is on PATH) ---
 echo "  Binaries:"
