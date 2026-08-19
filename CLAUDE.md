@@ -12,12 +12,10 @@ dotharness is a **host-level configuration hub**: `setup.sh` symlinks everything
 
 ```bash
 git submodule update --init
-git -C third-party/geak sparse-checkout init --cone
-git -C third-party/geak sparse-checkout set perf_knowledge
 ./setup.sh
 ```
 
-`setup.sh` always symlinks `bin/` scripts into `~/bin/`; symlinks `lib/` subdirs into `~/lib/`; symlinks `gitignore_global` to `~/.gitignore_global` and registers it as `git config --global core.excludesFile`; provisions a repo-local `.venv` with `pre-commit`, `anthropic`, and `mcp`; and installs `playwright-cli` (npm) and `graphify` (pipx) globally. If the `claude` CLI is present, it also symlinks `skills/`, `agents/`, `hooks/`, `rules/`, `output-styles/`, third-party skills, and `statusline.sh` into `~/.claude/`; registers lifecycle hooks in `~/.claude/settings.json`; installs Claude plugins; and registers the `ck-profile` MCP server at user scope (`claude mcp add -s user ck-profile`). If the `codex` CLI is present, it also mirrors skills/hooks/statusline into `~/.agents/` and `~/.codex/`, concatenates `rules/*.md` into `~/.agents/AGENTS.md`, and runs `graphify install --platform codex`. Re-running is idempotent. Requires `jq`.
+`setup.sh` always re-applies `third-party/geak`'s sparse-checkout (`perf_knowledge/` only, since that state doesn't travel via `.gitmodules`); symlinks `bin/` scripts into `~/bin/`; symlinks `lib/` subdirs into `~/lib/`; symlinks `gitignore_global` to `~/.gitignore_global` and registers it as `git config --global core.excludesFile`; provisions a repo-local `.venv` with `pre-commit`, `anthropic`, and `mcp`; and installs `playwright-cli` (npm) and `graphify` (pipx) globally. If the `claude` CLI is present, it also symlinks `skills/`, `agents/`, `hooks/`, `rules/`, `output-styles/`, third-party skills, and `statusline.sh` into `~/.claude/`; registers lifecycle hooks in `~/.claude/settings.json`; installs Claude plugins; and registers the `ck-profile` MCP server at user scope (`claude mcp add -s user ck-profile`). If the `codex` CLI is present, it also mirrors skills/hooks/statusline into `~/.agents/` and `~/.codex/`, concatenates `rules/*.md` into `~/.agents/AGENTS.md`, and runs `graphify install --platform codex`. Re-running is idempotent. Requires `jq`.
 
 `README.md` files inside linked directories are intentionally skipped — they document the repo without being parsed as active rules or skills.
 
@@ -82,7 +80,7 @@ Each skill is a directory with a `SKILL.md` (YAML frontmatter: `name`, `descript
 
 Third-party skills from `third-party/mattpocock-skills/` are linked alongside own skills. Plugins (`superpowers`, `example-skills`, `caveman`, `ponytail`, `claude-api`) are installed via the Claude CLI by `setup.sh`.
 
-`third-party/geak/` is a git submodule of [AMD-AGI/GEAK](https://github.com/AMD-AGI/GEAK), sparse-checked out to `perf_knowledge/` only (its curated operator x backend SOTA reference — not GEAK's autonomous kernel-optimizer, which is out of scope here). Not linked anywhere; read in place and picked up by `graphify update .` like any other tracked content.
+`third-party/geak/` is a git submodule of [AMD-AGI/GEAK](https://github.com/AMD-AGI/GEAK), sparse-checked out (cone mode) to `perf_knowledge/` plus GEAK's repository-root files — its curated operator × backend SOTA reference, not GEAK's autonomous kernel-optimizer, which is out of scope here. Sparse-checkout narrows the working tree, not the object database; full GEAK history is still fetched. `setup.sh` re-applies the sparse pattern on every run since it doesn't travel via `.gitmodules`. Not linked anywhere; read in place and picked up by `graphify update .` like any other tracked content.
 
 [`playwright-cli`](https://github.com/microsoft/playwright-cli) (browser automation) and [`graphify`](https://github.com/Graphify-Labs/graphify) (codebase knowledge-graph generation) are externally-managed skills: `setup.sh` installs them globally (npm, pipx) and runs their own installers rather than sourcing them from `skills/`.
 

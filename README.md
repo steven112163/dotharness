@@ -35,8 +35,8 @@ lib/                   → internal libraries, symlinked to ~/lib/
 tests/                 → bats + pytest suites                              (tests/README.md)
 third-party/
   mattpocock-skills/   → git submodule (engineering + productivity skills)
-  geak/                → git submodule, sparse-checked out to perf_knowledge/ (AMD-AGI/GEAK's
-                         operator x backend SOTA reference cards)
+  geak/                → git submodule, sparse-checked out (cone) to perf_knowledge/ plus
+                         GEAK's root files (AMD-AGI/GEAK's operator × backend SOTA cards)
 template/              → templates for plan/implementation-notes/test-notes docs, and copyable
                          config (ckremote.example, ckdockersetup.example)
 statusline.sh          → compact status line, symlinked to ~/.claude/
@@ -54,12 +54,10 @@ Non-trivial work in this repo follows a plan-first workflow: copy `template/plan
 
 ```bash
 git submodule update --init
-git -C third-party/geak sparse-checkout init --cone
-git -C third-party/geak sparse-checkout set perf_knowledge
 ./setup.sh
 ```
 
-Symlinks `skills/`, `agents/`, `hooks/`, `output-styles/`, `rules/`, third-party skills, and `statusline.sh` into `~/.claude/`; `bin/` scripts into `~/bin/`; `lib/` subdirs into `~/lib/`; `gitignore_global` to `~/.gitignore_global` and registers it as `git config --global core.excludesFile`. Registers hooks and sets the `dotharness` output style in `~/.claude/settings.json` (requires `jq`), creating that file if it does not yet exist (fresh-machine safe). Installs plugins via the Claude CLI, and registers the `ck-profile` MCP server at user scope. Installs [`playwright-cli`](https://github.com/microsoft/playwright-cli) (npm) and [`graphify`](https://github.com/Graphify-Labs/graphify) (pipx) globally, both externally-managed and not sourced from `skills/`. Provisions a repo-local `.venv` with `pre-commit`, `anthropic`, and `mcp`, and installs the git pre-commit hook. If the `codex` CLI is present, mirrors skills/hooks/statusline/plugins into `~/.agents/` and `~/.codex/` and concatenates `rules/*.md` into a generated `~/.agents/AGENTS.md`. Existing files are backed up to `.bak`. Re-running is idempotent. Per-folder `README.md` files are skipped so they document the repo without being linked into the live `~/.claude/` tree.
+`setup.sh` re-applies `third-party/geak`'s sparse-checkout (`perf_knowledge/` only) on every run, since that state doesn't travel via `.gitmodules`. It also symlinks `skills/`, `agents/`, `hooks/`, `output-styles/`, `rules/`, third-party skills, and `statusline.sh` into `~/.claude/`; `bin/` scripts into `~/bin/`; `lib/` subdirs into `~/lib/`; `gitignore_global` to `~/.gitignore_global` and registers it as `git config --global core.excludesFile`. Registers hooks and sets the `dotharness` output style in `~/.claude/settings.json` (requires `jq`), creating that file if it does not yet exist (fresh-machine safe). Installs plugins via the Claude CLI, and registers the `ck-profile` MCP server at user scope. Installs [`playwright-cli`](https://github.com/microsoft/playwright-cli) (npm) and [`graphify`](https://github.com/Graphify-Labs/graphify) (pipx) globally, both externally-managed and not sourced from `skills/`. Provisions a repo-local `.venv` with `pre-commit`, `anthropic`, and `mcp`, and installs the git pre-commit hook. If the `codex` CLI is present, mirrors skills/hooks/statusline/plugins into `~/.agents/` and `~/.codex/` and concatenates `rules/*.md` into a generated `~/.agents/AGENTS.md`. Existing files are backed up to `.bak`. Re-running is idempotent. Per-folder `README.md` files are skipped so they document the repo without being linked into the live `~/.claude/` tree.
 
 Optional: desktop notifications work out of the box, but Teams notifications need a webhook URL you configure manually — see [hooks/README.md](hooks/README.md#teams-notifications).
 
