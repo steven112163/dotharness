@@ -58,7 +58,7 @@ CK_LOCAL_REPO=${CK_LOCAL_REPO:-$(git rev-parse --show-toplevel 2>/dev/null || tr
 # Extra excludes beyond .gitignore: dirs git doesn't track via .gitignore itself
 # (ck_profile_out is only in .git/info/exclude; graphify-out only in the global
 # excludesFile) plus .claude/.codex, so local agent scratch never clobbers remote's.
-CK_RSYNC_EXCLUDES=${CK_RSYNC_EXCLUDES:-ck_profile_out .venv .pytest_cache .ruff_cache .cache .claude .codex graphify-out tmp}
+CK_RSYNC_EXCLUDES=${CK_RSYNC_EXCLUDES:-ck_profile_out .venv .pytest_cache .ruff_cache .cache .claude .codex graphify-out tmp dev}
 CK_SSH_OPTS=${CK_SSH_OPTS:-}
 # Per-server lock dir: serializes this machine's ckRemote dispatches per server so
 # jobs don't interleave GPU work. Local-machine scope only; other machines not covered.
