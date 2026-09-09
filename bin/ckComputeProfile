@@ -141,7 +141,10 @@ if dx 'command -v rocprof-compute >/dev/null 2>&1 && rocprof-compute --version >
 else
     # $HOME is bind-mounted on every backend, so the venv persists across runs/repos
     # with no image pre-bake; concurrent runs race on it, so install acquires an flock first.
-    ROCM_WHL_INDEX=${ROCM_WHL_INDEX:-https://repo.amd.com/rocm/whl-multi-arch/}
+    # ROCm >= 10.0 wheels live at whl-next; older releases at
+    # https://repo.amd.com/rocm/whl-multi-arch/, nightlies at
+    # https://rocm.nightlies.amd.com/whl-multi-arch/rocm-sdk-devel/.
+    ROCM_WHL_INDEX=${ROCM_WHL_INDEX:-https://stable.repo.amd.com/rocm/whl-next/}
     VENV="${VENV:-$HOME/rocprof-compute-venv}"
     # realpath -s -m, not readlink -f: collapses ".." without resolving symlinks, so a
     # symlinked $HOME still matches the literal bind-mount path (ckCommon's -v "$HOME:$HOME").

@@ -584,8 +584,11 @@ memory-hierarchy panels. Install facts learned the hard way:
    next call unless it lands somewhere bind-mounted identically across every
    backend. The script installs it itself via pip — AMD publishes a
    self-contained `rocm[profiler]` wheel (launcher + its Python deps in one
-   shot) at `https://repo.amd.com/rocm/whl-multi-arch/` (override the index
-   with `ROCM_WHL_INDEX=`) — into a **persistent venv** at
+   shot) at `https://stable.repo.amd.com/rocm/whl-next/` for ROCm 10.0 and
+   newer (override the index with `ROCM_WHL_INDEX=`; older releases live at
+   `https://repo.amd.com/rocm/whl-multi-arch/`, nightlies at
+   `https://rocm.nightlies.amd.com/whl-multi-arch/rocm-sdk-devel/`) — into a
+   **persistent venv** at
    `$HOME/rocprof-compute-venv` (override `VENV=`; `uv venv`+`uv pip` if `uv`
    is installed, else `python3 -m venv --system-site-packages`+pip) and runs
    the launcher from that venv's own console-script
