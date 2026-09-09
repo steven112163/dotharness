@@ -14,7 +14,7 @@
 # `docker rmi` stale ones manually if disk space becomes an issue.
 #
 # Below: the rocm[devel,profiler] install this repo's default pytorch IMAGE
-# (rocm/pytorch:rocm7.14_ubuntu26.04_py3.14_pytorch_release_2.12.0) needs.
+# (rocm/pytorch:rocm10.0_ubuntu26.04_py3.14_pytorch_release_2.12.0) needs.
 # PYVER/ROCM_VER are read from the image itself, not hardcoded, so the same
 # command works if IMAGE is overridden to a compatible image.
 #
@@ -30,12 +30,26 @@ source /opt/venv/bin/activate
 PYVER=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
 ROCM_VER=$(cat /opt/venv/lib/python$PYVER/site-packages/_rocm_sdk_core/.info/version)
 
-python3 -m pip install --index-url https://repo.amd.com/rocm/whl-multi-arch/ "rocm[devel,profiler]==$ROCM_VER"
+# Wheel index. ROCm 10.0 and newer publish here:
+#   https://stable.repo.amd.com/rocm/whl-next/
+# Older (<= 7.x) releases:
+#   https://repo.amd.com/rocm/whl-multi-arch/
+# Nightly builds:
+#   https://rocm.nightlies.amd.com/whl-multi-arch/rocm-sdk-devel/
+python3 -m pip install --index-url https://stable.repo.amd.com/rocm/whl-next/ "rocm[devel,profiler]==$ROCM_VER"
 rocm-sdk init
-ln -sfn /opt/venv/lib/python$PYVER/site-packages/_rocm_sdk_devel /opt/rocm
 
-echo /opt/rocm/lib > /etc/ld.so.conf.d/rocm-sdk.conf
+ROCM_PATH=/opt/rocm
+ln -sfn /opt/venv/lib/python$PYVER/site-packages/_rocm_sdk_devel "$ROCM_PATH"
+
+echo "$ROCM_PATH/lib" > /etc/ld.so.conf.d/rocm-sdk.conf
 ldconfig
 
-echo 'export PATH=/opt/rocm/bin:$PATH' >> /etc/bash.bashrc
-echo 'export LD_LIBRARY_PATH=/opt/rocm/lib:$LD_LIBRARY_PATH' >> /etc/bash.bashrc
+# Single-quoted so $ROCM_PATH resolves from the exported var at shell startup,
+# keeping one definition to change if the SDK ever moves off /opt/rocm.
+{
+    echo "export ROCM_PATH=$ROCM_PATH"
+    echo 'export HIP_DEVICE_LIB_PATH=$ROCM_PATH/lib/llvm/amdgcn/bitcode'
+    echo 'export PATH=$ROCM_PATH/bin:$PATH'
+    echo 'export LD_LIBRARY_PATH=$ROCM_PATH/lib:$LD_LIBRARY_PATH'
+} >>/etc/bash.bashrc
