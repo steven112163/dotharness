@@ -33,6 +33,21 @@ teardown() {
     grep -q $'a.cpp\t' "$REVIEW_DIR/chunks.tsv"
 }
 
+@test "local mode includes uncommitted work alongside branch commits" {
+    printf 'int main(){int y; int z; return 0;}\n' >a.cpp
+    printf 'new\n' >b.txt
+    bash "$SCRIPT"
+    grep -q 'int z' "$REVIEW_DIR/diff.txt"
+    grep -q $'b.txt\t' "$REVIEW_DIR/chunks.tsv"
+}
+
+@test "repo mode emits every tracked file as a new-file diff" {
+    run bash "$SCRIPT" repo
+    [ "$status" -eq 0 ]
+    grep -q $'a.cpp\t' "$REVIEW_DIR/chunks.tsv"
+    grep -q '^--- /dev/null' "$REVIEW_DIR/diff.txt"
+}
+
 @test "local mode works with a relative REVIEW_DIR" {
     REVIEW_DIR="rel-out"
     export REVIEW_DIR
