@@ -77,7 +77,9 @@ Backend auto-detection (override with MODE): direct | docker | srun
 Env overrides: IMAGE=$IMAGE  REPO=$REPO
                BUILD_DIR=$BUILD_DIR  MODE=<backend>
                CONSTRAINT=$CONSTRAINT (Slurm site; clear to allow any)
-               CPUS=$CPUS (build uses all of them)  SRUN_EXTRA=<srun args>  IMAGE_DIR=$IMAGE_DIR
+               CPUS=$CPUS (ninja -j; srun uses it all, direct/docker only if set
+               explicitly — otherwise nproc/2. Capped at 128 either way)
+               SRUN_EXTRA=<srun args>  IMAGE_DIR=$IMAGE_DIR
                DOCKER_SETUP_CMD=<cmd> or DOCKER_SETUP_CMD_FILE=$DOCKER_SETUP_CMD_FILE
                (one-time root setup baked into a derived image via docker
                commit, e.g. installing rocm[devel]; see template/ckdockersetup.example;
@@ -247,10 +249,13 @@ if [ ! -e "$REPO/script/cmake-ck-dev.sh" ]; then
 fi
 cd "$build_abs"
 # srun: use the reserved core budget, clamped to nproc in case the cap is absent.
-# direct: shares the box, so half the cores capped at 128 (stay responsive, avoid
-# OOM from CK's memory-hungry template compiles on large hosts).
+# direct/docker: an explicit CPUS= wins; otherwise half the cores (shared box, stay
+# responsive and avoid OOM from CK's memory-hungry template compiles). Either way
+# capped at 128.
 if [ "$MODE" = srun ]; then
     JOBS=\${SLURM_CPUS_PER_TASK:-$CPUS}; _n=\$(nproc); [ \$JOBS -gt \$_n ] && JOBS=\$_n
+elif [ -n "${CPUS_EXPLICIT:-}" ]; then
+    JOBS=$CPUS; [ \$JOBS -gt 128 ] && JOBS=128
 else
     JOBS=\$(( \$(nproc) / 2 )); [ \$JOBS -gt 128 ] && JOBS=128
 fi
