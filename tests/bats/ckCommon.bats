@@ -1843,3 +1843,25 @@ EOF
     [ "$status" -ne 0 ]
     [ "$status" -ne 124 ]
 }
+
+# --- CPUS_EXPLICIT: distinguishes a caller-set CPUS from the default ---
+
+@test "CPUS_EXPLICIT is set when the caller exports CPUS" {
+    run bash -c "
+        CPUS=64
+        source '$CKCOMMON'
+        echo \"explicit=\$CPUS_EXPLICIT cpus=\$CPUS\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == "explicit=1 cpus=64" ]]
+}
+
+@test "CPUS_EXPLICIT is empty when CPUS falls back to the default" {
+    run bash -c "
+        unset CPUS
+        source '$CKCOMMON'
+        echo \"explicit=\$CPUS_EXPLICIT cpus=\$CPUS\"
+    "
+    [ "$status" -eq 0 ]
+    [[ "$output" == "explicit= cpus=128" ]]
+}
