@@ -13,10 +13,11 @@
 # one, tens of GB apiece). `docker images | grep '^<sanitized-image>-'` then
 # `docker rmi` stale ones manually if disk space becomes an issue.
 #
-# Below: the rocm[devel,profiler] install this repo's default pytorch IMAGE
-# (rocm/pytorch:rocm10.0_ubuntu26.04_py3.14_pytorch_release_2.12.0) needs.
-# PYVER/ROCM_VER are read from the image itself, not hardcoded, so the same
-# command works if IMAGE is overridden to a compatible image.
+# Below: the rocm[devel,profiler] install the rocm/pytorch IMAGEs need.
+# ROCm <= 10.0 images ship Python in a venv at /opt/venv; 10.1+ images use the
+# system Python (/usr/local/lib/python3.X/dist-packages) with rocm[devel]
+# preinstalled. The site-packages dir and ROCM_VER are read from wherever
+# _rocm_sdk_core is installed, so the same command works for both layouts.
 #
 # set -euo pipefail: without it, only the *last* command's exit status counts
 # (bash's default for a multi-statement script), so an earlier failure (e.g. a
@@ -26,9 +27,12 @@
 # belt-and-suspenders in case this file is ever run outside that wrapper.
 set -euo pipefail
 
-source /opt/venv/bin/activate
-PYVER=$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')
-ROCM_VER=$(cat /opt/venv/lib/python$PYVER/site-packages/_rocm_sdk_core/.info/version)
+if [ -f /opt/venv/bin/activate ]; then
+    source /opt/venv/bin/activate
+fi
+SDK_CORE=$(python3 -c 'import _rocm_sdk_core, os; print(os.path.dirname(_rocm_sdk_core.__file__))')
+SITE_PACKAGES=$(dirname "$SDK_CORE")
+ROCM_VER=$(cat "$SDK_CORE/.info/version")
 
 # Wheel index. ROCm 10.0 and newer publish here:
 #   https://stable.repo.amd.com/rocm/whl-next/
@@ -40,7 +44,7 @@ python3 -m pip install --index-url https://stable.repo.amd.com/rocm/whl-next/ "r
 rocm-sdk init
 
 ROCM_PATH=/opt/rocm
-ln -sfn /opt/venv/lib/python$PYVER/site-packages/_rocm_sdk_devel "$ROCM_PATH"
+ln -sfn "$SITE_PACKAGES/_rocm_sdk_devel" "$ROCM_PATH"
 
 echo "$ROCM_PATH/lib" > /etc/ld.so.conf.d/rocm-sdk.conf
 ldconfig
